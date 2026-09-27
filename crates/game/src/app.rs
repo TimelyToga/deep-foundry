@@ -547,7 +547,8 @@ impl Game {
     // ------------------------------------------------------------ worlds
 
     /// Forget the old world's view data and put the camera at `center`.
-    fn reset_view(&mut self, center: DVec2, world_cells: DVec2) {
+    /// `normal`: the normal mode starts closer (the robot is small).
+    fn reset_view(&mut self, center: DVec2, world_cells: DVec2, normal: bool) {
         self.renderer.clear_chunks();
         self.cells.clear();
         self.debug_chunks.clear();
@@ -555,7 +556,8 @@ impl Game {
         self.tick = 0;
         self.stroke.end();
         let viewport = self.controls.camera.viewport;
-        let zoom = self.start_zoom.unwrap_or_else(|| (viewport.x as f32 / 1100.0).round().clamp(1.0, MAX_ZOOM));
+        let base = if normal { 550.0 } else { 1100.0 };
+        let zoom = self.start_zoom.unwrap_or_else(|| (viewport.x as f32 / base).round().clamp(1.0, MAX_ZOOM));
         self.controls = CameraControl::new(center, zoom, viewport, world_cells);
         self.controls.min_zoom = self.renderer.min_zoom(viewport, VIEW_MARGIN).max(1.0);
     }
@@ -597,8 +599,8 @@ impl Game {
                 }
             }
         };
-        self.reset_view(center, DVec2::new(w as f64, h as f64));
         let normal = host.is_some();
+        self.reset_view(center, DVec2::new(w as f64, h as f64), normal);
         self.ui.set_mode(if normal { GameMode::Normal } else { GameMode::Sandbox });
         self.world = Some(World::new(SimThread::start_with(demo.sim, host), seed, chunks, normal));
         self.ui.model.state = GameState::Playing;
@@ -628,9 +630,9 @@ impl Game {
                     (None, Some(v)) => DVec2::new((v.x0 + v.x1) as f64 / 2.0, (v.y0 + v.y1) as f64 / 2.0),
                     (None, None) => DVec2::new(w as f64 * 0.48, h as f64 * 0.55),
                 };
-                self.reset_view(center, DVec2::new(w as f64, h as f64));
-                let chunks = (w / foundry_core::CHUNK_SIZE, h / foundry_core::CHUNK_SIZE);
                 let normal = host.is_some();
+                self.reset_view(center, DVec2::new(w as f64, h as f64), normal);
+                let chunks = (w / foundry_core::CHUNK_SIZE, h / foundry_core::CHUNK_SIZE);
                 self.ui.set_mode(if normal { GameMode::Normal } else { GameMode::Sandbox });
                 self.world = Some(World::new(SimThread::start_with(sim, host), meta.seed, chunks, normal));
                 self.ui.model.state = GameState::Playing;
