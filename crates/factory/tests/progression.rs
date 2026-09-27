@@ -94,7 +94,7 @@ fn content() -> Arc<Content> {
 
 /// A 128 × 128 cell world (16 × 16 tiles) of air with a bedrock border.
 fn world(c: &Arc<Content>) -> Simulation {
-    let mut sim = Simulation::new(c.clone(), SimConfig { width_chunks: 2, height_chunks: 2, seed: 7, bedrock_border: true });
+    let mut sim = Simulation::new(c.clone(), SimConfig::finite(2, 2, 7));
     sim.set_threads(1);
     sim
 }

@@ -31,6 +31,9 @@ pub struct Hood<'a> {
     pub marks: [LocalRect; 9],
     /// Bit `s` is set if a cell in chunk slot `s` changed (the renderer needs a new image).
     pub changed: u16,
+    /// Bit `s` is set if any cell array of chunk slot `s` was written, also without a visible
+    /// change (for example the updated bit). Such a chunk is no longer pristine.
+    pub touched: u16,
     /// Material of cells outside the world.
     pub outside: MaterialId,
     /// World position of the center chunk's top-left cell.
@@ -53,7 +56,7 @@ impl<'a> Hood<'a> {
         outside: MaterialId,
         origin: CellPos,
     ) -> Self {
-        Self { ptrs, mats, react, rng, parity, marks: [LocalRect::EMPTY; 9], changed: 0, outside, origin, events: Vec::new() }
+        Self { ptrs, mats, react, rng, parity, marks: [LocalRect::EMPTY; 9], changed: 0, touched: 0, outside, origin, events: Vec::new() }
     }
 
     /// World position of a hood cell.
@@ -115,6 +118,7 @@ impl<'a> Hood<'a> {
         let (s, i) = Self::slot(x, y);
         let p = self.ptrs[s];
         if !p.is_null() {
+            self.touched |= 1 << s;
             // SAFETY: as in `mat`.
             unsafe { *addr_of_mut!((*p).temp).cast::<i16>().add(i) = t }
         }
@@ -166,6 +170,7 @@ impl<'a> Hood<'a> {
         let (s, i) = Self::slot(x, y);
         let p = self.ptrs[s];
         if !p.is_null() {
+            self.touched |= 1 << s;
             // SAFETY: as in `mat`.
             unsafe { *field(p).add(i) = v }
         }
@@ -192,6 +197,7 @@ impl<'a> Hood<'a> {
         let (sb, ib) = Self::slot(bx, by);
         let (pa, pb) = (self.ptrs[sa], self.ptrs[sb]);
         debug_assert!(!pa.is_null() && !pb.is_null());
+        self.touched |= (1 << sa) | (1 << sb);
         // SAFETY: as in `mat`. The two cells are different, so the element pointers do not alias.
         unsafe {
             std::ptr::swap(addr_of_mut!((*pa).mat).cast::<u16>().add(ia), addr_of_mut!((*pb).mat).cast::<u16>().add(ib));
@@ -220,6 +226,7 @@ impl<'a> Hood<'a> {
             Some((lo, hi)) => lo + self.rng.below((hi - lo) as u32 + 1) as u8,
             None => 0,
         };
+        self.touched |= 1 << s;
         // SAFETY: as in `mat`.
         unsafe {
             *addr_of_mut!((*p).mat).cast::<u16>().add(i) = m.0;

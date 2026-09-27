@@ -3,8 +3,12 @@
 //! `Simulation` is the public interface. The game program runs it on the simulation thread.
 //! The headless program and tests call it directly.
 //!
+//! The world has no limit to the left and right, and a fixed height (see `world.rs`). Chunks are
+//! made by a `ChunkSource` when they are first needed. Only chunks near an anchor (the view, and
+//! later the player and buildings) update; see `Simulation::add_anchor`.
+//!
 //! Module owners (see docs/design/04-build-plan.md):
-//! - `chunk`, `world`, `hood`, `schedule`, `update`, `movement`, `lib.rs`: lead
+//! - `chunk`, `world`, `hood`, `schedule`, `update`, `movement`, `source`, `pack`, `lib.rs`: lead
 //! - `heat`: task "heat" (heat flow and phase changes)
 //! - `react`: task "reactions" (reactions and burning)
 //! - `explode`, `particles`: task "explosions and particles"
@@ -14,12 +18,18 @@ pub mod explode;
 pub mod heat;
 pub mod hood;
 pub mod movement;
+pub mod pack;
 pub mod particles;
 pub mod react;
 pub mod save;
 mod schedule;
+pub mod source;
 mod update;
 pub mod world;
+
+pub use pack::{ChunkStore, PackedChunk};
+pub use source::{AirSource, ChunkCells, ChunkSource, LayerSource};
+pub use world::MemoryStats;
 
 /// Something that happened in a tick that needs work outside the per-cell update.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,29 +41,113 @@ pub enum SimEvent {
 use chunk::{Chunk, FLAG_PARITY};
 use foundry_content::Content;
 use foundry_core::{
-    CHUNK_AREA, CellPos, CellRect, ChunkImage, ChunkPos, Command, MaterialId, PaintMode, Rng, SimStats, Snapshot,
-    pack_texel,
+    CHUNK_AREA, CHUNK_SIZE, CellPos, CellRect, ChunkImage, ChunkPos, Command, MaterialId, PaintMode, Rng, SimStats,
+    Snapshot, local_index, pack_texel,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use world::World;
+use world::{Areas, World};
+
+/// Chunks of sky above the surface level in a default world.
+pub const DEFAULT_SKY_CHUNKS: i32 = 16;
+/// Chunks from the surface level down to the bottom of a default world (8192 cells).
+pub const DEFAULT_DEPTH_CHUNKS: i32 = 128;
 
 /// Settings for a new world.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SimConfig {
-    pub width_chunks: i32,
-    pub height_chunks: i32,
     pub seed: u64,
-    /// Put bedrock on the left, right and bottom edges (2 cells thick).
+    /// `None`: the world has no limit to the left and right (the game world).
+    /// `Some(w)`: a finite box `w` chunks wide, from x = 0 to x = w × 64 (for tests and scenes).
+    /// Cells outside the box act as bedrock.
+    pub width_chunks: Option<i32>,
+    /// Chunks of sky above the surface level. The top of the sky is y = 0, so the surface level
+    /// is at y = `sky_chunks` × 64. Cells above the top act as bedrock (a closed ceiling for now).
+    pub sky_chunks: i32,
+    /// Chunks from the surface level down to the bottom of the world. Cells below act as bedrock.
+    pub depth_chunks: i32,
+    /// Finite box only: bedrock on the left, right and bottom edges (2 cells thick).
+    /// An infinite world gets its bedrock from the chunk source.
     pub bedrock_border: bool,
+    /// Makes the cells of new chunks. `None`: air for a finite box, and a `LayerSource` (air above
+    /// the surface level, stone below, bedrock at the bottom) for an infinite world.
+    pub source: Option<Arc<dyn ChunkSource>>,
+}
+
+impl SimConfig {
+    /// A finite box of `width` × `height` chunks, all air, with a bedrock border.
+    /// This is the world of the small tests and scenes.
+    pub fn finite(width_chunks: i32, height_chunks: i32, seed: u64) -> Self {
+        Self { seed, width_chunks: Some(width_chunks), sky_chunks: 0, depth_chunks: height_chunks, bedrock_border: true, source: None }
+    }
+
+    /// An infinite world with the default height and the given source (`None`: `LayerSource`).
+    pub fn infinite(seed: u64, source: Option<Arc<dyn ChunkSource>>) -> Self {
+        Self { seed, source, ..Self::default() }
+    }
+
+    /// Height of the world in chunks.
+    pub fn height_chunks(&self) -> i32 {
+        self.sky_chunks + self.depth_chunks
+    }
+
+    /// The row of cells where the surface level is.
+    pub fn surface_y(&self) -> i32 {
+        self.sky_chunks * CHUNK_SIZE
+    }
 }
 
 impl Default for SimConfig {
+    /// An infinite world: 16 chunks of sky and 128 chunks below the surface level.
     fn default() -> Self {
-        Self { width_chunks: 32, height_chunks: 16, seed: 1, bedrock_border: true }
+        Self {
+            seed: 1,
+            width_chunks: None,
+            sky_chunks: DEFAULT_SKY_CHUNKS,
+            depth_chunks: DEFAULT_DEPTH_CHUNKS,
+            bedrock_border: true,
+            source: None,
+        }
     }
 }
+
+impl std::fmt::Debug for SimConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SimConfig")
+            .field("seed", &self.seed)
+            .field("width_chunks", &self.width_chunks)
+            .field("sky_chunks", &self.sky_chunks)
+            .field("depth_chunks", &self.depth_chunks)
+            .field("bedrock_border", &self.bedrock_border)
+            .field("source", &self.source.as_ref().map(|s| s.name().to_string()))
+            .finish()
+    }
+}
+
+/// Global simulation settings. Change them with `Simulation::settings_mut`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimSettings {
+    /// Chunks around each anchor area that also update. A chunk with work that is farther from
+    /// every anchor waits (it keeps its work) until an anchor comes near.
+    pub sim_margin_chunks: i32,
+    /// Chunks around each anchor area that stay unpacked in memory. Farther chunks are packed
+    /// (changed chunks) or dropped (chunks that did not change since the source made them).
+    /// The world uses at least `sim_margin_chunks + 2`.
+    pub keep_margin_chunks: i32,
+    /// Look for far chunks to pack or drop every this many ticks. 0: never.
+    pub unload_every_ticks: u32,
+}
+
+impl Default for SimSettings {
+    fn default() -> Self {
+        Self { sim_margin_chunks: 4, keep_margin_chunks: 8, unload_every_ticks: 10 }
+    }
+}
+
+/// Identifies an anchor. See `Simulation::add_anchor`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AnchorId(pub u64);
 
 /// The state of one cell, for tools and tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,8 +165,14 @@ pub struct Simulation {
     stamp: u64,
     paused: bool,
     step_requested: bool,
+    /// The area the renderer shows (from `Command::SetView`). It is also an anchor.
     view: Option<CellRect>,
-    /// Chunk versions that the renderer has.
+    /// Other anchors: areas that must update and stay in memory.
+    anchors: Vec<(AnchorId, CellRect)>,
+    next_anchor: u64,
+    /// The anchors or settings changed since the world last got its areas.
+    anchors_changed: bool,
+    /// Chunk versions that the renderer has. A chunk that is not here is air for the renderer.
     sent: HashMap<ChunkPos, u64>,
     stats: SimStats,
     paint_rng: Rng,
@@ -84,21 +184,32 @@ pub struct Simulation {
     debug: bool,
     /// Air temperature for each row of cells (°C). Heat moves air cells toward it.
     air_temperature: Vec<i16>,
+    settings: SimSettings,
 }
 
 impl Simulation {
     pub fn new(content: Arc<Content>, config: SimConfig) -> Self {
         let bedrock = content.material("bedrock").unwrap_or(MaterialId::AIR);
-        let world = World::new(config.width_chunks, config.height_chunks, bedrock);
+        let height_chunks = config.height_chunks().max(1);
+        let source: Arc<dyn ChunkSource> = match (&config.source, config.width_chunks) {
+            (Some(s), _) => s.clone(),
+            (None, Some(_)) => Arc::new(AirSource),
+            (None, None) => Arc::new(LayerSource::new(&content, config.surface_y(), height_chunks * CHUNK_SIZE)),
+        };
+        let world = World::new(content.clone(), source, config.seed, height_chunks, config.width_chunks, bedrock);
         let mut sim = Simulation {
             content,
             world,
             seed: config.seed,
             tick: 0,
-            stamp: 1,
+            // Version 1 means "as the source made it" (`chunk::GENERATED_VERSION`).
+            stamp: chunk::GENERATED_VERSION + 1,
             paused: false,
             step_requested: false,
             view: None,
+            anchors: Vec::new(),
+            next_anchor: 1,
+            anchors_changed: true,
             sent: HashMap::new(),
             stats: SimStats::default(),
             paint_rng: Rng::new(config.seed ^ 0x70_6169_6e74),
@@ -108,10 +219,11 @@ impl Simulation {
             particles: particles::Particles::default(),
             debug: false,
             air_temperature: vec![],
+            settings: SimSettings::default(),
         };
         sim.react = react::ReactTable::new(&sim.content);
         sim.air_temperature = vec![foundry_core::DEFAULT_TEMPERATURE; sim.world.height_cells() as usize];
-        if config.bedrock_border && !bedrock.is_air() {
+        if config.bedrock_border && !bedrock.is_air() && config.width_chunks.is_some() {
             let (w, h) = sim.size_cells();
             for y in 0..h {
                 for x in [0, 1, w - 2, w - 1] {
@@ -131,13 +243,20 @@ impl Simulation {
         &self.content
     }
 
-    /// World size in cells (width, height).
+    /// World size in cells (width, height). The world goes from y = 0 down to y = height.
+    ///
+    /// The width is 0 for a world with no limit to the left and right (the normal game world).
+    /// For a finite box, x goes from 0 to width.
     pub fn size_cells(&self) -> (i32, i32) {
-        (self.world.width_cells(), self.world.height_cells())
+        (self.world.width_chunks().map_or(0, |w| w * CHUNK_SIZE), self.world.height_cells())
     }
 
     pub fn tick_count(&self) -> u64 {
         self.tick
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 
     pub fn is_paused(&self) -> bool {
@@ -148,13 +267,23 @@ impl Simulation {
         &self.stats
     }
 
+    /// How much chunk data the world holds.
+    pub fn memory(&self) -> MemoryStats {
+        self.world.memory()
+    }
+
     /// Apply one command from the main thread.
     pub fn apply(&mut self, cmd: Command) {
         match cmd {
             Command::Paint { center, radius, material, mode, temperature } => {
                 self.paint(center, radius as i32, material, mode, temperature)
             }
-            Command::SetView { area } => self.view = Some(area),
+            Command::SetView { area } => {
+                if self.view != Some(area) {
+                    self.view = Some(area);
+                    self.anchors_changed = true;
+                }
+            }
             Command::ForgetChunks(list) => {
                 for c in list {
                     self.sent.remove(&c);
@@ -168,6 +297,73 @@ impl Simulation {
             Command::SaveWorld { .. } | Command::LoadWorld { .. } => {}
         }
     }
+
+    // ---- Anchors ----
+
+    /// Add an anchor: an area of cells that must update and stay in memory, for example the
+    /// player or a factory building. Chunks within `SimSettings::sim_margin_chunks` of any anchor
+    /// (or of the view) update; farther chunks wait until an anchor comes near. The chunks inside
+    /// the area are made at the start of the next tick.
+    ///
+    /// With no anchors and no view, the whole world updates.
+    pub fn add_anchor(&mut self, area: CellRect) -> AnchorId {
+        let id = AnchorId(self.next_anchor);
+        self.next_anchor += 1;
+        self.anchors.push((id, area));
+        self.anchors_changed = true;
+        id
+    }
+
+    /// Move an anchor to a new area. Returns false if there is no anchor with this id.
+    pub fn move_anchor(&mut self, id: AnchorId, area: CellRect) -> bool {
+        match self.anchors.iter_mut().find(|a| a.0 == id) {
+            Some(a) => {
+                if a.1 != area {
+                    a.1 = area;
+                    self.anchors_changed = true;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Remove an anchor. Returns false if there is no anchor with this id.
+    pub fn remove_anchor(&mut self, id: AnchorId) -> bool {
+        let before = self.anchors.len();
+        self.anchors.retain(|a| a.0 != id);
+        self.anchors_changed |= self.anchors.len() != before;
+        self.anchors.len() != before
+    }
+
+    /// The anchors (without the view), in the order they were added.
+    pub fn anchors(&self) -> &[(AnchorId, CellRect)] {
+        &self.anchors
+    }
+
+    /// The area of the last `Command::SetView`.
+    pub fn view(&self) -> Option<CellRect> {
+        self.view
+    }
+
+    /// Give the world its update and keep areas, and make the chunks inside the anchor areas.
+    fn sync_anchors(&mut self) {
+        if !self.anchors_changed {
+            return;
+        }
+        self.anchors_changed = false;
+        let rects: Vec<CellRect> = self.view.iter().copied().chain(self.anchors.iter().map(|a| a.1)).collect();
+        let s = &self.settings;
+        let areas = Areas::new(&rects, s.sim_margin_chunks, s.keep_margin_chunks);
+        self.world.set_areas(areas, self.pool.as_ref());
+        let mut need = Vec::new();
+        for r in &rects {
+            need.extend(self.world.clip(*r).chunks());
+        }
+        self.world.load(&need, false, self.pool.as_ref());
+    }
+
+    // ---- Ticks ----
 
     /// Run one tick unless the simulation is paused. A `Step` command allows one tick while paused.
     /// Returns true if a tick ran.
@@ -183,12 +379,16 @@ impl Simulation {
     /// Run one tick, also when paused.
     pub fn tick(&mut self) {
         let start = Instant::now();
+        let ms = |start: Instant| start.elapsed().as_secs_f32() * 1000.0;
         self.stamp += 1;
+        let generated_before = self.world.generated_total();
+        self.sync_anchors();
+        let t_anchors = ms(start);
         let mats = &self.content.materials;
         // Events of the last tick (explosions) are handled first, so chains spread over ticks.
         let previous = std::mem::take(&mut self.events);
         explode::process(&mut self.world, mats, &previous, &mut self.particles, self.tick, self.seed, self.stamp);
-        let t_explode = start.elapsed().as_secs_f32() * 1000.0;
+        let t_explode = ms(start);
         let awake = schedule::movement_tick(
             &mut self.world,
             mats,
@@ -199,23 +399,31 @@ impl Simulation {
             self.pool.as_ref(),
             &mut self.events,
         );
-        let t_move = start.elapsed().as_secs_f32() * 1000.0;
+        let t_move = ms(start);
         self.particles.step(&mut self.world, mats, self.tick, self.seed, self.stamp);
-        let t_particles = start.elapsed().as_secs_f32() * 1000.0;
+        let t_particles = ms(start);
         heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
-        let ms = start.elapsed().as_secs_f32() * 1000.0;
+        let t_heat = ms(start);
+        let every = self.settings.unload_every_ticks as u64;
+        if every > 0 && self.tick.is_multiple_of(every) {
+            self.world.unload_far(self.pool.as_ref());
+        }
+        let total = ms(start);
         self.tick += 1;
-        let loaded = self.world.chunks.iter().filter(|c| c.is_some()).count() as u32;
         self.stats = SimStats {
             tick: self.tick,
-            tick_ms: ms,
+            tick_ms: total,
             awake_chunks: awake,
-            loaded_chunks: loaded,
+            loaded_chunks: self.world.live_count() as u32,
+            packed_chunks: self.world.packed_count() as u32,
+            generated_chunks: (self.world.generated_total() - generated_before) as u32,
             sections: vec![
-                ("explosions", t_explode),
+                ("anchors", t_anchors),
+                ("explosions", t_explode - t_anchors),
                 ("movement", t_move - t_explode),
                 ("particles", t_particles - t_move),
-                ("heat", ms - t_particles),
+                ("heat", t_heat - t_particles),
+                ("memory", total - t_heat),
             ],
         };
     }
@@ -226,6 +434,21 @@ impl Simulation {
         let h = self.world.height_cells() as usize;
         let last = by_row.last().copied().unwrap_or(foundry_core::DEFAULT_TEMPERATURE);
         self.air_temperature = (0..h).map(|y| by_row.get(y).copied().unwrap_or(last)).collect();
+    }
+
+    pub fn settings(&self) -> &SimSettings {
+        &self.settings
+    }
+
+    /// Change global settings. They apply from the next tick.
+    pub fn settings_mut(&mut self) -> &mut SimSettings {
+        self.anchors_changed = true;
+        &mut self.settings
+    }
+
+    /// The particles (free-flying cells).
+    pub fn particles(&self) -> &particles::Particles {
+        &self.particles
     }
 
     /// Mutable access to the particles, for tools that spawn them.
@@ -244,15 +467,13 @@ impl Simulation {
         self.pool = rayon::ThreadPoolBuilder::new().num_threads(n.max(1)).build().ok();
     }
 
-    /// The cell at a position. Outside the world: bedrock.
+    // ---- Cells ----
+
+    /// The cell at a position. Outside the world: bedrock. A cell in a chunk that is not in
+    /// memory is read from the chunk source (slow, but it does not change the world).
     pub fn cell(&self, p: CellPos) -> Cell {
-        if !self.world.in_bounds(p) {
-            return Cell { material: self.world.outside, temperature: foundry_core::DEFAULT_TEMPERATURE };
-        }
-        match self.world.chunk(p.chunk()) {
-            Some(c) => Cell { material: MaterialId(c.mat[p.local_index()]), temperature: c.temp[p.local_index()] },
-            None => Cell { material: MaterialId::AIR, temperature: foundry_core::DEFAULT_TEMPERATURE },
-        }
+        let (material, temperature) = self.world.cell(p);
+        Cell { material, temperature }
     }
 
     /// Write one cell. `temperature: None` uses the material's default temperature.
@@ -312,6 +533,10 @@ impl Simulation {
     /// Fill a circle. Bedrock is never replaced, except by painting bedrock.
     pub fn paint(&mut self, center: CellPos, radius: i32, material: MaterialId, mode: PaintMode, temperature: Option<i16>) {
         self.stamp += 1;
+        // Make the chunks first (in parallel), so that reading the old cells below is fast.
+        let area = self.world.clip(CellRect::around(center, radius));
+        let chunks: Vec<ChunkPos> = area.chunks().collect();
+        self.world.load(&chunks, false, self.pool.as_ref());
         let bedrock = self.world.outside;
         let r2 = radius * radius;
         for y in center.y - radius..=center.y + radius {
@@ -336,24 +561,28 @@ impl Simulation {
         }
     }
 
+    // ---- Snapshots and tools ----
+
     /// The chunks in the view that changed since the last snapshot, and the current numbers.
     pub fn take_snapshot(&mut self) -> Snapshot {
+        // Make the chunks of a new view now, if no tick ran since the view changed.
+        self.sync_anchors();
         let mut chunks = vec![];
         if let Some(view) = self.view {
-            let bounds = CellRect::new(0, 0, self.world.width_cells(), self.world.height_cells());
-            let area = view.intersect(&bounds);
-            let in_view: Vec<ChunkPos> = area.chunks().collect();
-            self.sent.retain(|c, _| {
-                let r = c.cell_rect();
-                !r.intersect(&area).is_empty()
-            });
-            for pos in in_view {
-                let Some(ch) = self.world.chunk(pos) else { continue };
-                if self.sent.get(&pos) == Some(&ch.version) {
+            let area = self.world.clip(view);
+            self.sent.retain(|c, _| !c.cell_rect().intersect(&area).is_empty());
+            for pos in area.chunks() {
+                // A chunk that is not live here is all air (sync_anchors made the view).
+                let chunk = self.world.chunk(pos);
+                let version = chunk.map_or(0, |c| c.version);
+                if self.sent.get(&pos).copied().unwrap_or(0) == version {
                     continue;
                 }
-                self.sent.insert(pos, ch.version);
-                chunks.push(pack_chunk(pos, ch));
+                self.sent.insert(pos, version);
+                chunks.push(match chunk {
+                    Some(ch) => pack_chunk(pos, ch),
+                    None => ChunkImage::new_air(pos),
+                });
             }
         }
         let mut particles = vec![];
@@ -361,7 +590,7 @@ impl Simulation {
         if let Some(view) = self.view {
             self.particles.views(view, &mut particles);
             if self.debug {
-                for pos in view.chunks() {
+                for pos in self.world.clip(view).chunks() {
                     if let Some(ch) = self.world.chunk(pos)
                         && !ch.dirty.is_empty()
                     {
@@ -387,33 +616,57 @@ impl Simulation {
         }
     }
 
-    /// A hash of all cell materials and temperatures. Equal worlds give equal hashes.
+    /// A hash of the materials and temperatures of all changed chunks (chunks that are not
+    /// pristine), in (y, x) order. Unchanged chunks come from the seed and the chunk source, so equal
+    /// worlds give equal hashes. Chunks that are all air are skipped.
     pub fn world_hash(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for pos in self.world.loaded_chunks() {
-            let c = self.world.chunk(pos).unwrap();
-            if c.is_all_air() {
-                continue;
-            }
-            h = fnv(h, &pos.x.to_le_bytes());
-            h = fnv(h, &pos.y.to_le_bytes());
-            for i in 0..CHUNK_AREA {
-                h = fnv(h, &c.mat[i].to_le_bytes());
-                h = fnv(h, &c.temp[i].to_le_bytes());
-            }
+        for pos in self.world.changed_positions() {
+            self.world.with_cells(pos, |c| {
+                let Some(c) = c else { return };
+                if c.is_all_air() {
+                    return;
+                }
+                h = fnv(h, &pos.x.to_le_bytes());
+                h = fnv(h, &pos.y.to_le_bytes());
+                for i in 0..CHUNK_AREA {
+                    h = fnv(h, &c.mat[i].to_le_bytes());
+                    h = fnv(h, &c.temp[i].to_le_bytes());
+                }
+            });
         }
         h
     }
 
-    /// Number of cells of a material in an area.
+    /// Number of cells of a material in an area. Cells outside the world count as bedrock.
+    /// Chunks that are not in memory are read from the chunk source; the world does not change.
     pub fn count_material(&self, area: CellRect, material: MaterialId) -> usize {
         let mut n = 0;
-        for y in area.y0..area.y1 {
-            for x in area.x0..area.x1 {
-                if self.cell(CellPos::new(x, y)).material == material {
-                    n += 1;
-                }
+        for c in area.chunks() {
+            let r = area.intersect(&c.cell_rect());
+            if r.is_empty() {
+                continue;
             }
+            if !self.world.chunk_in_bounds(c) {
+                if material == self.world.outside {
+                    n += (r.width() * r.height()) as usize;
+                }
+                continue;
+            }
+            let o = c.origin();
+            n += self.world.with_cells(c, |cells| match cells {
+                None if material.is_air() => (r.width() * r.height()) as usize,
+                None => 0,
+                Some(ch) => {
+                    let mut k = 0;
+                    for y in r.y0..r.y1 {
+                        for x in r.x0..r.x1 {
+                            k += (ch.mat[local_index(x - o.x, y - o.y)] == material.0) as usize;
+                        }
+                    }
+                    k
+                }
+            });
         }
         n
     }
@@ -421,6 +674,12 @@ impl Simulation {
     /// Read access to the world for tools and tests.
     pub fn world(&self) -> &World {
         &self.world
+    }
+
+    /// Use a store for packed chunks, for example region files on disk (see `ChunkStore`).
+    /// When the packed chunks in memory use more than `limit_bytes`, the farthest move into it.
+    pub fn set_chunk_store(&mut self, store: Box<dyn ChunkStore>, limit_bytes: usize) {
+        self.world.set_store(store, limit_bytes);
     }
 }
 
@@ -447,7 +706,7 @@ mod tests {
 
     fn sim() -> Simulation {
         let content = Arc::new(Content::load_default().unwrap());
-        Simulation::new(content, SimConfig { width_chunks: 4, height_chunks: 4, seed: 3, bedrock_border: true })
+        Simulation::new(content, SimConfig::finite(4, 4, 3))
     }
 
     #[test]
@@ -517,7 +776,7 @@ mod schedule_tests {
 
     fn big(threads: usize) -> Simulation {
         let content = Arc::new(Content::load_default().unwrap());
-        let mut s = Simulation::new(content, SimConfig { width_chunks: 12, height_chunks: 8, seed: 9, bedrock_border: true });
+        let mut s = Simulation::new(content, SimConfig::finite(12, 8, 9));
         s.set_threads(threads);
         let c = s.content().clone();
         let (sand, water, oil, stone, smoke) = (
@@ -573,7 +832,7 @@ mod schedule_tests {
     #[test]
     fn oil_floats_on_water() {
         let content = Arc::new(Content::load_default().unwrap());
-        let mut s = Simulation::new(content, SimConfig { width_chunks: 2, height_chunks: 2, seed: 2, bedrock_border: true });
+        let mut s = Simulation::new(content, SimConfig::finite(2, 2, 2));
         let c = s.content().clone();
         let (water, oil) = (c.expect_material("water"), c.expect_material("oil"));
         // Oil below, water above, in a narrow box.
@@ -603,7 +862,7 @@ mod debug_awake {
     #[ignore]
     fn print_awake() {
         let content = Arc::new(Content::load_default().unwrap());
-        let mut s = Simulation::new(content, SimConfig { width_chunks: 12, height_chunks: 8, seed: 9, bedrock_border: true });
+        let mut s = Simulation::new(content, SimConfig::finite(12, 8, 9));
         let c = s.content().clone();
         let (sand, water, oil, stone) = (c.expect_material("sand"), c.expect_material("water"), c.expect_material("oil"), c.expect_material("stone"));
         for x in (40..740).step_by(90) {
@@ -697,7 +956,7 @@ mod debug_view {
     #[ignore]
     fn show_water() {
         let content = Arc::new(Content::load_default().unwrap());
-        let mut s = Simulation::new(content, SimConfig { width_chunks: 4, height_chunks: 4, seed: 3, bedrock_border: true });
+        let mut s = Simulation::new(content, SimConfig::finite(4, 4, 3));
         let water = s.content().expect_material("water");
         s.paint(CellPos::new(128, 100), 10, water, PaintMode::Replace, None);
         for _ in 0..2000 {
@@ -705,8 +964,8 @@ mod debug_view {
         }
         println!("{}", ascii(&s, CellRect::new(0, 244, 256, 256)));
         println!("awake {}", s.stats().awake_chunks);
-        for c in s.world.chunks.iter_mut().flatten() {
-            c.dirty = chunk::LocalRect::FULL;
+        for pos in s.world.loaded_chunks().collect::<Vec<_>>() {
+            s.world.chunk_mut(pos).unwrap().dirty = chunk::LocalRect::FULL;
         }
         let h = s.world_hash();
         s.tick();
@@ -720,7 +979,7 @@ mod debug_view {
     #[ignore]
     fn show_sand_changes() {
         let content = Arc::new(Content::load_default().unwrap());
-        let mut s = Simulation::new(content, SimConfig { width_chunks: 4, height_chunks: 4, seed: 3, bedrock_border: true });
+        let mut s = Simulation::new(content, SimConfig::finite(4, 4, 3));
         let sand = s.content().expect_material("sand");
         s.paint(CellPos::new(128, 150), 30, sand, PaintMode::Replace, None);
         for _ in 0..3000 {

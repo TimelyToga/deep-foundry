@@ -147,7 +147,7 @@ fn save_world(sim: &Simulation, path: &std::path::Path) -> String {
 /// `Command::LoadWorld`. The new world replaces the old one only if the file loads.
 /// Returns the message for the player.
 fn load_world(sim: &mut Simulation, path: &std::path::Path) -> String {
-    match Simulation::load_file(sim.content().clone(), path) {
+    match Simulation::load_file_with_resolver(sim.content().clone(), &crate::demo::resolve_source, path) {
         Ok((loaded, report)) => {
             *sim = loaded;
             if report.unknown_materials.is_empty() {
@@ -169,7 +169,7 @@ mod tests {
 
     fn small_sim() -> Simulation {
         let content = Arc::new(Content::load_default().unwrap());
-        Simulation::new(content, SimConfig { width_chunks: 2, height_chunks: 2, seed: 1, bedrock_border: true })
+        Simulation::new(content, SimConfig::finite(2, 2, 1))
     }
 
     /// Wait until a snapshot matches, or fail after 2 seconds.
