@@ -1,0 +1,16 @@
+// Lime, cement and rust. See docs/design/02-content.md section 3, rules 44, 45 and 50.
+// Limestone calcining into quicklime (rule 43) is on the material itself (`melt`), since it
+// only needs heat, not a second material.
+[
+    Reaction(a: "quicklime", b: "water", chance: 0.3, into_a: Some("slaked_lime"), into_b: Some("air"), heat: 150, note: Some("Rule 44. Much heat is released.")),
+    Reaction(a: "cement", b: "water", chance: 0.3, into_a: Some("air"), into_b: Some("wet_concrete"), note: Some("Rule 45.")),
+
+    // Rule 45 continued: wet concrete sets after about 30 seconds (1800 ticks at 60 ticks/s).
+    // `life` is a u8 and cannot count that high, so this uses a low-chance reaction with any
+    // neighbor instead. See requests/content-data.md.
+    Reaction(a: "wet_concrete", b: "any", chance: 0.00056, into_a: Some("concrete")),
+
+    // Rule 50: iron or steel rusts slowly in water with air next to it.
+    Reaction(a: "pig_iron_block", b: "water", chance: 0.001, into_a: Some("rust"), needs_air: true, note: Some("Rule 50.")),
+    Reaction(a: "steel_block", b: "water", chance: 0.001, into_a: Some("rust"), needs_air: true, note: Some("Rule 50.")),
+]

@@ -1,0 +1,14 @@
+// Fire, gas explosions and the fire-affecting gases. See docs/design/02-content.md section 3.
+// Plain burning (wood, coal, charcoal, coke, oils, sulfur, hydrogen sulfide) is on the
+// materials themselves (the `burn` field), because it only needs one material plus ambient
+// air. This file is for reactions that need a second material: fire, spark, CO2 or oxygen.
+[
+    // Rule 21: these gases explode on contact with fire (spark is not in the game yet, see
+    // requests/content-data.md).
+    Reaction(a: "methane", b: "fire", chance: 0.4, into_a: Some("fire"), heat: 300, event: Some("explosion_small")),
+    Reaction(a: "coal_gas", b: "fire", chance: 0.4, into_a: Some("fire"), heat: 300, event: Some("explosion_small")),
+    Reaction(a: "hydrogen", b: "fire", chance: 0.5, into_a: Some("fire"), heat: 400, event: Some("explosion_small")),
+
+    Reaction(a: "fire", b: "carbon_dioxide", chance: 1.0, into_a: Some("air"), note: Some("Rule 22.")),
+    Reaction(a: "fire", b: "oxygen", chance: 1.0, heat: 200, note: Some("Rule 23. The fire gets hotter but stays fire.")),
+]
