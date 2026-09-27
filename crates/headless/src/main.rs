@@ -26,8 +26,9 @@ Commands:
   test [filter]
       Run every scene in assets/scenes/tests/ whose name contains the filter.
       Exit code 1 if a check that is not pending fails.
-  bench [name] [--ticks N] [--repeat N] [--save-baseline] [--compare]
+  bench [name] [--ticks N] [--repeat N] [--save-baseline] [--compare] [--png out.png]
       Run the benchmarks (all, or one by name). Print ms per tick.
+      --png writes a picture of the world after the last tick (one benchmark only).
       --repeat N runs each benchmark N times and keeps the run with the
       lowest mean (default: 3 with --save-baseline or --compare, else 1).
       --save-baseline writes bench/baseline.ron.
@@ -62,7 +63,7 @@ fn run(args: &[String]) -> Result<bool> {
     match command.as_str() {
         "scene" => cmd_scene(&Args::parse(rest, &["--ticks", "--png", "--scale", "--every"], &["--heat"])?),
         "test" => cmd_test(&Args::parse(rest, &[], &[])?),
-        "bench" => cmd_bench(&Args::parse(rest, &["--ticks", "--repeat"], &["--save-baseline", "--compare"])?),
+        "bench" => cmd_bench(&Args::parse(rest, &["--ticks", "--repeat", "--png"], &["--save-baseline", "--compare"])?),
         "determinism" => cmd_determinism(&Args::parse(rest, &["--ticks", "--every"], &[])?),
         "help" | "--help" | "-h" => {
             print!("{HELP}");
@@ -203,13 +204,23 @@ fn cmd_bench(a: &Args) -> Result<bool> {
         "{:<14} {:>6} {:>9} {:>8} {:>8} {:>8} {:>13} {:>9}",
         "benchmark", "ticks", "mean ms", "p50 ms", "p95 ms", "max ms", "awake (mean)", "with mat"
     );
+    if a.value("--png").is_some() && list.len() != 1 {
+        bail!("--png needs one benchmark name");
+    }
     let mut results = vec![];
+    let mut picture = None;
     for b in list {
         // Other programs on the machine make some runs slow. The fastest run is the most exact.
-        let r = (0..repeat)
+        let (r, sim) = (0..repeat)
             .map(|_| b.run(&content, ticks.unwrap_or(b.ticks)))
-            .min_by(|x, y| x.mean_ms.total_cmp(&y.mean_ms))
+            .min_by(|x, y| x.0.mean_ms.total_cmp(&y.0.mean_ms))
             .expect("repeat is at least 1");
+        if let Some(png) = a.value("--png") {
+            let (w, h) = sim.size_cells();
+            let scale = (1024 / w.max(h).max(1) as u32).clamp(1, 8);
+            render_cells(&sim, CellRect::new(0, 0, w, h), scale).save_png(Path::new(png))?;
+            picture = Some(png);
+        }
         println!(
             "{:<14} {:>6} {:>9.3} {:>8.3} {:>8.3} {:>8.3} {:>13.1} {:>9}",
             b.name, r.ticks, r.mean_ms, r.p50_ms, r.p95_ms, r.max_ms, r.awake_mean, r.chunks_with_material
@@ -217,6 +228,9 @@ fn cmd_bench(a: &Args) -> Result<bool> {
         results.push((b.name, r));
     }
     println!("(awake = SimStats::awake_chunks. with mat = chunks with any cell that is not air, after the last tick.)");
+    if let Some(png) = picture {
+        println!("picture: {png}");
+    }
 
     let path = paths::baseline_path();
     let mut ok = true;
