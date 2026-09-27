@@ -43,8 +43,17 @@ pub struct LocalGhost {
     pub size: (u8, u8),
 }
 
-/// Draw everything for this frame.
-pub fn draw(painter: &Painter, camera: &Camera, ppp: f32, frame: &FactoryFrame, ghost: Option<&LocalGhost>, mouse: Option<CellPos>) {
+/// Draw everything for this frame. `robot_at` is the robot's top-left corner to draw (between
+/// two ticks); `None` uses the position in the frame.
+pub fn draw(
+    painter: &Painter,
+    camera: &Camera,
+    ppp: f32,
+    frame: &FactoryFrame,
+    robot_at: Option<(f32, f32)>,
+    ghost: Option<&LocalGhost>,
+    mouse: Option<CellPos>,
+) {
     let v = View { camera, ppp };
     for m in &frame.marks {
         status_mark(painter, &v, m.rect, m.status);
@@ -53,7 +62,8 @@ pub fn draw(painter: &Painter, camera: &Camera, ppp: f32, frame: &FactoryFrame, 
         label(painter, &v, *r, text);
     }
     if let Some(r) = &frame.robot {
-        robot(painter, &v, r, frame);
+        let at = robot_at.unwrap_or((r.left as f32 + r.rem.0, r.top as f32 + r.rem.1));
+        robot(painter, &v, r, at, frame);
     }
     match ghost {
         Some(g) => draw_ghost(painter, &v, g, frame),
@@ -69,8 +79,8 @@ pub fn draw(painter: &Painter, camera: &Camera, ppp: f32, frame: &FactoryFrame, 
     }
 }
 
-fn robot(p: &Painter, v: &View, r: &Robot, frame: &FactoryFrame) {
-    let (x, y) = (r.left as f64 + r.rem.0 as f64, r.top as f64 + r.rem.1 as f64);
+fn robot(p: &Painter, v: &View, r: &Robot, at: (f32, f32), frame: &FactoryFrame) {
+    let (x, y) = (at.0 as f64, at.1 as f64);
     let (w, h) = (ROBOT_W as f64, ROBOT_H as f64);
     let outline = Stroke::new(1.0, Color32::from_rgb(30, 26, 22));
     let s = v.scale();

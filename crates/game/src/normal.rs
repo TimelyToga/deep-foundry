@@ -45,8 +45,10 @@ pub struct NormalMode {
     pub aim_override: Option<CellPos>,
     last_input: Option<PlayerInput>,
     last_windows: Option<(bool, bool)>,
-    /// When the robot position of the frame arrived, and the one before, for smooth drawing.
+    /// When the frame with a new tick arrived, and the robot position (top left, in cells) of the
+    /// tick before. The robot is drawn between the two, so it moves smoothly on fast displays.
     pub frame_time: Option<Instant>,
+    prev_robot: Option<(f32, f32)>,
 }
 
 impl NormalMode {
@@ -63,9 +65,23 @@ impl NormalMode {
             self.techs = t;
         }
         let notices = std::mem::take(&mut frame.notices);
+        if frame.tick != self.frame.tick || self.frame_time.is_none() {
+            self.prev_robot = self.frame.robot.map(|r| top_left(&r));
+            self.frame_time = Some(now);
+        }
         self.frame = frame;
-        self.frame_time = Some(now);
         notices
+    }
+
+    /// The robot's top-left corner (in cells) to draw now: between the last two ticks.
+    pub fn robot_pos(&self, now: Instant) -> Option<(f32, f32)> {
+        let cur = top_left(self.frame.robot.as_ref()?);
+        let (Some(prev), Some(at)) = (self.prev_robot, self.frame_time) else { return Some(cur) };
+        if (cur.0 - prev.0).abs() + (cur.1 - prev.1).abs() > 16.0 {
+            return Some(cur);
+        }
+        let t = (now.saturating_duration_since(at).as_secs_f32() / foundry_core::TICK_SECONDS as f32).clamp(0.0, 1.0);
+        Some((prev.0 + (cur.0 - prev.0) * t, prev.1 + (cur.1 - prev.1) * t))
     }
 
     /// The building kind of the part in the hand, if it is a building.
@@ -274,6 +290,10 @@ impl NormalMode {
             power_w: None,
         })
     }
+}
+
+fn top_left(r: &crate::player::Robot) -> (f32, f32) {
+    (r.left as f32 + r.rem.0, r.top as f32 + r.rem.1)
 }
 
 fn click_of(c: SlotClick) -> Click {

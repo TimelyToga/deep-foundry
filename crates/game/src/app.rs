@@ -937,7 +937,7 @@ impl Game {
         // In the normal mode the camera follows the robot. It moves before the UI, so the shapes
         // over the world (robot, ghost) use the same camera as the world.
         if self.is_normal() {
-            self.follow_robot(dt);
+            self.follow_robot(dt, frame_start);
         }
 
         // 2. The UI.
@@ -973,7 +973,8 @@ impl Game {
                     Some(n) => {
                         let mouse = (show_brush && !over_ui).then_some(mouse_cell);
                         let ghost = mouse.and_then(|m| n.ghost(content, m));
-                        overlay::draw(&painter, camera, root.ctx().pixels_per_point(), &n.frame, ghost.as_ref(), mouse);
+                        let at = n.robot_pos(frame_start);
+                        overlay::draw(&painter, camera, root.ctx().pixels_per_point(), &n.frame, at, ghost.as_ref(), mouse);
                     }
                     None => {
                         if show_brush && !over_ui {
@@ -1103,12 +1104,12 @@ impl Game {
     }
 
     /// The camera follows the robot (normal mode). The zoom still moves smoothly.
-    fn follow_robot(&mut self, dt: f32) {
-        let Some(r) = self.world.as_ref().and_then(|w| w.normal.as_ref()).and_then(|n| n.frame.robot) else { return };
+    fn follow_robot(&mut self, dt: f32, now: Instant) {
+        let Some((x, y)) = self.world.as_ref().and_then(|w| w.normal.as_ref()).and_then(|n| n.robot_pos(now)) else { return };
         if self.playing() {
             self.controls.update(dt, Vec2::ZERO, false);
         }
-        let (x, y) = r.center();
+        let (x, y) = (x + crate::player::ROBOT_W as f32 * 0.5, y + crate::player::ROBOT_H as f32 * 0.5);
         let target = DVec2::new(x as f64, y as f64 - 8.0);
         let k = 1.0 - (-dt as f64 * 12.0).exp();
         let c = &mut self.controls.camera.center;
