@@ -17,4 +17,4 @@ pub use ids::{BuildingId, BuildingKindId, MaterialId, RecipeId};
 pub use mailbox::SnapshotMailbox;
 pub use pos::{CellPos, CellRect, ChunkPos, TilePos, local_index, local_xy};
 pub use rng::Rng;
-pub use snapshot::{CellTexel, ChunkImage, SimStats, Snapshot, pack_texel};
+pub use snapshot::{CellTexel, ChunkImage, DebugChunk, ParticleView, SimStats, Snapshot, pack_texel};

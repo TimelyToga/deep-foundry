@@ -49,6 +49,28 @@ pub struct SimStats {
     pub sections: Vec<(&'static str, f32)>,
 }
 
+/// A free-flying cell (from explosions, spray, digging) or a visual-only particle, for drawing.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ParticleView {
+    /// Position in cells (x right, y down).
+    pub x: f32,
+    pub y: f32,
+    /// Velocity in cells per tick, for motion blur and interpolation.
+    pub vx: f32,
+    pub vy: f32,
+    pub material: u16,
+    pub temperature: i16,
+    pub shade: u8,
+}
+
+/// Debug data for one awake chunk (only when debug data is on, see `Command::SetDebug`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DebugChunk {
+    pub pos: ChunkPos,
+    /// The cells updated in the last tick, in world cells. Empty if the chunk slept.
+    pub updated: crate::pos::CellRect,
+}
+
 /// What the renderer and the UI need from one tick.
 ///
 /// Rule for `chunks`: the renderer draws a chunk it has no data for as air.
@@ -61,6 +83,10 @@ pub struct Snapshot {
     pub world_cells: (i32, i32),
     /// Chunks in the view that changed. At most one image for each chunk position.
     pub chunks: Vec<ChunkImage>,
+    /// Free-flying particles in the view (all of them, every tick).
+    pub particles: Vec<ParticleView>,
+    /// Awake chunks and their update areas, if debug data is on. Empty otherwise.
+    pub debug_chunks: Vec<DebugChunk>,
     pub stats: SimStats,
 }
 

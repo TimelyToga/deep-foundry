@@ -19,6 +19,8 @@ pub enum Command {
     SetPaused(bool),
     /// Run exactly one tick while paused.
     Step,
+    /// Turn debug data in snapshots on or off (see `Snapshot::debug_chunks`).
+    SetDebug(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

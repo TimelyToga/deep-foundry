@@ -3,7 +3,18 @@
 //! Owner: Milestone 1 task 1C. This is a stub until then.
 
 use crate::hood::Hood;
+use foundry_content::Content;
 use foundry_core::MaterialId;
+
+/// Lookup tables for reactions, built once from the content.
+#[derive(Debug, Default)]
+pub struct ReactTable {}
+
+impl ReactTable {
+    pub fn new(_content: &Content) -> Self {
+        Self {}
+    }
+}
 
 /// What a reaction attempt did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
