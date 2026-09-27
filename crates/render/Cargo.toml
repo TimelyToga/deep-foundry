@@ -8,3 +8,11 @@ publish.workspace = true
 [dependencies]
 foundry_core.workspace = true
 foundry_content.workspace = true
+wgpu = "30.0"
+bytemuck = { version = "1.25.2", features = ["derive"] }
+log.workspace = true
+glam = "0.33"
+pollster = "1"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
