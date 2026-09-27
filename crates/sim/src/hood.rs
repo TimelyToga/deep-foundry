@@ -9,9 +9,10 @@
 //! All cell reads and writes go through raw element pointers (never `&mut Chunk`), because two
 //! jobs can hold pointers to the same neighbor chunk at the same time.
 
+use crate::SimEvent;
 use crate::chunk::{Chunk, FLAG_PARITY, LocalRect};
 use foundry_content::{MaterialTable, Phase};
-use foundry_core::{CHUNK_MASK, CHUNK_SHIFT, MAX_CELL_MOVE, MaterialId, Rng};
+use foundry_core::{CHUNK_MASK, CHUNK_SHIFT, CellPos, MAX_CELL_MOVE, MaterialId, Rng};
 use std::ptr::{addr_of, addr_of_mut};
 
 /// Farthest a job may reach outside its own chunk (cell moves plus one cell for marks).
@@ -30,14 +31,37 @@ pub struct Hood<'a> {
     pub changed: u16,
     /// Material of cells outside the world.
     pub outside: MaterialId,
+    /// World position of the center chunk's top-left cell.
+    pub origin: CellPos,
+    /// Events for the simulation to handle after the pass (explosions, ...).
+    pub events: Vec<SimEvent>,
 }
 
 impl<'a> Hood<'a> {
     /// # Safety
     /// The pointers must be valid for the whole life of the hood, and the caller must follow the
     /// safety rule in the module documentation.
-    pub unsafe fn new(ptrs: [*mut Chunk; 9], mats: &'a MaterialTable, rng: Rng, parity: u8, outside: MaterialId) -> Self {
-        Self { ptrs, mats, rng, parity, marks: [LocalRect::EMPTY; 9], changed: 0, outside }
+    pub unsafe fn new(
+        ptrs: [*mut Chunk; 9],
+        mats: &'a MaterialTable,
+        rng: Rng,
+        parity: u8,
+        outside: MaterialId,
+        origin: CellPos,
+    ) -> Self {
+        Self { ptrs, mats, rng, parity, marks: [LocalRect::EMPTY; 9], changed: 0, outside, origin, events: Vec::new() }
+    }
+
+    /// World position of a hood cell.
+    #[inline(always)]
+    pub fn world_pos(&self, x: i32, y: i32) -> CellPos {
+        self.origin.offset(x, y)
+    }
+
+    /// Send an event to the simulation. It is handled after the movement passes.
+    #[inline]
+    pub fn emit(&mut self, event: SimEvent) {
+        self.events.push(event);
     }
 
     #[inline(always)]

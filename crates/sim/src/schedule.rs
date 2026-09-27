@@ -11,6 +11,7 @@ use crate::chunk::{Chunk, LocalRect};
 use crate::hood::Hood;
 use crate::update::update_chunk;
 use crate::world::World;
+use crate::SimEvent;
 use foundry_content::MaterialTable;
 use foundry_core::{ChunkPos, Rng};
 use rayon::prelude::*;
@@ -40,9 +41,11 @@ impl ChunkPtrs {
     }
 }
 
-type JobResult = (usize, [LocalRect; 9], u16);
+type JobResult = (usize, [LocalRect; 9], u16, Vec<SimEvent>);
 
 /// Run the movement and reaction update for one tick. Returns the number of chunks that worked.
+/// Events from the jobs are added to `events` in chunk order.
+#[allow(clippy::too_many_arguments)]
 pub fn movement_tick(
     world: &mut World,
     mats: &MaterialTable,
@@ -50,16 +53,17 @@ pub fn movement_tick(
     seed: u64,
     stamp: u64,
     pool: Option<&rayon::ThreadPool>,
+    events: &mut Vec<SimEvent>,
 ) -> u32 {
     let (w, h) = (world.width_chunks, world.height_chunks);
     let mut passes: [Vec<(usize, LocalRect)>; 4] = Default::default();
     for (i, slot) in world.chunks.iter_mut().enumerate() {
-        if let Some(c) = slot {
-            if !c.dirty.is_empty() {
-                let work = std::mem::replace(&mut c.dirty, LocalRect::EMPTY);
-                let (cx, cy) = (i as i32 % w, i as i32 / w);
-                passes[((cy & 1) * 2 + (cx & 1)) as usize].push((i, work));
-            }
+        if let Some(c) = slot
+            && !c.dirty.is_empty()
+        {
+            let work = std::mem::replace(&mut c.dirty, LocalRect::EMPTY);
+            let (cx, cy) = (i as i32 % w, i as i32 / w);
+            passes[((cy & 1) * 2 + (cx & 1)) as usize].push((i, work));
         }
     }
     let awake: usize = passes.iter().map(|p| p.len()).sum();
@@ -91,24 +95,26 @@ pub fn movement_tick(
             let (cx, cy) = (i as i32 % w, i as i32 / w);
             let rng = Rng::for_chunk(seed, tick, ChunkPos::new(cx, cy), k as u64);
             // SAFETY: all chunks in this pass are 2 apart; see `hood.rs`.
-            let mut hood = unsafe { Hood::new(ptrs.hood(cx, cy, w, h), mats, rng, parity, outside) };
+            let origin = ChunkPos::new(cx, cy).origin();
+            let mut hood = unsafe { Hood::new(ptrs.hood(cx, cy, w, h), mats, rng, parity, outside, origin) };
             update_chunk(&mut hood, work, left_to_right);
-            (i, hood.marks, hood.changed)
+            (i, hood.marks, hood.changed, hood.events)
         };
         let results: Vec<JobResult> = match pool {
             Some(p) => p.install(|| pass.par_iter().map(run).collect()),
             None => pass.par_iter().map(run).collect(),
         };
         drop(ptrs);
-        for (i, marks, changed) in results {
+        for (i, marks, changed, job_events) in results {
+            events.extend(job_events);
             let (cx, cy) = (i as i32 % w, i as i32 / w);
-            for s in 0..9 {
+            for (s, mark) in marks.iter().enumerate() {
                 let (x, y) = (cx + (s as i32 % 3) - 1, cy + (s as i32 / 3) - 1);
                 if x < 0 || y < 0 || x >= w || y >= h {
                     continue;
                 }
                 if let Some(c) = world.chunks[(y * w + x) as usize].as_deref_mut() {
-                    c.dirty.add_rect(marks[s]);
+                    c.dirty.add_rect(*mark);
                     if changed & (1 << s) != 0 {
                         c.version = stamp;
                     }
