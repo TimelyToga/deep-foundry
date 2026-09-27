@@ -26,7 +26,7 @@ pub mod widgets;
 
 mod screens;
 
-pub use action::{ClickButton, SettingChange, SlotClick, SlotRef, UiAction, WindowKind, WorldSize};
+pub use action::{ClickButton, GameMode, SettingChange, SlotClick, SlotRef, UiAction, WindowKind, WorldSize};
 pub use foundry_content::{ItemRef, Stack};
 pub use item::{CraftGroup, ItemKind, Maker};
 pub use model::*;
@@ -66,6 +66,7 @@ pub(crate) struct MenuState {
     pub confirm: Option<Confirm>,
     pub seed_text: String,
     pub world_size: WorldSize,
+    pub mode: GameMode,
     pub save_name: String,
     pub selected_save: Option<String>,
 }
@@ -130,6 +131,7 @@ impl UiState {
                 self.character_open = false;
                 self.stack.retain(|k| *k != WindowKind::Character);
             }
+            WindowKind::Research | WindowKind::Guide => {}
             WindowKind::Building | WindowKind::PowerNetwork => return,
         }
         self.raise(kind);
@@ -141,7 +143,7 @@ impl UiState {
             WindowKind::Character => self.character_open = false,
             WindowKind::Production => self.production_open = false,
             WindowKind::Building => self.picker_open = false,
-            WindowKind::PowerNetwork => {}
+            WindowKind::PowerNetwork | WindowKind::Research | WindowKind::Guide => {}
         }
         self.stack.retain(|k| *k != kind);
         actions.push(UiAction::CloseWindow(kind));

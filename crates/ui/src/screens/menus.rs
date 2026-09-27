@@ -223,7 +223,7 @@ fn new_game(cx: &mut Cx, st: &mut UiState) {
         st.menu.page = MenuPage::Root;
     }
     if ok && let Ok(seed) = st.menu.seed_text.trim().parse::<u64>() {
-        cx.act(UiAction::NewGame { seed, size: st.menu.world_size });
+        cx.act(UiAction::NewGame { seed, size: st.menu.world_size, mode: st.menu.mode });
         st.menu.page = MenuPage::Root;
     }
 }

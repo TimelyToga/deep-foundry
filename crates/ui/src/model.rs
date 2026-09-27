@@ -61,6 +61,72 @@ pub struct UiModel {
     pub sandbox: Option<SandboxView>,
     /// Performance numbers. When `Some`, the HUD shows them in a small box at the top right.
     pub perf: Option<PerfView>,
+    /// All technologies with their state. The game fills it while the research window is open.
+    /// Names, descriptions, kits and unlocks come from the content.
+    pub techs: Vec<TechEntry>,
+    /// Discovery points the player can spend (some technologies cost them).
+    pub discovery_points: u32,
+    /// The guide goals of the open tiers, in order. The HUD shows the first goals that are not done.
+    pub guide: Vec<GuideGoal>,
+}
+
+/// The state of a technology in the research window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TechState {
+    Done,
+    /// The current research.
+    Researching,
+    /// It can start now.
+    Available,
+    /// It cannot start now (see `TechEntry::reasons`).
+    #[default]
+    Locked,
+}
+
+/// One technology in the research window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TechEntry {
+    pub id: TechId,
+    pub state: TechState,
+    /// 0 to 1. Above 0 also for a technology that started and then stopped.
+    pub progress: f32,
+    /// Why it cannot start, as sentences for the player. Empty unless `Locked`.
+    pub reasons: Vec<String>,
+    /// Place in the research queue (0 = next). `None` if it is not queued.
+    pub queue_position: Option<usize>,
+}
+
+/// One goal of the guide (like a quest in the GTNH quest book).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GuideGoal {
+    pub id: String,
+    pub tier: u8,
+    pub title: String,
+    /// A short hint for the player.
+    pub text: String,
+    pub done: bool,
+    /// (have, need) for goals that count something, for example 40 of 64 clay.
+    pub count: Option<(u32, u32)>,
+    /// Discovery points the goal gives when it is done.
+    pub reward_points: u32,
+}
+
+/// The next repair stage of the Hub, for the Hub window.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MilestoneView {
+    pub stage: u8,
+    pub name: String,
+    pub description: String,
+    /// What the stage needs and what the Hub has received so far.
+    pub items: Vec<Delivery>,
+}
+
+/// One item of a Hub repair stage.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Delivery {
+    pub item: ItemRef,
+    pub delivered: u32,
+    pub need: u32,
 }
 
 /// The sandbox mode (like the Factorio cheat mode).
@@ -103,6 +169,9 @@ impl UiModel {
             message: String::new(),
             sandbox: None,
             perf: None,
+            techs: vec![],
+            discovery_points: 0,
+            guide: vec![],
         }
     }
 
@@ -240,10 +309,18 @@ pub struct AlertView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MachineStatus {
     Working,
+    /// Nothing to do and nothing is wrong (storage, walls, an empty belt).
+    Idle,
     #[default]
     NoRecipe,
     NoInput,
     OutputFull,
+    /// An output port has no free cells in front of it.
+    OutputBlocked,
+    /// The recipe needs a higher temperature.
+    TooCold,
+    /// Hit points are at 0.
+    Broken,
     NoPower,
     LowPower,
     NoFuel,
@@ -266,7 +343,11 @@ impl MachineStatus {
     pub fn label(self) -> &'static str {
         match self {
             MachineStatus::Working => "Working",
+            MachineStatus::Idle => "Idle",
             MachineStatus::NoRecipe => "No recipe",
+            MachineStatus::OutputBlocked => "Output blocked",
+            MachineStatus::TooCold => "Too cold",
+            MachineStatus::Broken => "Broken",
             MachineStatus::NoInput => "No input",
             MachineStatus::OutputFull => "Output full",
             MachineStatus::NoPower => "No power",
@@ -282,13 +363,18 @@ impl MachineStatus {
     pub fn color(self) -> StatusColor {
         match self {
             MachineStatus::Working => StatusColor::Green,
-            MachineStatus::NoInput | MachineStatus::OutputFull | MachineStatus::LowPower | MachineStatus::NoFuel => {
-                StatusColor::Yellow
-            }
-            MachineStatus::NoPower | MachineStatus::TooHot | MachineStatus::WrongVoltage | MachineStatus::RoomNotValid => {
-                StatusColor::Red
-            }
-            MachineStatus::NoRecipe | MachineStatus::Disabled => StatusColor::Gray,
+            MachineStatus::NoInput
+            | MachineStatus::OutputFull
+            | MachineStatus::OutputBlocked
+            | MachineStatus::TooCold
+            | MachineStatus::LowPower
+            | MachineStatus::NoFuel => StatusColor::Yellow,
+            MachineStatus::NoPower
+            | MachineStatus::TooHot
+            | MachineStatus::WrongVoltage
+            | MachineStatus::RoomNotValid
+            | MachineStatus::Broken => StatusColor::Red,
+            MachineStatus::NoRecipe | MachineStatus::Idle | MachineStatus::Disabled => StatusColor::Gray,
         }
     }
 }
@@ -409,6 +495,8 @@ pub struct BuildingView {
     pub power: Option<PowerUse>,
     /// °C
     pub temperature: Option<f32>,
+    /// The Hub: the next repair stage and what it still needs. `None` for other buildings.
+    pub milestone: Option<MilestoneView>,
 }
 
 impl BuildingView {

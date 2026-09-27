@@ -2,7 +2,7 @@
 //! It checks the path a player takes: new game, paint, pause, save, resume, load, quit to the
 //! main menu, continue, delete the save, quit.
 
-use foundry_ui::{UiAction, WorldSize};
+use foundry_ui::{GameMode, UiAction, WorldSize};
 use std::collections::VecDeque;
 
 /// One step of the test.
@@ -35,7 +35,7 @@ impl Smoke {
         let save = "smoke test";
         let id = "smoke test.dfworld";
         let steps = [
-            (10, Step::Act(UiAction::NewGame { seed: 3, size: WorldSize::Small })),
+            (10, Step::Act(UiAction::NewGame { seed: 3, size: WorldSize::Small, mode: GameMode::Sandbox })),
             (30, Step::PaintSand),
             (30, Step::Act(UiAction::Pause)),
             (5, Step::Act(UiAction::Save { name: save.into(), overwrite: false })),

@@ -573,7 +573,7 @@ impl Game {
             return;
         }
         match action {
-            UiAction::NewGame { seed, size } => {
+            UiAction::NewGame { seed, size, .. } => {
                 self.start_new_world(seed, size.chunks());
                 self.ui.message(format!("New world: seed {seed}"), now);
             }
@@ -611,6 +611,7 @@ impl Game {
             | UiAction::Craft { .. }
             | UiAction::CancelCraft { .. }
             | UiAction::SetRecipe { .. }
+            | UiAction::StartResearch(_)
             | UiAction::ShowAlert(_) => {}
         }
     }

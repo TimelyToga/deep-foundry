@@ -177,6 +177,7 @@ pub fn steam_assembler_view(c: &Content) -> BuildingView {
         speed: 1.0,
         power: None,
         temperature: Some(96.0),
+        milestone: None,
     }
 }
 
@@ -199,6 +200,7 @@ pub fn boiler_view(c: &Content) -> BuildingView {
         speed: 1.0,
         power: None,
         temperature: Some(212.0),
+        milestone: None,
     }
 }
 
@@ -222,6 +224,7 @@ pub fn electric_furnace_view(c: &Content) -> BuildingView {
         speed: 1.0,
         power: Some(PowerUse { use_w: 7740.0, max_w: 9000.0, voltage: Voltage::Lv, network_voltage: Some(Voltage::Lv), satisfaction: 0.86 }),
         temperature: Some(1140.0),
+        milestone: None,
     }
 }
 
@@ -538,7 +541,10 @@ impl MockGame {
                 }
             }
             UiAction::ShowAlert(id) => md.message = format!("The camera moves to alert {id}."),
-            UiAction::NewGame { seed, size } => {
+            UiAction::StartResearch(tech) => {
+                md.research = Some(crate::model::ResearchView { tech, progress: 0.0 });
+            }
+            UiAction::NewGame { seed, size, .. } => {
                 *md = model(content);
                 let (w, h) = size.cells();
                 md.message = format!("New world: seed {seed}, {w} × {h} cells.");
