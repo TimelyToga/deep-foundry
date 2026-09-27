@@ -84,6 +84,13 @@ pub struct MaterialDef {
     /// Liquids: the farthest a cell moves sideways in one tick.
     #[serde(default)]
     pub flow: u8,
+    /// Liquids: how long sideways movement lasts (0 to 1). Each tick a moving cell keeps its
+    /// momentum with this chance. Water about 0.9 (splashes out and levels fast); lava and mud 0.
+    #[serde(default)]
+    pub momentum: f32,
+    /// Liquids: chance (0 to 1) that a cell that lands fast flies off as a droplet.
+    #[serde(default)]
+    pub splash: f32,
     /// Powders: chance (0 to 1) that a diagonal slide stops. Higher gives steeper piles.
     #[serde(default)]
     pub friction: f32,

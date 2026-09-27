@@ -3,7 +3,7 @@
 //! All functions get hood coordinates of a cell in the center chunk. A cell never moves more than
 //! `MAX_CELL_MOVE` cells in one tick.
 
-use crate::chunk::{MOTION_RIGHT, MOTION_SPEED};
+use crate::chunk::{MOTION_MOMENTUM, MOTION_MOMENTUM_SHIFT, MOTION_RIGHT, MOTION_SPEED};
 use crate::hood::Hood;
 use foundry_content::Phase;
 use foundry_core::MaterialId;
@@ -58,6 +58,18 @@ fn fall(h: &mut Hood, x: i32, y: i32) -> bool {
     true
 }
 
+/// True if the cell below is still falling (it moved down in its last update). A falling cell
+/// must not "land" on it: it waits one tick and keeps its speed.
+#[inline]
+fn below_is_falling(h: &mut Hood, x: i32, y: i32) -> bool {
+    let b = h.mat(x, y + 1);
+    if matches!(h.mats.phase[b.index()], Phase::Powder | Phase::Liquid) && h.motion(x, y + 1) & MOTION_SPEED != 0 {
+        h.keep_awake(x, y);
+        return true;
+    }
+    false
+}
+
 /// Stop falling: clear the fall speed. Returns the old speed.
 #[inline]
 fn land(h: &mut Hood, x: i32, y: i32) -> u8 {
@@ -78,6 +90,9 @@ fn sink_chance(heavy: f32, light: f32) -> f32 {
 fn powder(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
     if fall(h, x, y) {
         return true;
+    }
+    if h.motion(x, y) & MOTION_SPEED != 0 && below_is_falling(h, x, y) {
+        return false;
     }
     let speed = land(h, x, y);
     let md = h.mats.density[m.index()];
@@ -143,8 +158,32 @@ fn liquid_move(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
     if fall(h, x, y) {
         return true;
     }
-    land(h, x, y);
-    let md = h.mats.density[m.index()];
+    if h.motion(x, y) & MOTION_SPEED != 0 && below_is_falling(h, x, y) {
+        return false;
+    }
+    let speed = land(h, x, y);
+    let mi = m.index();
+    let md = h.mats.density[mi];
+
+    // Landing. A fast cell may splash off as a droplet. Otherwise its fall speed becomes
+    // sideways momentum, so falling liquid spreads out instead of piling up.
+    if speed >= 2 {
+        let splash = h.mats.splash[mi];
+        if speed >= h.settings.splash_min_speed && h.splash_ok && splash > 0.0 && h.mat(x, y - 1).is_air() && h.rng.chance(splash) {
+            let s = speed as f32 / 4.0;
+            let dir = if h.rng.coin() { 1.0 } else { -1.0 };
+            let vx = dir * s * (0.25 + 0.5 * h.rng.unit());
+            let vy = -s * (0.3 + 0.4 * h.rng.unit());
+            h.launch(x, y, vx, vy);
+            return true;
+        }
+        if h.mats.momentum[mi] > 0 {
+            let level = (speed / 4).clamp(1, 3);
+            let right = h.rng.coin();
+            let motion = h.motion(x, y) & !(MOTION_MOMENTUM | MOTION_RIGHT);
+            h.set_motion(x, y, motion | (level << MOTION_MOMENTUM_SHIFT) | if right { MOTION_RIGHT } else { 0 });
+        }
+    }
 
     // Sink through a lighter liquid.
     let below = h.mat(x, y + 1);
@@ -181,40 +220,54 @@ fn liquid_move(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
             return true;
         }
     }
-    // Flow sideways: keep the last direction; turn around at a wall.
-    // The cell moves if it finds a place where it can fall, or if liquid above it (straight up,
-    // or up on the side it leaves) can fill the place it leaves. Otherwise it stays: without this
-    // rule a partial top row moves forever and never comes to rest.
-    let flow = (h.mats.flow[m.index()] as i32).clamp(1, MAX_FLOW);
+
+    // Flow sideways. A cell moves (at most `flow` cells) for one of these reasons:
+    // - drop: it sees a place to fall within the look-ahead;
+    // - pressed: liquid above it (straight up, or up on the side it leaves) fills its place;
+    // - momentum: it is still moving (from a landing or an earlier move); momentum fades with
+    //   the material's `momentum` chance, and a cell that hits something turns around and loses
+    //   one level (it bounces);
+    // - wide surface: on top of liquid, the row ahead is free (other surface cells ahead do not
+    //   count, because they move too). For this reason a cell never turns around, and it gains no
+    //   momentum. So a partial top row spreads out and then comes to rest.
+    // Only reasons that release energy (drop, pressed) give new momentum. This keeps the total
+    // movement finite: the liquid always comes to rest.
+    let flow = (h.mats.flow[mi] as i32).clamp(1, MAX_FLOW);
+    let look = h.settings.liquid_look_ahead.clamp(1, LOOK_AHEAD);
+    let keep_chance = h.mats.momentum[mi];
     let is_liquid = |h: &Hood, x: i32, y: i32| h.mats.phase[h.mat(x, y).index()] == Phase::Liquid;
     let above = is_liquid(h, x, y - 1);
+    let on_liquid = is_liquid(h, x, y + 1);
+    let mut level = (motion & MOTION_MOMENTUM) >> MOTION_MOMENTUM_SHIFT;
     for attempt in 0..2 {
         let pressed = above || is_liquid(h, x - dir, y - 1);
-        // Look up to LOOK_AHEAD cells for a place to fall; move at most `flow` cells.
-        // `open`: the row is free and rests on liquid for the whole look-ahead (a wide surface).
         let mut last_free = None;
         let mut drop_at = None;
         let mut open = true;
-        for d in 1..=LOOK_AHEAD {
+        let mut blocked = false;
+        for d in 1..=look {
             let tx = x + dir * d;
             let t = h.mat(tx, y);
             if !passable(h, t) || !h.inside(tx, y) {
-                open = false;
-                // A heavier liquid with more of itself on top pushes under a lighter one next to it.
-                // (Without the weight on top, the swap gains nothing and the two mix forever.)
-                if d == 1
-                    && h.mats.phase[t.index()] == Phase::Liquid
-                    && t != m
-                    && h.mats.density[t.index()] < md
-                    && h.mat(x, y - 1) == m
-                    && h.rng.chance(0.3)
+                if !blocked && d == 1 && h.mats.phase[t.index()] == Phase::Liquid && t != m
+                    && h.mats.density[t.index()] < md && h.mat(x, y - 1) == m && h.rng.chance(0.3)
                 {
+                    // A heavier liquid with more of itself on top pushes under a lighter one.
+                    // (Without the weight on top, the swap gains nothing and the two mix forever.)
                     last_free = Some(tx);
                     drop_at = Some(tx);
+                    break;
                 }
+                // Another surface cell of the same liquid ahead: it moves too, so look past it.
+                let surface_cell = t == m && h.mat(tx, y - 1).is_air() && is_liquid(h, tx, y + 1);
+                if surface_cell && d < look {
+                    blocked = true;
+                    continue;
+                }
+                open = false;
                 break;
             }
-            if d <= flow {
+            if d <= flow && !blocked {
                 last_free = Some(tx);
             }
             let b = h.mat(tx, y + 1);
@@ -226,17 +279,31 @@ fn liquid_move(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
                 open = false;
             }
         }
-        // On a wide surface the cell keeps its direction (never turns around for this reason),
-        // so a partial top row spreads out and then comes to rest against a wall or other cells.
-        let keep_going = attempt == 0 && open && is_liquid(h, x, y + 1);
-        let target = if drop_at.is_some() || pressed || keep_going { last_free } else { None };
-        if let Some(tx) = target {
-            let bits = if dir > 0 { motion | MOTION_RIGHT } else { motion & !MOTION_RIGHT };
+        let releases = drop_at.is_some() || pressed;
+        let wide_surface = attempt == 0 && open && on_liquid;
+        if let Some(tx) = last_free
+            && (releases || level > 0 || wide_surface)
+        {
+            let new_level = if level > 0 {
+                if h.rng.chance_u16(keep_chance) { level } else { level - 1 }
+            } else if releases && keep_chance > 0 {
+                1
+            } else {
+                0
+            };
+            let bits = (motion & !(MOTION_RIGHT | MOTION_MOMENTUM))
+                | if dir > 0 { MOTION_RIGHT } else { 0 }
+                | (new_level << MOTION_MOMENTUM_SHIFT);
             h.set_motion(x, y, bits);
             h.swap(x, y, tx, y);
             return true;
         }
+        // Blocked this way: bounce (turn around and lose one level of momentum).
+        level = level.saturating_sub(1);
         dir = -dir;
+    }
+    if motion & MOTION_MOMENTUM != 0 {
+        h.set_motion(x, y, motion & !MOTION_MOMENTUM);
     }
     false
 }

@@ -21,6 +21,35 @@ mod schedule;
 mod update;
 pub mod world;
 
+/// Global simulation settings that are not per material. Change them with
+/// `Simulation::settings_mut`. Per-material settings (flow, momentum, splash, friction, ...)
+/// are in the data files.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimSettings {
+    /// Gravity for free-flying particles, in cells per tick².
+    pub particle_gravity: f32,
+    /// Top speed of particles, in cells per tick.
+    pub particle_max_speed: f32,
+    /// Soft limit on particles. Splashes stop above half of it; visual particles stop at it.
+    pub max_particles: usize,
+    /// A liquid cell must land with at least this fall speed (0 to 28) to splash.
+    pub splash_min_speed: u8,
+    /// How far (cells, 1 to 31) a liquid surface cell looks to the side for a place to fall.
+    pub liquid_look_ahead: i32,
+}
+
+impl Default for SimSettings {
+    fn default() -> Self {
+        Self {
+            particle_gravity: 0.18,
+            particle_max_speed: 12.0,
+            max_particles: 50_000,
+            splash_min_speed: 10,
+            liquid_look_ahead: 31,
+        }
+    }
+}
+
 /// Something that happened in a tick that needs work outside the per-cell update.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SimEvent {
@@ -84,6 +113,7 @@ pub struct Simulation {
     debug: bool,
     /// Air temperature for each row of cells (°C). Heat moves air cells toward it.
     air_temperature: Vec<i16>,
+    settings: SimSettings,
 }
 
 impl Simulation {
@@ -108,6 +138,7 @@ impl Simulation {
             particles: particles::Particles::default(),
             debug: false,
             air_temperature: vec![],
+            settings: SimSettings::default(),
         };
         sim.react = react::ReactTable::new(&sim.content);
         sim.air_temperature = vec![foundry_core::DEFAULT_TEMPERATURE; sim.world.height_cells() as usize];
@@ -189,18 +220,23 @@ impl Simulation {
         let previous = std::mem::take(&mut self.events);
         explode::process(&mut self.world, mats, &previous, &mut self.particles, self.tick, self.seed, self.stamp);
         let t_explode = start.elapsed().as_secs_f32() * 1000.0;
+        let mut spawns = vec![];
+        let splash_ok = self.particles.len() < self.settings.max_particles / 2;
         let awake = schedule::movement_tick(
             &mut self.world,
-            mats,
-            &self.react,
+            schedule::PassInput { mats, react: &self.react, settings: &self.settings, splash_ok },
             self.tick,
             self.seed,
             self.stamp,
             self.pool.as_ref(),
             &mut self.events,
+            &mut spawns,
         );
+        for sp in spawns {
+            self.particles.spawn(sp, self.settings.max_particles);
+        }
         let t_move = start.elapsed().as_secs_f32() * 1000.0;
-        self.particles.step(&mut self.world, mats, self.tick, self.seed, self.stamp);
+        self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp);
         let t_particles = start.elapsed().as_secs_f32() * 1000.0;
         heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
         let ms = start.elapsed().as_secs_f32() * 1000.0;
@@ -226,6 +262,20 @@ impl Simulation {
         let h = self.world.height_cells() as usize;
         let last = by_row.last().copied().unwrap_or(foundry_core::DEFAULT_TEMPERATURE);
         self.air_temperature = (0..h).map(|y| by_row.get(y).copied().unwrap_or(last)).collect();
+    }
+
+    pub fn settings(&self) -> &SimSettings {
+        &self.settings
+    }
+
+    /// Change global settings. They apply from the next tick.
+    pub fn settings_mut(&mut self) -> &mut SimSettings {
+        &mut self.settings
+    }
+
+    /// The particles (free-flying cells).
+    pub fn particles(&self) -> &particles::Particles {
+        &self.particles
     }
 
     /// Mutable access to the particles, for tools that spawn them.
@@ -664,6 +714,20 @@ pub(crate) fn dump_png(s: &Simulation, r: CellRect, scale: u32, path: &str) {
             }
         }
     }
+    let mut views = vec![];
+    s.particles().views(r, &mut views);
+    for v in views {
+        let (px, py) = ((v.x - r.x0 as f32) as u32, (v.y - r.y0 as f32) as u32);
+        if px < w && py < h {
+            let col = c.materials.colors[v.material as usize][0];
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    let lighter = |c: u8| c.saturating_add(70);
+                    img.put_pixel(px * scale + dx, py * scale + dy, image::Rgb([lighter(col[0]), lighter(col[1]), lighter(col[2])]));
+                }
+            }
+        }
+    }
     std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).ok();
     img.save(path).unwrap();
 }
@@ -688,6 +752,76 @@ pub(crate) fn ascii(s: &Simulation, r: CellRect) -> String {
         out.push('\n');
     }
     out
+}
+
+#[cfg(test)]
+mod liquid_tests {
+    use super::*;
+
+    /// A ball of water dropped into a box: returns (ticks until everything sleeps, surface heights).
+    fn drop_water(save_frames: bool) -> (u64, Vec<i32>, usize, usize) {
+        let content = Arc::new(Content::load_default().unwrap());
+        let mut s = Simulation::new(content, SimConfig { width_chunks: 6, height_chunks: 4, seed: 4, bedrock_border: true });
+        let water = s.content().expect_material("water");
+        s.paint(CellPos::new(192, 50), 30, water, PaintMode::Replace, None);
+        let all = CellRect::new(0, 0, 384, 256);
+        let total = s.count_material(all, water);
+        let mut settled_at = 0;
+        let mut max_particles = 0;
+        for t in 1..=6000u64 {
+            s.tick();
+            max_particles = max_particles.max(s.particles().len());
+            let count = s.count_material(all, water) + s.particles().count_material(water);
+            assert_eq!(count, total, "water is kept at tick {t}");
+            if save_frames && [30, 60, 90, 120, 200, 400, 800].contains(&t) {
+                dump_png(&s, CellRect::new(0, 100, 384, 256), 3, &format!("{}/../../out/water_{t:04}.png", env!("CARGO_MANIFEST_DIR")));
+            }
+            if s.stats().awake_chunks == 0 && s.particles().is_empty() {
+                settled_at = t;
+                break;
+            }
+        }
+        // Surface height of each column (first water cell from the top).
+        let heights = (2..382)
+            .map(|x| (0..256).find(|&y| s.cell(CellPos::new(x, y)).material == water).unwrap_or(256))
+            .collect();
+        (settled_at, heights, total, max_particles)
+    }
+
+    #[test]
+    fn dropped_water_splashes_levels_and_rests() {
+        let (settled_at, heights, total, max_particles) = drop_water(false);
+        assert!(max_particles > 20, "the landing splashes: {max_particles} particles");
+        assert!(settled_at > 0 && settled_at < 1500, "water comes to rest in under 25 s: tick {settled_at}");
+        let (lo, hi) = (*heights.iter().min().unwrap(), *heights.iter().max().unwrap());
+        assert!(hi - lo <= 1, "the surface is flat: rows {lo} to {hi} ({total} cells)");
+    }
+
+    #[test]
+    #[ignore]
+    fn water_frames() {
+        let (settled_at, heights, total, max_particles) = drop_water(true);
+        let (lo, hi) = (heights.iter().min().unwrap(), heights.iter().max().unwrap());
+        println!("settled at tick {settled_at}, surface rows {lo}..{hi}, {total} cells, max particles {max_particles}");
+        let content = Arc::new(Content::load_default().unwrap());
+        let mut s = Simulation::new(content, SimConfig { width_chunks: 6, height_chunks: 4, seed: 4, bedrock_border: true });
+        let water = s.content().expect_material("water");
+        s.paint(CellPos::new(192, 50), 30, water, PaintMode::Replace, None);
+        for _ in 0..3000 {
+            s.tick();
+        }
+        println!("after 3000: awake {} particles {}", s.stats().awake_chunks, s.particles().len());
+        for pos in s.world.loaded_chunks().collect::<Vec<_>>() {
+            let ch = s.world.chunk(pos).unwrap();
+            if ch.dirty.is_empty() { continue; }
+            let d = ch.dirty;
+            for y in d.y0..d.y1 { for x in d.x0..d.x1 {
+                let i = foundry_core::local_index(x, y);
+                if ch.mat[i] != 0 && ch.motion[i] != 0 { println!("{pos:?} ({x},{y}) mat {} motion {:08b}", ch.mat[i], ch.motion[i]); }
+            } }
+            println!("{pos:?} dirty {d:?}");
+        }
+    }
 }
 
 #[cfg(test)]
