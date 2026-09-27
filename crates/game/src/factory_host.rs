@@ -851,6 +851,9 @@ impl FactoryHost {
         }
 
         self.factory.tick(sim);
+        // The simulation has no reaction events yet (`SimEvent::Reaction`, see
+        // docs/design/requests/factory-core.md). When it has them, call
+        // `self.factory.observe_reaction(index, at)` here for each event of `sim.events()`.
         for e in self.factory.take_events() {
             match e {
                 FactoryEvent::Broke { kind, .. } => {
