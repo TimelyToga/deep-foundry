@@ -3,7 +3,8 @@
 //! Run: `cargo run -p foundry_ui --example preview`
 //!
 //! The mock game applies the UI actions, so crafting, slot clicks, saves and menus work.
-//! Keys of the game UI: E (character), P (statistics), Esc (close / pause), 1-0 (quickbar).
+//! Keys of the game UI: E (character), P (statistics), T (research), G (guide), Esc (close / pause),
+//! 1-0 (quickbar).
 //! Extra keys of the preview are listed in the help box (F1).
 
 use eframe::egui;
@@ -76,6 +77,9 @@ impl Preview {
             let next = steps.iter().copied().find(|s| *s > now + 0.01).unwrap_or(steps[0]);
             self.game.apply(UiAction::ChangeSetting(SettingChange::UiScale(next)));
         }
+        if pressed(Key::F10) {
+            self.game.open_building(mock::hub_view(&c));
+        }
         if pressed(Key::Q) {
             self.game.apply(UiAction::ClearHand);
         }
@@ -87,15 +91,15 @@ impl Preview {
         }
         let lines = [
             "UI preview (mock data)",
-            "E  character screen    P  statistics    Esc  close / pause",
-            "1-0, Shift+1-0  quickbar    Q  empty the hand",
-            "F2 steam assembler   F3 boiler   F4 electric furnace",
+            "E  character screen    P  statistics    T  research    G  guide",
+            "Esc  close / pause    1-0, Shift+1-0  quickbar    Q  empty the hand",
+            "F2 steam assembler   F3 boiler   F4 electric furnace   F10 Hub",
             "F5 power network   F6 item in hand   F7 hover cell / building",
             "F8 main menu / game   F9 UI scale   F1 hide this help",
         ];
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("preview-help")));
         let screen = ctx.content_rect();
-        let w = 470.0;
+        let w = 540.0;
         let r = egui::Rect::from_min_size(egui::pos2(screen.center().x - w * 0.5, screen.top() + 8.0), egui::vec2(w, 12.0 + lines.len() as f32 * 19.0));
         painter.rect_filled(r, 4.0, egui::Color32::from_black_alpha(170));
         for (i, l) in lines.iter().enumerate() {
