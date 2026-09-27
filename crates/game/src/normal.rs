@@ -229,10 +229,11 @@ impl NormalMode {
             units: t.units,
             capacity: t.capacity,
         }));
+        // The hand shows the parts on the cursor, else the chosen spray material.
         pl.hand = f.cursor.or_else(|| {
             let m = self.spray?;
-            let units = pl.tank.iter().filter(|t| t.material == Some(m)).map(|t| t.units).sum();
-            Some(Stack { item: ItemRef::Material(m), count: units })
+            let units: u32 = pl.tank.iter().filter(|t| t.material == Some(m)).map(|t| t.units).sum();
+            (units > 0).then_some(Stack { item: ItemRef::Material(m), count: units })
         });
         pl.hotbar.clear();
         pl.hotbar.extend(f.hotbar.iter().copied());
@@ -400,3 +401,7 @@ pub fn key_bindings() -> Vec<(String, String)> {
     .map(|(a, k)| (a.to_string(), k.to_string()))
     .collect()
 }
+
+#[cfg(test)]
+#[path = "normal_tests.rs"]
+mod tests;
