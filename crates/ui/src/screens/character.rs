@@ -20,6 +20,9 @@ const TAB_H: f32 = 64.0;
 const CRAFT_W: f32 = GRID_W + 12.0;
 
 pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
+    if cx.model.sandbox.is_some() {
+        return show_sandbox(cx, st);
+    }
     let ctx = cx.ctx;
     let inv = inventory::panel_size(cx);
     let craft_h = HEAD + TAB_H + 12.0 + RECIPE_ROWS as f32 * size::SLOT + 4.0;
@@ -39,6 +42,76 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
         let craft_rect = Rect::from_min_size(pos2(inv_rect.right() + 16.0, f.content.top()), vec2(CRAFT_W, craft_h));
         crafting_panel(ui, cx, st, craft_rect);
     });
+}
+
+const BRUSH_W: f32 = 300.0;
+
+/// The sandbox character screen: all materials on the left, the brush on the right.
+fn show_sandbox(cx: &mut Cx, st: &mut UiState) {
+    let ctx = cx.ctx;
+    let inv = inventory::panel_size(cx);
+    let content = vec2(inv.x + 16.0 + BRUSH_W, inv.y.max(376.0));
+    let outer = widgets::window_outer(content);
+    let rect = widgets::place(ctx.content_rect(), outer, st.offset(WindowKind::Character) - vec2(0.0, 40.0));
+    let id = window_id(WindowKind::Character);
+    widgets::area(ctx, id, Order::Middle, rect, |ui| {
+        let f = widgets::window(ui, id, rect, "Sandbox", true);
+        st.move_window(WindowKind::Character, f.drag);
+        if f.close_clicked {
+            st.close(WindowKind::Character, cx.actions);
+            return;
+        }
+        let inv_rect = Rect::from_min_size(f.content.min, inv);
+        inventory::panel(ui, cx, inv_rect, "");
+        let brush = Rect::from_min_size(pos2(inv_rect.right() + 16.0, f.content.top()), vec2(BRUSH_W, content.y));
+        brush_panel(ui, cx, brush);
+    });
+}
+
+/// The material in the hand, the brush size, and the paint controls.
+fn brush_panel(ui: &mut Ui, cx: &mut Cx, r: Rect) {
+    let model = cx.model;
+    let content = &*model.content;
+    let p = ui.painter().clone();
+    widgets::heading(&p, r.min + vec2(0.0, 4.0), "Brush");
+    let panel = Rect::from_min_max(pos2(r.left(), r.top() + HEAD), r.right_bottom());
+    widgets::shallow(&p, panel);
+    let x = panel.left() + 10.0;
+    let mut y = panel.top() + 10.0;
+    let icon = Rect::from_min_size(pos2(x, y), Vec2::splat(56.0));
+    widgets::deep(&p, icon);
+    match model.player.hand {
+        Some(hand) => {
+            cx.atlas.paint(&p, hand.item, icon.shrink(4.0), egui::Color32::WHITE);
+            p.text(pos2(icon.right() + 10.0, y + 6.0), Align2::LEFT_TOP, item::name(content, hand.item), crate::theme::font_bold(text::TITLE), color::HEADING);
+            p.text(pos2(icon.right() + 10.0, y + 30.0), Align2::LEFT_TOP, item::kind(content, hand.item).label(), font_regular(text::SMALL), color::TEXT_DIM);
+        }
+        None => {
+            p.text(pos2(icon.right() + 10.0, icon.center().y), Align2::LEFT_CENTER, "Nothing in the hand", crate::theme::font(text::BODY), color::TEXT_DIM);
+        }
+    }
+    y = icon.bottom() + 12.0;
+    let radius = model.sandbox.map(|s| s.brush_radius).unwrap_or(0);
+    p.text(pos2(x, y), Align2::LEFT_TOP, format!("Size: {} cells across", radius * 2 + 1), crate::theme::font(text::BODY), color::TEXT);
+    y += 30.0;
+    let lines = [
+        ("Left mouse", "paint"),
+        ("Right mouse", "erase"),
+        ("[  and  ]", "brush size"),
+        ("1 - 0", "quickbar materials"),
+        ("Q", "empty the hand"),
+        ("Mouse wheel", "zoom"),
+        ("W A S D", "move the view"),
+        ("Space", "pause the simulation"),
+    ];
+    for (key, what) in lines {
+        p.text(pos2(x, y), Align2::LEFT_TOP, key, crate::theme::font_bold(text::BODY), color::HEADING);
+        p.text(pos2(x + 110.0, y), Align2::LEFT_TOP, what, font_regular(text::BODY), color::TEXT);
+        y += 21.0;
+    }
+    let tip = "Hold a material and click a quickbar slot to put it there.";
+    let galley = p.layout(tip.to_string(), font_regular(text::SMALL), color::TEXT_DIM, panel.width() - 20.0);
+    p.galley(pos2(x, y + 8.0), galley, color::TEXT_DIM);
 }
 
 /// Recipes that show in the hand crafting menu: known and hand-craftable.

@@ -384,7 +384,8 @@ impl FoundryUi {
                         }
                     }
                 }
-                if p {
+                // The sandbox has no production statistics.
+                if p && model.sandbox.is_none() {
                     self.toggle(WindowKind::Production);
                 }
                 if let Some(d) = digit {

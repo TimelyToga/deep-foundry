@@ -414,6 +414,54 @@ pub fn model(content: Arc<Content>) -> UiModel {
     model
 }
 
+/// A sandbox model like the one the game uses now: every material with no limit in the
+/// inventory, brush materials in the quickbar, sand in the hand, and performance numbers.
+pub fn sandbox_model(content: Arc<Content>) -> UiModel {
+    let c = content.clone();
+    let mut m = UiModel::new(content);
+    m.state = GameState::Playing;
+    m.player.inventory = c
+        .materials
+        .all()
+        .filter(|id| c.materials.ids[id.index()] != "bedrock")
+        .map(|id| Some(Stack { item: ItemRef::Material(id), count: 1 }))
+        .collect();
+    let ids = ["sand", "water", "oil", "lava", "stone", "wood", "fire", "steam", "methane", "air"];
+    m.player.hotbar = ids.iter().map(|id| c.material(id).map(ItemRef::Material)).collect();
+    m.player.hotbar.resize(20, None);
+    m.player.selected_hotbar = Some(0);
+    m.player.hand = Some(Stack { item: it(&c, "sand"), count: 1 });
+    m.sandbox = Some(SandboxView { brush_radius: 6, sim_paused: false });
+    m.perf = Some(PerfView { fps: 120.0, tick_ms: 1.4, ticks_per_second: 60.0, awake_chunks: 42, loaded_chunks: 512 });
+    m.hover = Some(HoverView::Cell { pos: CellPos { x: 1012, y: 588 }, material: c.expect_material("water"), temperature: 18.0 });
+    m.settings.show_fps = true;
+    m
+}
+
+/// Example simulation settings (the liquid settings will look like this).
+pub fn example_sim_settings() -> Vec<SimSetting> {
+    vec![
+        SimSetting {
+            key: "liquid_spread".into(),
+            label: "Liquid spread".into(),
+            help: "How far a liquid cell moves to the side in one tick.".into(),
+            value: 6.0,
+            min: 1.0,
+            max: 16.0,
+            step: 1.0,
+        },
+        SimSetting {
+            key: "splash".into(),
+            label: "Splash strength".into(),
+            help: "How much liquid jumps up when something falls into it.".into(),
+            value: 0.4,
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+        },
+    ]
+}
+
 /// Applies `UiAction`s to a model, the way the game will. For the preview and for tests.
 pub struct MockGame {
     pub model: UiModel,
@@ -534,6 +582,12 @@ impl MockGame {
                 SettingChange::UiScale(v) => md.settings.ui_scale = v,
                 SettingChange::Vsync(v) => md.settings.vsync = v,
                 SettingChange::ShowFps(v) => md.settings.show_fps = v,
+                SettingChange::ShowDebug(v) => md.settings.show_debug = v,
+                SettingChange::Simulation { key, value } => {
+                    if let Some(s) = md.settings.simulation.iter_mut().find(|s| s.key == key) {
+                        s.value = value;
+                    }
+                }
             },
         }
     }
