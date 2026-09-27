@@ -10,6 +10,7 @@
 //! jobs can hold pointers to the same neighbor chunk at the same time.
 
 use crate::SimEvent;
+use crate::react::ReactTable;
 use crate::chunk::{Chunk, FLAG_PARITY, LocalRect};
 use foundry_content::{MaterialTable, Phase};
 use foundry_core::{CHUNK_MASK, CHUNK_SHIFT, CellPos, MAX_CELL_MOVE, MaterialId, Rng};
@@ -22,6 +23,7 @@ pub struct Hood<'a> {
     /// Row by row: index `(dy + 1) * 3 + (dx + 1)`. Null means outside the world.
     ptrs: [*mut Chunk; 9],
     pub mats: &'a MaterialTable,
+    pub react: &'a ReactTable,
     pub rng: Rng,
     /// `tick & 1`.
     pub parity: u8,
@@ -41,15 +43,17 @@ impl<'a> Hood<'a> {
     /// # Safety
     /// The pointers must be valid for the whole life of the hood, and the caller must follow the
     /// safety rule in the module documentation.
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn new(
         ptrs: [*mut Chunk; 9],
         mats: &'a MaterialTable,
+        react: &'a ReactTable,
         rng: Rng,
         parity: u8,
         outside: MaterialId,
         origin: CellPos,
     ) -> Self {
-        Self { ptrs, mats, rng, parity, marks: [LocalRect::EMPTY; 9], changed: 0, outside, origin, events: Vec::new() }
+        Self { ptrs, mats, react, rng, parity, marks: [LocalRect::EMPTY; 9], changed: 0, outside, origin, events: Vec::new() }
     }
 
     /// World position of a hood cell.

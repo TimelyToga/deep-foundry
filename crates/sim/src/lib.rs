@@ -5,13 +5,16 @@
 //!
 //! Module owners (see docs/design/04-build-plan.md):
 //! - `chunk`, `world`, `hood`, `schedule`, `update`, `movement`, `lib.rs`: lead
-//! - `heat`: task 1B (heat and phase changes)
-//! - `react`: task 1C (reactions, fire, explosions)
+//! - `heat`: task "heat" (heat flow and phase changes)
+//! - `react`: task "reactions" (reactions and burning)
+//! - `explode`, `particles`: task "explosions and particles"
 
 pub mod chunk;
+pub mod explode;
 pub mod heat;
 pub mod hood;
 pub mod movement;
+pub mod particles;
 pub mod react;
 mod schedule;
 mod update;
@@ -73,8 +76,13 @@ pub struct Simulation {
     stats: SimStats,
     paint_rng: Rng,
     pool: Option<rayon::ThreadPool>,
-    /// Events of the last tick. See `take_events`.
+    /// Events of the last tick. See `events`.
     events: Vec<SimEvent>,
+    react: react::ReactTable,
+    particles: particles::Particles,
+    debug: bool,
+    /// Air temperature for each row of cells (°C). Heat moves air cells toward it.
+    air_temperature: Vec<i16>,
 }
 
 impl Simulation {
@@ -95,7 +103,13 @@ impl Simulation {
             paint_rng: Rng::new(config.seed ^ 0x70_6169_6e74),
             pool: None,
             events: Vec::new(),
+            react: react::ReactTable::default(),
+            particles: particles::Particles::default(),
+            debug: false,
+            air_temperature: vec![],
         };
+        sim.react = react::ReactTable::new(&sim.content);
+        sim.air_temperature = vec![foundry_core::DEFAULT_TEMPERATURE; sim.world.height_cells() as usize];
         if config.bedrock_border && !bedrock.is_air() {
             let (w, h) = sim.size_cells();
             for y in 0..h {
@@ -148,6 +162,7 @@ impl Simulation {
             Command::ResendAll => self.sent.clear(),
             Command::SetPaused(p) => self.paused = p,
             Command::Step => self.step_requested = true,
+            Command::SetDebug(on) => self.debug = on,
         }
     }
 
@@ -167,10 +182,14 @@ impl Simulation {
         let start = Instant::now();
         self.stamp += 1;
         let mats = &self.content.materials;
-        self.events.clear();
+        // Events of the last tick (explosions) are handled first, so chains spread over ticks.
+        let previous = std::mem::take(&mut self.events);
+        explode::process(&mut self.world, mats, &previous, &mut self.particles, self.tick, self.seed, self.stamp);
+        let t_explode = start.elapsed().as_secs_f32() * 1000.0;
         let awake = schedule::movement_tick(
             &mut self.world,
             mats,
+            &self.react,
             self.tick,
             self.seed,
             self.stamp,
@@ -178,7 +197,9 @@ impl Simulation {
             &mut self.events,
         );
         let t_move = start.elapsed().as_secs_f32() * 1000.0;
-        heat::step(&mut self.world, mats, self.tick, self.seed, self.stamp);
+        self.particles.step(&mut self.world, mats, self.tick, self.seed, self.stamp);
+        let t_particles = start.elapsed().as_secs_f32() * 1000.0;
+        heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
         let ms = start.elapsed().as_secs_f32() * 1000.0;
         self.tick += 1;
         let loaded = self.world.chunks.iter().filter(|c| c.is_some()).count() as u32;
@@ -187,8 +208,26 @@ impl Simulation {
             tick_ms: ms,
             awake_chunks: awake,
             loaded_chunks: loaded,
-            sections: vec![("movement", t_move), ("heat", ms - t_move)],
+            sections: vec![
+                ("explosions", t_explode),
+                ("movement", t_move - t_explode),
+                ("particles", t_particles - t_move),
+                ("heat", ms - t_particles),
+            ],
         };
+    }
+
+    /// Set the air temperature for each row of cells (°C), from the top of the world down.
+    /// Heat moves air cells toward it. Rows past the end of the list use the last value.
+    pub fn set_air_temperature(&mut self, by_row: &[i16]) {
+        let h = self.world.height_cells() as usize;
+        let last = by_row.last().copied().unwrap_or(foundry_core::DEFAULT_TEMPERATURE);
+        self.air_temperature = (0..h).map(|y| by_row.get(y).copied().unwrap_or(last)).collect();
+    }
+
+    /// Mutable access to the particles, for tools that spawn them.
+    pub fn particles_mut(&mut self) -> &mut particles::Particles {
+        &mut self.particles
     }
 
     /// The events of the last tick (explosions, ...), in a fixed order.
@@ -314,11 +353,32 @@ impl Simulation {
                 chunks.push(pack_chunk(pos, ch));
             }
         }
+        let mut particles = vec![];
+        let mut debug_chunks = vec![];
+        if let Some(view) = self.view {
+            self.particles.views(view, &mut particles);
+            if self.debug {
+                for pos in view.chunks() {
+                    if let Some(ch) = self.world.chunk(pos)
+                        && !ch.dirty.is_empty()
+                    {
+                        let o = pos.origin();
+                        let d = ch.dirty;
+                        debug_chunks.push(foundry_core::DebugChunk {
+                            pos,
+                            updated: CellRect::new(o.x + d.x0, o.y + d.y0, o.x + d.x1, o.y + d.y1),
+                        });
+                    }
+                }
+            }
+        }
         Snapshot {
             tick: self.tick,
             paused: self.paused,
             world_cells: self.size_cells(),
             chunks,
+            particles,
+            debug_chunks,
             stats: self.stats.clone(),
         }
     }

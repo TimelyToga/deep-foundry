@@ -10,8 +10,9 @@
 use crate::chunk::{Chunk, LocalRect};
 use crate::hood::Hood;
 use crate::update::update_chunk;
-use crate::world::World;
 use crate::SimEvent;
+use crate::react::ReactTable;
+use crate::world::World;
 use foundry_content::MaterialTable;
 use foundry_core::{ChunkPos, Rng};
 use rayon::prelude::*;
@@ -49,6 +50,7 @@ type JobResult = (usize, [LocalRect; 9], u16, Vec<SimEvent>);
 pub fn movement_tick(
     world: &mut World,
     mats: &MaterialTable,
+    react: &ReactTable,
     tick: u64,
     seed: u64,
     stamp: u64,
@@ -96,7 +98,7 @@ pub fn movement_tick(
             let rng = Rng::for_chunk(seed, tick, ChunkPos::new(cx, cy), k as u64);
             // SAFETY: all chunks in this pass are 2 apart; see `hood.rs`.
             let origin = ChunkPos::new(cx, cy).origin();
-            let mut hood = unsafe { Hood::new(ptrs.hood(cx, cy, w, h), mats, rng, parity, outside, origin) };
+            let mut hood = unsafe { Hood::new(ptrs.hood(cx, cy, w, h), mats, react, rng, parity, outside, origin) };
             update_chunk(&mut hood, work, left_to_right);
             (i, hood.marks, hood.changed, hood.events)
         };
