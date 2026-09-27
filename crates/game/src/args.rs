@@ -10,7 +10,10 @@ USAGE:
 
 OPTIONS:
     --seed N                 World seed (default 1)
-    --world WxH              World size in chunks of 64 x 64 cells (default 32x16)
+    --depth N                Depth of the world below the surface, in chunks of 64 x 64 cells
+                             (default 128). The world has no limit to the left and right.
+    --world WxH              A finite world of W x H chunks with bedrock walls, in place of the
+                             world with no side limit (for tests)
     --exit-after SECONDS     Quit after this time and print the average FPS and frame time
     --no-vsync               Do not wait for the display refresh (to measure the highest FPS)
     --size WxH               Window size in screen pixels (default 1600x900 points)
@@ -33,8 +36,10 @@ OPTIONS:
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
     pub seed: u64,
-    /// World size in chunks.
-    pub world: (i32, i32),
+    /// Chunks below the surface level (for the world with no side limit).
+    pub depth: i32,
+    /// A finite world of this many chunks (width, height). `None`: no limit to the left and right.
+    pub world: Option<(i32, i32)>,
     pub exit_after: Option<f64>,
     pub no_vsync: bool,
     pub screenshot: Option<PathBuf>,
@@ -94,7 +99,8 @@ impl Default for Args {
     fn default() -> Self {
         Self {
             seed: 1,
-            world: (32, 16),
+            depth: foundry_sim::DEFAULT_DEPTH_CHUNKS,
+            world: None,
             exit_after: None,
             no_vsync: false,
             screenshot: None,
@@ -122,6 +128,14 @@ impl Args {
     pub fn start_state(&self) -> UiState {
         self.ui_state.unwrap_or(if self.exit_after.is_some() { UiState::Playing } else { UiState::Menu })
     }
+
+    /// The shape of the world to make.
+    pub fn shape(&self) -> crate::demo::Shape {
+        match self.world {
+            Some((w, h)) => crate::demo::Shape::Box { width_chunks: w, height_chunks: h },
+            None => crate::demo::Shape::Infinite { depth_chunks: self.depth },
+        }
+    }
 }
 
 /// What the program should do.
@@ -139,12 +153,19 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
         match arg.as_str() {
             "-h" | "--help" => return Ok(Parsed::Help),
             "--seed" => out.seed = number(&value("--seed")?, "--seed")?,
+            "--depth" => {
+                let d: i32 = number(&value("--depth")?, "--depth")?;
+                if !(1..=1024).contains(&d) {
+                    return Err("--depth must be 1 to 1024 chunks".into());
+                }
+                out.depth = d;
+            }
             "--world" => {
                 let (w, h) = pair::<i32>(&value("--world")?, 'x', "--world")?;
                 if !(1..=256).contains(&w) || !(1..=256).contains(&h) {
                     return Err("--world: each size must be 1 to 256 chunks".into());
                 }
-                out.world = (w, h);
+                out.world = Some((w, h));
             }
             "--exit-after" => {
                 let s: f64 = number(&value("--exit-after")?, "--exit-after")?;
@@ -250,8 +271,17 @@ mod tests {
     }
 
     #[test]
+    fn world_shape() {
+        assert_eq!(run(&[]).unwrap().shape(), crate::demo::Shape::Infinite { depth_chunks: 128 });
+        assert_eq!(run(&["--depth", "40"]).unwrap().shape(), crate::demo::Shape::Infinite { depth_chunks: 40 });
+        let b = run(&["--world", "8x4"]).unwrap().shape();
+        assert_eq!(b, crate::demo::Shape::Box { width_chunks: 8, height_chunks: 4 });
+    }
+
+    #[test]
     fn errors() {
         assert!(run(&["--world", "0x4"]).is_err());
+        assert!(run(&["--depth", "0"]).is_err());
         assert!(run(&["--size", "800"]).is_err());
         assert!(run(&["--bogus"]).is_err());
         assert!(run(&["--seed"]).is_err());

@@ -43,8 +43,12 @@ pub struct SimStats {
     pub tick_ms: f32,
     /// Chunks that were updated in the last tick.
     pub awake_chunks: u32,
-    /// Chunks that exist in memory.
+    /// Chunks with their cells in memory (not packed).
     pub loaded_chunks: u32,
+    /// Changed chunks far from every anchor, packed in memory.
+    pub packed_chunks: u32,
+    /// Chunks that the chunk source made in the last tick.
+    pub generated_chunks: u32,
     /// Time of each part of the last tick in milliseconds, for example ("movement", 1.2).
     pub sections: Vec<(&'static str, f32)>,
 }
@@ -79,7 +83,8 @@ pub struct DebugChunk {
 pub struct Snapshot {
     pub tick: u64,
     pub paused: bool,
-    /// World size in cells (width, height).
+    /// World size in cells (width, height). The world goes from y = 0 down to y = height.
+    /// Width 0 means the world has no limit to the left and right. Otherwise x goes from 0 to width.
     pub world_cells: (i32, i32),
     /// Chunks in the view that changed. At most one image for each chunk position.
     pub chunks: Vec<ChunkImage>,

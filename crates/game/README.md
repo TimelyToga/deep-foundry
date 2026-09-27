@@ -10,6 +10,10 @@ The game starts in the main menu. "New game" makes a demo world: stone ground wi
 layer, a sand dune, a water pool, a small lava pocket and wooden posts. A ball of water falls into
 the pool and the steep side of the dune slides at the start.
 
+The world has no limit to the left and right. The hills go on without end, and the pool, dune,
+lava pocket and posts repeat every 2048 cells. New chunks are made when the view comes near them.
+Only chunks near the view update; far chunks wait until the view comes back.
+
 The simulation runs on its own thread at 60 ticks per second. The window draws at the display
 refresh rate.
 
@@ -53,8 +57,9 @@ uses another folder. "Continue" in the main menu loads the newest save.
 ## Options
 
 ```
---seed N               World seed for --ui-state playing (default 1)
---world WxH            World size in chunks of 64 x 64 cells (default 32x16)
+--seed N               World seed (default 1)
+--depth N              Depth below the surface in chunks of 64 x 64 cells (default 128)
+--world WxH            A finite world of W x H chunks with bedrock walls (for tests)
 --size WxH             Window size in screen pixels
 --saves DIR            Folder for saved games
 --ui-state STATE       Start screen: menu, newgame, load, settings, pause, save, playing, inventory, debug
@@ -77,7 +82,8 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
 - `--ui-state` picks the screen (default `playing`). The UI runs several frames first, so the fonts
   and the window sizes are ready.
 - `--no-ui` draws only the world.
-- `--center X,Y` sets the world cell at the image center.
+- `--center X,Y` sets the world cell at the image center. Any x works, for example
+  `--center 64000000,1050`.
 
 ## Measure the frame rate
 
