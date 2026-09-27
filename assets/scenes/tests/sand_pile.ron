@@ -1,0 +1,21 @@
+// Sand falls onto a stone floor and forms a pile. No sand is lost.
+// Picture (96 x 64): stone floor at y 60..64, a 16 x 15 sand block (240 cells) at x 40..56, y 4..19.
+Scene(
+    note: "Sand falls and forms a pile; nothing is lost.",
+    legend: {
+        "#d9c38c": "sand",
+        "#6b6a70": "stone",
+    },
+    ticks: 500,
+    checks: [
+        TotalUnchanged(material: "sand"),
+        // All sand is low, on the floor. The pile is not as tall as the block was.
+        Count(material: "sand", rect: (x: 0, y: 0, w: 96, h: 40), exact: 0),
+        Count(material: "sand", rect: (x: 0, y: 40, w: 96, h: 20), exact: 240),
+        // The pile spreads to both sides of the columns where the block was.
+        Count(material: "sand", rect: (x: 0, y: 40, w: 40, h: 20), min: 10),
+        Count(material: "sand", rect: (x: 56, y: 40, w: 40, h: 20), min: 10),
+        CellIs(at: (x: 48, y: 59), material: "sand"),
+        NoChange(last_ticks: 60),
+    ],
+)

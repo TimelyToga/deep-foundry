@@ -1,0 +1,25 @@
+// Steam goes up. Smoke fades over time.
+// Picture (100 x 80): two closed stone chambers, each inside 40 wide and 72 tall (y 4..76).
+// Left chamber (x 4..44): 640 cells of steam at 400 °C at the bottom (y 60..76).
+// Right chamber (x 56..96): 640 cells of smoke at the bottom (y 60..76).
+// The steam starts hot, so it stays steam while it rises, also when heat (task 1B) works.
+Scene(
+    note: "Steam rises to the top of its chamber. Smoke is gone after its life ends (at most 255 ticks).",
+    legend: {
+        "#e8eef5": (material: "steam", temperature: 400),
+        "#3b3a3e": "smoke",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        // Steam is at the top of its chamber (16 rows fill it: y 4..20), none in the bottom half.
+        Count(material: "steam", rect: (x: 4, y: 4, w: 40, h: 24), min: 600),
+        Count(material: "steam", rect: (x: 4, y: 40, w: 40, h: 36), exact: 0),
+        // Some smoke is gone.
+        Total(material: "smoke", max: 500),
+        // All smoke is gone: its life is at most 255 ticks.
+        // Pending: the Milestone 0 movement updates a cell that did not move only every other tick,
+        // so life counts down at half speed. The new movement code (task 1A) should fix this.
+        Total(material: "smoke", exact: 0, pending: true),
+    ],
+)

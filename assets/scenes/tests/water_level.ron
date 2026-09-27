@@ -1,0 +1,18 @@
+// Water poured into a box becomes flat. No water is lost.
+// Picture (100 x 60): open stone box, inside x 4..96 (92 wide), floor at y 56.
+// 920 water cells start at the left side. Flat water is exactly 10 rows: y 46..56.
+Scene(
+    note: "Water poured into a box becomes flat; nothing is lost.",
+    legend: {
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 1500,
+    checks: [
+        TotalUnchanged(material: "water"),
+        // The bottom 10 rows inside the box are full, and there is no water above them.
+        Count(material: "water", rect: (x: 4, y: 46, w: 92, h: 10), exact: 920),
+        Count(material: "water", rect: (x: 0, y: 0, w: 100, h: 46), exact: 0),
+        NoChange(last_ticks: 60),
+    ],
+)
