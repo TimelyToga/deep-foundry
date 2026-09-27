@@ -1,48 +1,43 @@
 //! The parallel movement pass (technical design section 6.1).
 //!
-//! 1. Take the dirty rectangle of each chunk as this tick's work. Chunks with no work sleep.
-//! 2. Make sure every neighbor of a working chunk exists, so jobs never need to allocate.
+//! 1. Take this tick's work from the world's awake list: the dirty rectangle of each chunk that is
+//!    inside a simulation area, sorted by (y, x). Chunks with no work leave the list. Chunks
+//!    outside every simulation area wait in the paused set. The cost depends only on these chunks,
+//!    never on the number of chunks in the world.
+//! 2. Make sure every neighbor of a working chunk is live (made by the source or unpacked, in
+//!    parallel), so jobs never need to allocate. Then look up the 3 × 3 chunk pointers of each job
+//!    once for the whole tick.
 //! 3. Run 4 passes. Pass k updates the chunks where (x mod 2, y mod 2) is the k-th pair.
 //!    The jobs of one pass run in parallel (see the safety rule in `hood.rs`).
-//! 4. After each pass, merge the dirty marks and "changed" bits of all jobs, in chunk order.
-//!    This keeps the result the same for any number of threads.
+//! 4. After each pass, merge the dirty marks, "changed" and "touched" bits of all jobs, in
+//!    (y, x) order. This keeps the result the same for any number of threads.
 
+use crate::SimEvent;
 use crate::chunk::{Chunk, LocalRect};
 use crate::hood::Hood;
-use crate::update::update_chunk;
-use crate::SimEvent;
 use crate::react::ReactTable;
+use crate::update::update_chunk;
 use crate::world::World;
 use foundry_content::MaterialTable;
 use foundry_core::{ChunkPos, Rng};
 use rayon::prelude::*;
 
-/// Raw pointers to all chunks, for one pass. Null for chunks that do not exist.
-struct ChunkPtrs(Vec<*mut Chunk>);
+/// The 3 × 3 chunk pointers of each job, for the whole tick. Null for chunks outside the world.
+struct HoodPtrs(Vec<[*mut Chunk; 9]>);
 
 // SAFETY: jobs use the pointers only under the rule in `hood.rs`.
-unsafe impl Sync for ChunkPtrs {}
+unsafe impl Sync for HoodPtrs {}
 
-impl ChunkPtrs {
-    fn new(world: &mut World) -> Self {
-        Self(world.chunks.iter_mut().map(|c| c.as_deref_mut().map_or(std::ptr::null_mut(), |c| c as *mut Chunk)).collect())
-    }
-
-    fn hood(&self, cx: i32, cy: i32, w: i32, h: i32) -> [*mut Chunk; 9] {
-        let mut out = [std::ptr::null_mut(); 9];
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                let (x, y) = (cx + dx, cy + dy);
-                if x >= 0 && y >= 0 && x < w && y < h {
-                    out[((dy + 1) * 3 + dx + 1) as usize] = self.0[(y * w + x) as usize];
-                }
-            }
-        }
-        out
+impl HoodPtrs {
+    /// The pointers of job `i`. (A method, so that closures capture the whole `Sync` wrapper.)
+    #[inline]
+    fn get(&self, i: usize) -> [*mut Chunk; 9] {
+        self.0[i]
     }
 }
 
-type JobResult = (usize, [LocalRect; 9], u16, Vec<SimEvent>);
+/// (job index, marks, changed bits, touched bits, events)
+type JobResult = (usize, [LocalRect; 9], u16, u16, Vec<SimEvent>);
 
 /// Run the movement and reaction update for one tick. Returns the number of chunks that worked.
 /// Events from the jobs are added to `events` in chunk order.
@@ -57,72 +52,81 @@ pub fn movement_tick(
     pool: Option<&rayon::ThreadPool>,
     events: &mut Vec<SimEvent>,
 ) -> u32 {
-    let (w, h) = (world.width_chunks, world.height_chunks);
-    let mut passes: [Vec<(usize, LocalRect)>; 4] = Default::default();
-    for (i, slot) in world.chunks.iter_mut().enumerate() {
-        if let Some(c) = slot
-            && !c.dirty.is_empty()
-        {
-            let work = std::mem::replace(&mut c.dirty, LocalRect::EMPTY);
-            let (cx, cy) = (i as i32 % w, i as i32 / w);
-            passes[((cy & 1) * 2 + (cx & 1)) as usize].push((i, work));
-        }
-    }
-    let awake: usize = passes.iter().map(|p| p.len()).sum();
-    if awake == 0 {
+    let mut work: Vec<(ChunkPos, LocalRect)> = Vec::new();
+    world.take_work(&mut work);
+    if work.is_empty() {
         return 0;
     }
 
-    // Neighbors of working chunks must exist.
-    for pass in &passes {
-        for &(i, _) in pass {
-            let (cx, cy) = (i as i32 % w, i as i32 / w);
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    world.chunk_mut(ChunkPos::new(cx + dx, cy + dy));
-                }
-            }
+    // Pointers to the neighbors. Neighbors that are not live yet are loaded first.
+    let mut missing = Vec::new();
+    let mut hoods = Vec::with_capacity(work.len());
+    for &(c, _) in &work {
+        hoods.push(world.hood_ptrs(c, &mut missing).0);
+    }
+    if !missing.is_empty() {
+        world.load(&missing, true, pool);
+        // Loading changes the maps, so look up all pointers again.
+        missing.clear();
+        hoods.clear();
+        for &(c, _) in &work {
+            let (h, complete) = world.hood_ptrs(c, &mut missing);
+            debug_assert!(complete, "neighbors of {c:?} are live");
+            hoods.push(h);
         }
     }
+    let ptrs = HoodPtrs(hoods);
 
     let parity = (tick & 1) as u8;
     let left_to_right = tick & 1 == 0;
     let outside = world.outside;
-    for (k, pass) in passes.iter().enumerate() {
-        if pass.is_empty() {
+    let mut jobs: Vec<usize> = Vec::with_capacity(work.len());
+    for k in 0..4 {
+        jobs.clear();
+        jobs.extend((0..work.len()).filter(|&i| {
+            let c = work[i].0;
+            ((c.y & 1) * 2 + (c.x & 1)) as usize == k
+        }));
+        if jobs.is_empty() {
             continue;
         }
-        let ptrs = ChunkPtrs::new(world);
-        let run = |&(i, work): &(usize, LocalRect)| -> JobResult {
-            let (cx, cy) = (i as i32 % w, i as i32 / w);
-            let rng = Rng::for_chunk(seed, tick, ChunkPos::new(cx, cy), k as u64);
+        let run = |&i: &usize| -> JobResult {
+            let (c, rect) = work[i];
+            let rng = Rng::for_chunk(seed, tick, c, k as u64);
             // SAFETY: all chunks in this pass are 2 apart; see `hood.rs`.
-            let origin = ChunkPos::new(cx, cy).origin();
-            let mut hood = unsafe { Hood::new(ptrs.hood(cx, cy, w, h), mats, react, rng, parity, outside, origin) };
-            update_chunk(&mut hood, work, left_to_right);
-            (i, hood.marks, hood.changed, hood.events)
+            let mut hood = unsafe { Hood::new(ptrs.get(i), mats, react, rng, parity, outside, c.origin()) };
+            update_chunk(&mut hood, rect, left_to_right);
+            (i, hood.marks, hood.changed, hood.touched, hood.events)
         };
         let results: Vec<JobResult> = match pool {
-            Some(p) => p.install(|| pass.par_iter().map(run).collect()),
-            None => pass.par_iter().map(run).collect(),
+            Some(p) => p.install(|| jobs.par_iter().map(run).collect()),
+            None => jobs.par_iter().map(run).collect(),
         };
-        drop(ptrs);
-        for (i, marks, changed, job_events) in results {
+        for (i, marks, changed, touched, job_events) in results {
             events.extend(job_events);
-            let (cx, cy) = (i as i32 % w, i as i32 / w);
+            let c = work[i].0;
             for (s, mark) in marks.iter().enumerate() {
-                let (x, y) = (cx + (s as i32 % 3) - 1, cy + (s as i32 / 3) - 1);
-                if x < 0 || y < 0 || x >= w || y >= h {
+                let p = ptrs.get(i)[s];
+                if p.is_null() {
                     continue;
                 }
-                if let Some(c) = world.chunks[(y * w + x) as usize].as_deref_mut() {
-                    c.dirty.add_rect(*mark);
+                let pos = ChunkPos::new(c.x + (s as i32 % 3) - 1, c.y + (s as i32 / 3) - 1);
+                // SAFETY: no job runs now, and `p` points to the live chunk at `pos`. The pointers
+                // stay valid for the whole tick, because no chunk is added or removed during the passes.
+                unsafe {
+                    if !mark.is_empty() {
+                        (*p).dirty.add_rect(*mark);
+                        world.queue_raw(pos, p);
+                    }
                     if changed & (1 << s) != 0 {
-                        c.version = stamp;
+                        (*p).version = stamp;
+                    }
+                    if touched & (1 << s) != 0 {
+                        (*p).pristine = false;
                     }
                 }
             }
         }
     }
-    awake as u32
+    work.len() as u32
 }

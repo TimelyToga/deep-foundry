@@ -950,6 +950,7 @@ dependencies = [
  "image",
  "lz4_flex",
  "rayon",
+ "rustc-hash 2.1.3",
  "thiserror 2.0.21",
 ]
 

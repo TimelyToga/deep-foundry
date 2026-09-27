@@ -13,7 +13,7 @@ fn main() {
     let (sand, water, stone) = (content.expect_material("sand"), content.expect_material("water"), content.expect_material("stone"));
 
     // 1. Many awake chunks: a 48 × 32 chunk world (1536 chunks), half full of falling sand and water.
-    let mut s = Simulation::new(content.clone(), SimConfig { width_chunks: 48, height_chunks: 32, seed: 5, bedrock_border: true });
+    let mut s = Simulation::new(content.clone(), SimConfig::finite(48, 32, 5));
     if threads > 0 {
         s.set_threads(threads);
     }

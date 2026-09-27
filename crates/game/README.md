@@ -10,6 +10,10 @@ The game opens a window with a demo world: stone ground with hills, a dirt layer
 a water pool, a small lava pocket and wooden posts. A ball of water falls into the pool and the
 steep side of the dune slides at the start.
 
+The world has no limit to the left and right. The hills go on without end, and the pool, dune,
+lava pocket and posts repeat every 2048 cells. New chunks are made when the view comes near them.
+Only chunks near the view update; far chunks wait until the view comes back.
+
 The simulation runs on its own thread at 60 ticks per second. The window draws at the display
 refresh rate.
 
@@ -33,7 +37,8 @@ refresh rate.
 
 ```
 --seed N               World seed (default 1)
---world WxH            World size in chunks of 64 x 64 cells (default 32x16)
+--depth N              Depth below the surface in chunks of 64 x 64 cells (default 128)
+--world WxH            A finite world of W x H chunks with bedrock walls (for tests)
 --size WxH             Window size in screen pixels
 --exit-after SECONDS   Quit after this time and print the average FPS and frame time
 --no-vsync             Do not wait for the display refresh (to measure the highest FPS)
@@ -49,7 +54,8 @@ cargo run -p deep_foundry -- --screenshot out/demo.png --ticks 120 --zoom 3 --si
 This builds the demo world, runs the ticks on the calling thread, draws one frame with the real
 renderer into an offscreen texture, and saves a PNG file.
 
-- `--center X,Y` sets the world cell at the image center.
+- `--center X,Y` sets the world cell at the image center. Any x works, for example
+  `--center 64000000,1050`.
 - `--ui` also draws the side panel.
 
 ## Measure the frame rate
