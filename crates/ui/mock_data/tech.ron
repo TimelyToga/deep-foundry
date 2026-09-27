@@ -1,0 +1,9 @@
+// Extra technologies for the UI mock. The mock adds an entry only if assets/data does not have the id
+// yet, and drops unlocks that another technology already has.
+[
+    Tech(id: "steam_power", name: "Steam power", description: "Boilers make steam. Steam machines take it from pipes.", tier: 1, requires: ["research"], kits: [("bronze_kit", 1)], units: 30, unlocks: ["small_boiler", "bronze_pipe", "steam_pump"]),
+    Tech(id: "steam_machines_1", name: "Steam machines I", description: "The steam crusher, hammer, furnace and wire drawer.", tier: 1, requires: ["steam_power"], kits: [("bronze_kit", 1)], units: 40, unlocks: ["steam_crusher", "steam_hammer", "steam_furnace", "steam_wire_drawer"]),
+    Tech(id: "steam_machines_2", name: "Steam machines II", description: "The steam alloy smelter, washer, extractor, press and assembler.", tier: 1, requires: ["steam_machines_1"], kits: [("bronze_kit", 1)], units: 60, unlocks: ["steam_alloy_smelter", "steam_washer", "steam_extractor", "steam_press", "steam_assembler", "steam_lab", "steam_kit"]),
+    Tech(id: "iron_logistics", name: "Iron logistics", description: "Iron belts, arms, iron crates and tanks.", tier: 1, requires: ["steam_power"], kits: [("bronze_kit", 1)], units: 40, unlocks: ["iron_belt", "arm", "iron_crate", "tank", "iron_pipe", "magnet", "fan"]),
+    Tech(id: "electricity", name: "Electricity", description: "Generators, cables and LV machines.", tier: 2, requires: ["steam_machines_2"], kits: [("bronze_kit", 1), ("steam_kit", 1)], units: 100, unlocks: ["steam_turbine", "solar_panel", "battery_box", "tin_cable", "electric_furnace", "macerator", "assembler"]),
+]
