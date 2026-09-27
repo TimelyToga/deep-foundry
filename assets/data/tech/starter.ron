@@ -1,0 +1,4 @@
+[
+    Tech(id: "bronze", name: "Bronze", description: "Mix copper and tin into bronze.", tier: 0, discoveries: ["raw_malachite", "raw_cassiterite"], unlocks: ["bronze_alloy", "bronze_gear"]),
+    Tech(id: "research", name: "Research", description: "Labs and research kits.", tier: 0, requires: ["bronze"], unlocks: ["basic_lab", "bronze_kit"]),
+]

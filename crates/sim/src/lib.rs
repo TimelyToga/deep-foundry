@@ -16,6 +16,7 @@ pub mod hood;
 pub mod movement;
 pub mod particles;
 pub mod react;
+pub mod save;
 mod schedule;
 mod update;
 pub mod world;
@@ -163,6 +164,8 @@ impl Simulation {
             Command::SetPaused(p) => self.paused = p,
             Command::Step => self.step_requested = true,
             Command::SetDebug(on) => self.debug = on,
+            // Handled by the thread that owns the simulation.
+            Command::SaveWorld { .. } | Command::LoadWorld { .. } => {}
         }
     }
 
@@ -379,6 +382,7 @@ impl Simulation {
             chunks,
             particles,
             debug_chunks,
+            notices: vec![],
             stats: self.stats.clone(),
         }
     }

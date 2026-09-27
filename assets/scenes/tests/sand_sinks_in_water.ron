@@ -1,0 +1,22 @@
+// Sand falls into water and ends below it.
+// Picture (80 x 70): open stone box, inside x 4..76 (72 wide), floor at y 66.
+// Water fills y 30..66 (2592 cells). A 20 x 18 sand block (360 cells) is above the water.
+// Sand and water together fill 41 rows, so the water surface ends at y 25.
+Scene(
+    note: "Sand sinks through water to the bottom.",
+    legend: {
+        "#d9c38c": "sand",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 800,
+    checks: [
+        TotalUnchanged(material: "sand"),
+        TotalUnchanged(material: "water"),
+        // All sand is in the bottom 25 rows of the box. None is higher.
+        Count(material: "sand", rect: (x: 4, y: 41, w: 72, h: 25), exact: 360),
+        Count(material: "sand", rect: (x: 0, y: 0, w: 80, h: 41), exact: 0),
+        // The top rows of the liquid are water.
+        Count(material: "water", rect: (x: 4, y: 25, w: 72, h: 10), min: 700),
+    ],
+)
