@@ -13,6 +13,9 @@ pub const FLAG_BUILDING: u8 = 1 << 1;
 pub const MOTION_SPEED: u8 = 0x1f;
 /// `motion` bit 5: the side a liquid last flowed to (set = right).
 pub const MOTION_RIGHT: u8 = 1 << 5;
+/// `motion` bits 6-7: sideways momentum of a liquid (0 to 3).
+pub const MOTION_MOMENTUM: u8 = 0xc0;
+pub const MOTION_MOMENTUM_SHIFT: u32 = 6;
 
 /// A rectangle inside one chunk, in local cell coordinates (0 to 64). `x1` and `y1` are exclusive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

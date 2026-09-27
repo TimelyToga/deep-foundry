@@ -10,7 +10,8 @@
 use crate::chunk::{Chunk, LocalRect};
 use crate::hood::Hood;
 use crate::update::update_chunk;
-use crate::SimEvent;
+use crate::particles::Spawn;
+use crate::{SimEvent, SimSettings};
 use crate::react::ReactTable;
 use crate::world::World;
 use foundry_content::MaterialTable;
@@ -42,20 +43,30 @@ impl ChunkPtrs {
     }
 }
 
-type JobResult = (usize, [LocalRect; 9], u16, Vec<SimEvent>);
+type JobResult = (usize, [LocalRect; 9], u16, Vec<SimEvent>, Vec<Spawn>);
+
+/// Read-only data every job needs.
+#[derive(Clone, Copy)]
+pub struct PassInput<'a> {
+    pub mats: &'a MaterialTable,
+    pub react: &'a ReactTable,
+    pub settings: &'a SimSettings,
+    /// False when there are too many particles: liquids do not splash.
+    pub splash_ok: bool,
+}
 
 /// Run the movement and reaction update for one tick. Returns the number of chunks that worked.
 /// Events from the jobs are added to `events` in chunk order.
 #[allow(clippy::too_many_arguments)]
 pub fn movement_tick(
     world: &mut World,
-    mats: &MaterialTable,
-    react: &ReactTable,
+    input: PassInput,
     tick: u64,
     seed: u64,
     stamp: u64,
     pool: Option<&rayon::ThreadPool>,
     events: &mut Vec<SimEvent>,
+    spawns: &mut Vec<Spawn>,
 ) -> u32 {
     let (w, h) = (world.width_chunks, world.height_chunks);
     let mut passes: [Vec<(usize, LocalRect)>; 4] = Default::default();
@@ -98,17 +109,18 @@ pub fn movement_tick(
             let rng = Rng::for_chunk(seed, tick, ChunkPos::new(cx, cy), k as u64);
             // SAFETY: all chunks in this pass are 2 apart; see `hood.rs`.
             let origin = ChunkPos::new(cx, cy).origin();
-            let mut hood = unsafe { Hood::new(ptrs.hood(cx, cy, w, h), mats, react, rng, parity, outside, origin) };
+            let mut hood = unsafe { Hood::new(ptrs.hood(cx, cy, w, h), input, rng, parity, outside, origin) };
             update_chunk(&mut hood, work, left_to_right);
-            (i, hood.marks, hood.changed, hood.events)
+            (i, hood.marks, hood.changed, hood.events, hood.spawns)
         };
         let results: Vec<JobResult> = match pool {
             Some(p) => p.install(|| pass.par_iter().map(run).collect()),
             None => pass.par_iter().map(run).collect(),
         };
         drop(ptrs);
-        for (i, marks, changed, job_events) in results {
+        for (i, marks, changed, job_events, job_spawns) in results {
             events.extend(job_events);
+            spawns.extend(job_spawns);
             let (cx, cy) = (i as i32 % w, i as i32 / w);
             for (s, mark) in marks.iter().enumerate() {
                 let (x, y) = (cx + (s as i32 % 3) - 1, cy + (s as i32 / 3) - 1);

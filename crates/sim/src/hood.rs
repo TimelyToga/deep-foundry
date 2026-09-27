@@ -9,8 +9,10 @@
 //! All cell reads and writes go through raw element pointers (never `&mut Chunk`), because two
 //! jobs can hold pointers to the same neighbor chunk at the same time.
 
-use crate::SimEvent;
+use crate::particles::Spawn;
 use crate::react::ReactTable;
+use crate::schedule::PassInput;
+use crate::{SimEvent, SimSettings};
 use crate::chunk::{Chunk, FLAG_PARITY, LocalRect};
 use foundry_content::{MaterialTable, Phase};
 use foundry_core::{CHUNK_MASK, CHUNK_SHIFT, CellPos, MAX_CELL_MOVE, MaterialId, Rng};
@@ -24,6 +26,9 @@ pub struct Hood<'a> {
     ptrs: [*mut Chunk; 9],
     pub mats: &'a MaterialTable,
     pub react: &'a ReactTable,
+    pub settings: &'a SimSettings,
+    /// False when there are too many particles: liquids do not splash.
+    pub splash_ok: bool,
     pub rng: Rng,
     /// `tick & 1`.
     pub parity: u8,
@@ -37,29 +42,59 @@ pub struct Hood<'a> {
     pub origin: CellPos,
     /// Events for the simulation to handle after the pass (explosions, ...).
     pub events: Vec<SimEvent>,
+    /// New particles (cells that left the grid), added after the pass.
+    pub spawns: Vec<Spawn>,
 }
 
 impl<'a> Hood<'a> {
     /// # Safety
     /// The pointers must be valid for the whole life of the hood, and the caller must follow the
     /// safety rule in the module documentation.
-    #[allow(clippy::too_many_arguments)]
-    pub unsafe fn new(
-        ptrs: [*mut Chunk; 9],
-        mats: &'a MaterialTable,
-        react: &'a ReactTable,
-        rng: Rng,
-        parity: u8,
-        outside: MaterialId,
-        origin: CellPos,
-    ) -> Self {
-        Self { ptrs, mats, react, rng, parity, marks: [LocalRect::EMPTY; 9], changed: 0, outside, origin, events: Vec::new() }
+    pub unsafe fn new(ptrs: [*mut Chunk; 9], input: PassInput<'a>, rng: Rng, parity: u8, outside: MaterialId, origin: CellPos) -> Self {
+        Self {
+            ptrs,
+            mats: input.mats,
+            react: input.react,
+            settings: input.settings,
+            splash_ok: input.splash_ok,
+            rng,
+            parity,
+            marks: [LocalRect::EMPTY; 9],
+            changed: 0,
+            outside,
+            origin,
+            events: Vec::new(),
+            spawns: Vec::new(),
+        }
     }
 
     /// World position of a hood cell.
     #[inline(always)]
     pub fn world_pos(&self, x: i32, y: i32) -> CellPos {
         self.origin.offset(x, y)
+    }
+
+    /// Take the cell out of the grid and make it a flying particle with this velocity
+    /// (cells per tick). The cell becomes air. The particle is added after the pass.
+    pub fn launch(&mut self, x: i32, y: i32, vx: f32, vy: f32) {
+        let m = self.mat(x, y);
+        if m.is_air() {
+            return;
+        }
+        let p = self.world_pos(x, y);
+        let (temp, shade, life) = (self.temp(x, y), self.read_u8(x, y, |p| unsafe { addr_of!((*p).shade).cast::<u8>() }), self.life(x, y));
+        self.spawns.push(Spawn {
+            x: p.x as f32 + 0.5,
+            y: p.y as f32 + 0.5,
+            vx,
+            vy,
+            material: m,
+            temperature: temp,
+            shade,
+            life,
+            flags: 0,
+        });
+        self.replace(x, y, MaterialId::AIR, None);
     }
 
     /// Send an event to the simulation. It is handled after the movement passes.

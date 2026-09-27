@@ -120,8 +120,8 @@ impl Content {
             if d.phase == Phase::Liquid && d.flow == 0 {
                 errors.push(format!("`{}`: a liquid needs a flow of 1 or more", d.id));
             }
-            if !(0.0..=1.0).contains(&d.friction) || !(0.0..=1.0).contains(&d.conductivity) {
-                errors.push(format!("`{}`: friction and conductivity must be in 0..=1", d.id));
+            if [d.friction, d.conductivity, d.momentum, d.splash].iter().any(|v| !(0.0..=1.0).contains(v)) {
+                errors.push(format!("`{}`: friction, conductivity, momentum and splash must be in 0..=1", d.id));
             }
             if d.heat_capacity <= 0.0 {
                 errors.push(format!("`{}`: heat_capacity must be above 0", d.id));
@@ -187,6 +187,8 @@ impl Content {
             t.phase.push(d.phase);
             t.density.push(if d.phase == Phase::Empty && d.density == 0.0 { 1.2 } else { d.density });
             t.flow.push(d.flow);
+            t.momentum.push((d.momentum * 65535.0) as u16);
+            t.splash.push(d.splash);
             t.friction.push(d.friction);
             t.grain.push(d.grain);
             t.hardness.push(d.hardness);

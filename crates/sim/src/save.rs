@@ -6,9 +6,9 @@
 //! - material names (u32 count, then u16 length + UTF-8 for each), so ids can change between versions
 //! - air temperature by row (u32 count + i16 values)
 //! - chunks (u32 count), each: x, y (i32), dirty rectangle (4 × i32), lz4 block of the cell arrays
+//! - particles (see `Particles::write`)
 //!
-//! Particles are not saved yet (they land within seconds). Chunks that were never written are
-//! not saved; they are air.
+//! Chunks that were never written are not saved; they are air.
 
 use crate::chunk::{Chunk, LocalRect};
 use crate::{SimConfig, Simulation};
@@ -75,6 +75,7 @@ impl Simulation {
             put_u32(w, packed.len() as u32)?;
             w.write_all(&packed)?;
         }
+        self.particles.write(w)?;
         Ok(())
     }
 
@@ -143,6 +144,7 @@ impl Simulation {
             c.dirty = dirty;
             c.version = stamp;
         }
+        sim.particles = crate::particles::Particles::read(r, &remap)?;
         report.unknown_materials.sort();
         report.unknown_materials.dedup();
         Ok((sim, report))
