@@ -99,3 +99,79 @@ Ids are `snake_case`: lower case letters, digits and `_` only (the loader checks
   looks textured but still reads as one thing. Similar materials (the ores, especially)
   use clearly different colors so the player can tell them apart at a glance. Liquids and
   gases may add an alpha channel: `"#rrggbbaa"`.
+
+## Factory data
+
+The factory data model and loader are in `crates/content/src/factory_defs.rs` (file format)
+and `crates/content/src/factory.rs` (after loading). See that file for the exact fields.
+
+### File layout
+
+```
+assets/data/
+  parts/*.ron        Part(...): discrete items (gears, plates, research kits, ...).
+  buildings/*.ron     Building(...): building types. Every building is also a part with the
+                      same id (the item that places it).
+  recipes/*.ron       Recipe(...): what turns inputs into outputs, and where.
+  tech/*.ron          Tech(...): the research tree.
+  milestones/*.ron    Milestone(...): Hub repair stages.
+```
+
+`assets/data/parts/starter.ron` and `assets/data/buildings/starter.ron` hold the Tier 0-1
+parts and buildings; `assets/data/recipes/starter.ron` and `assets/data/tech/starter.ron`
+hold the matching recipes and technologies.
+
+### Id naming rules
+
+- Material ids and part ids share one name space: an id cannot be both. When a part is
+  named after the block material it comes from, the material takes the `_block` suffix so
+  the part can use the plain name: the material `clay_brick_block` gives the part
+  `clay_brick`; the material `firebrick_block` gives the part `firebrick`. The material
+  `wood_block` keeps its name, so the wood wall building is `wood_wall`, not `wood_block`.
+- A building's id is also its part id (the item that places it), so it must not clash with
+  any material or other part id either.
+- Recipe ids usually match their main output's id (`bronze_gear` makes `bronze_gear`), except
+  when several recipes make the same output in different ways.
+
+### Units
+
+- Materials are bulk: recipe counts are in units, which are cells (so 16 units of molten
+  copper is 16 cells' worth).
+- Parts are discrete: recipe counts are in pieces.
+
+### Ports and params
+
+Ports (`kind`, `tile`, `side`, `filter`) connect a building to the world or to other
+buildings: `BulkIn`/`BulkOut` for powder, `FluidIn`/`FluidOut` for liquids and gases,
+`Pipe` for a back-layer pipe connection, `PartIn`/`PartOut` for pieces, `Heat` for
+temperature, `Exhaust` for waste gas. Put input ports on the side cells or fluid naturally
+arrive from (usually `Up`), and output ports where they should leave (usually `Down` or a
+named side tap).
+
+The factory code reads these `kind`s and `params` (see `docs/design/requests/factory-core.md`
+for the full table):
+
+| kind | params | notes |
+|---|---|---|
+| `storage` | `slots`, `tanks`, `capacity` | a crate uses slots, a barrel uses tanks |
+| `hopper` | `capacity`, `rate` | ports default to BulkIn on top, BulkOut below |
+| `belt` | `belt_speed` | rotation must be 0 or 2; `flip` moves left |
+| `hub` | `slots`, `tanks`, `capacity` | takes only items a milestone still needs |
+| `lab` | `kit_buffer` | `speed` is the lab speed |
+| `workbench` | `reach` | `speed` is the hand crafting speed near it |
+| any kind with `crafts` | `buffer_crafts`, `heat_temp` (burners) | a crafter; a burner also has `power.burn_w > 0` and a `Heat` port |
+| any kind | `needs_floor` | above 0: solid cells must be under at least half the bottom row |
+
+Only the kind strings above (plus `workbench`) change the building's behavior in code.
+Other kind names (`furnace`, `crafter`, `boiler`, `mold`, `wall`, `room_wall`,
+`room_controller`, `room_port`, `pipe`, `bellows`, `stamp_mill`, `sluice`, ...) are labels for
+players and the UI; a building with any of them and a non-empty `crafts` list runs as a
+generic crafter.
+
+### How techs unlock recipes
+
+A recipe is known from the start unless some technology lists its id in `unlocks`. Give a
+tech that reference to gate the recipe behind research; leave it out of every tech's
+`unlocks` to make the recipe free from the start (this project uses that for early Tier 0
+recipes such as bricks, the campfire and the crucible, so a new player has something to do
+before any research is done).

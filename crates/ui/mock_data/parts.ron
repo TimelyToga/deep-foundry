@@ -1,10 +1,13 @@
 // Extra parts for the UI mock and the UI screenshots (Tier 0 to Tier 2, from docs/design/02-content.md).
 // The mock adds an entry only if assets/data does not have the id yet. These are not game data.
-// Note: "clay_brick" and "firebrick" are material ids (wall blocks), so the parts use other ids.
+// Note: "clay_brick_block" and "firebrick_block" are the wall block materials. assets/data
+// already has fired brick parts named "clay_brick" and "firebrick" (so the mock skips them);
+// "brick" and "fire_brick" below are kept only because other mock buildings and recipes
+// still use those two ids as ingredients.
 [
-    Part(id: "brick", name: "Clay brick", description: "A fired brick. Kiln walls, crucibles and molds are made of it.", category: "intermediate", material: Some("clay_brick"), units: 16, icon: Some("brick")),
+    Part(id: "brick", name: "Clay brick (mock)", description: "See the real part \"clay_brick\".", category: "intermediate", material: Some("clay_brick_block"), units: 16, icon: Some("brick")),
     Part(id: "raw_firebrick", name: "Raw firebrick", description: "Clay and sand. Bake it at 1200 °C to make a firebrick.", category: "intermediate", material: Some("clay"), units: 16, icon: Some("brick")),
-    Part(id: "fire_brick", name: "Firebrick", description: "A brick that stays strong up to 1800 °C. Furnace walls.", category: "intermediate", material: Some("firebrick"), units: 16, icon: Some("brick")),
+    Part(id: "fire_brick", name: "Firebrick (mock)", description: "See the real part \"firebrick\".", category: "intermediate", material: Some("firebrick_block"), units: 16, icon: Some("brick")),
     Part(id: "tin_ingot", name: "Tin ingot", description: "16 units of tin, cast in an ingot mold.", category: "intermediate", material: Some("tin_block"), units: 16, icon: Some("ingot")),
     Part(id: "copper_ingot", name: "Copper ingot", description: "16 units of copper, cast in an ingot mold.", category: "intermediate", material: Some("copper_block"), units: 16, icon: Some("ingot")),
     Part(id: "bronze_ingot", name: "Bronze ingot", description: "16 units of bronze, cast in an ingot mold.", category: "intermediate", material: Some("bronze_block"), units: 16, icon: Some("ingot")),
