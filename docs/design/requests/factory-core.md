@@ -1,21 +1,32 @@
 # Requests from task "factory-core"
 
-## 2026-09-27 factory-core — Join the progression stand-ins
+## 2026-09-27 factory-core — Join the progression stand-ins (done)
 
-`crates/factory/src/progress_link.rs` has small stand-ins for the progression contract, because
-`progress.rs` in this branch was still a stub:
+Done on 2026-09-27. `progress_link.rs` now uses the real `KitBuffer`, `LabStatus`,
+`Progress::lab_tick` and `Progress::deliver`. The stand-ins are gone. The `ProgressLink` trait
+stays, so tests can pass a test progress (see `tests/machines.rs`).
 
-- `KitBuffer` (map `PartId` → count; methods used: `default`, `add`, `take`, `count`, `iter`,
-  `is_empty`; needs `Debug`, `Clone`, `Serialize`, `Deserialize`).
-- `LabStatus` (stand-in variants: `Working`, `NoResearch`, `MissingKits`).
-- Trait `ProgressLink { lab_tick(&mut self, &Content, lab_speed: f32, &mut KitBuffer) -> LabStatus; deliver(&mut self, &Content, Stack) -> u32 }`,
-  implemented for `Progress` with do-nothing bodies.
+## 2026-09-27 factory-core — A reaction event from the simulation
 
-To join: replace the stand-in `KitBuffer` and `LabStatus` with
-`pub use crate::progress::{KitBuffer, LabStatus};`, make `impl ProgressLink for Progress` call the
-real methods, and update `lab_status()` (the building status and reason text for each
-`LabStatus`). Keep the trait: `Buildings::tick` takes `impl ProgressLink`, so tests can pass a
-test progress (see `tests/machines.rs`).
+For task "reactions" (`foundry_sim::react`). Discovery needs to know when a reaction happens
+(game design section 7.3). `foundry_sim` has no event for this yet. Please add:
+
+```rust
+pub enum SimEvent {
+    // ...
+    /// A reaction happened. `index` is the index into `Content::reactions`.
+    Reaction { index: u16, at: CellPos },
+}
+```
+
+- Send at most one `Reaction` event for each reaction index in each tick (for example the first
+  cell in the fixed update order), so the event list stays short and the result is the same on
+  any number of threads.
+- `at` is the cell of input A.
+- The game reads `sim.events()` after each tick and calls
+  `factory.observe_reaction(index, at)` for each `Reaction` event. The factory ignores reactions
+  more than `REACTION_SEE_RANGE` (96) cells from the robot, and gives discovery points the first
+  time the player sees a reaction.
 
 ## 2026-09-27 factory-core — Data for Tier 0 logistics buildings
 

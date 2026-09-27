@@ -7,7 +7,7 @@
 
 use foundry_content::factory_defs::{BuildingDef, MilestoneDef, PartDef, RecipeDef, TechDef};
 use foundry_content::{Content, FactoryContent, ItemRef, default_assets_dir};
-use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId, TilePos};
+use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId, TechId, TilePos};
 use foundry_factory::Factory;
 use foundry_sim::{SimConfig, Simulation};
 use serde::de::DeserializeOwned;
@@ -148,6 +148,14 @@ pub fn fill(sim: &mut Simulation, r: CellRect, m: MaterialId, temperature: Optio
 pub fn tile_cells(at: TilePos, w: i32, h: i32) -> CellRect {
     let o = at.origin();
     CellRect::new(o.x, o.y, o.x + w * 8, o.y + h * 8)
+}
+
+/// Finish all technologies, so the player knows all recipes.
+pub fn research_all(factory: &mut Factory) {
+    let c = factory.content.clone();
+    for i in 0..c.factory.techs.len() {
+        factory.progress.debug_complete(&c, TechId(i as u16));
+    }
 }
 
 /// Run the factory and the simulation for `n` ticks.
