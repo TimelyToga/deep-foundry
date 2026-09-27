@@ -16,7 +16,7 @@ use crate::player::MoveInput;
 use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
 use foundry_content::{Content, ItemRef};
-use foundry_core::{CellPos, Command, TILE_SIZE, TilePos};
+use foundry_core::{CellPos, Command, TILE_SIZE};
 use foundry_factory::Guide;
 use foundry_render::headless::{CAPTURE_FORMAT, capture, capture_with, create_device};
 use foundry_render::wgpu;
@@ -291,18 +291,7 @@ fn setup_normal_screen(
 
 /// The first place right of the robot where a building fits, on the ground.
 fn free_place(h: &FactoryHost, sim: &foundry_sim::Simulation, kind: foundry_core::BuildingKindId) -> Option<GhostRequest> {
-    let r = h.robot.rect();
-    let feet = r.y1.div_euclid(TILE_SIZE);
-    let size = h.factory.content.factory.building_def(kind).size;
-    for dx in 1..12 {
-        for dy in -2..=2 {
-            let at = TilePos::new(r.x1.div_euclid(TILE_SIZE) + dx, feet - size.1 as i32 + dy);
-            if h.check_place(kind, at, 0, sim).is_ok() {
-                return Some(GhostRequest { kind, at, rotation: 0 });
-            }
-        }
-    }
-    None
+    h.free_place(kind, sim).map(|at| GhostRequest { kind, at, rotation: 0 })
 }
 
 /// The game UI, drawn with no window.

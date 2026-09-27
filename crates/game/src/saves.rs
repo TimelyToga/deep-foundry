@@ -2,6 +2,8 @@
 //!
 //! A save is `<name>.dfworld` (the world, written by the simulation thread) and `<name>.info`
 //! (a few lines of text: seed, world size and ticks, written by the game when it asks for the save).
+//! A save of the normal mode also has `<name>.dfgame` (the factory and the robot, written by the
+//! simulation thread next to the world file; see `factory_host.rs`).
 
 use foundry_ui::SaveInfo;
 use std::path::{Path, PathBuf};
@@ -86,6 +88,7 @@ pub fn delete(dir: &Path, id: &str) -> std::io::Result<()> {
     let world = dir.join(id);
     std::fs::remove_file(&world)?;
     let _ = std::fs::remove_file(world.with_extension(INFO_EXTENSION));
+    let _ = std::fs::remove_file(crate::factory_host::side_file(&world));
     Ok(())
 }
 
@@ -114,9 +117,10 @@ pub fn list(dir: &Path) -> Vec<SaveInfo> {
             let id = path.file_name()?.to_string_lossy().to_string();
             let name = path.file_stem()?.to_string_lossy().to_string();
             let meta = read_meta(&path);
+            let mode = if crate::factory_host::side_file(&path).exists() { "Normal game" } else { "Sandbox" };
             let world = match meta {
-                Some(m) if m.chunks.0 > 0 => format!("Seed {}, {} × {} cells", m.seed, m.chunks.0 * 64, m.chunks.1 * 64),
-                Some(m) if m.chunks.1 > 0 => format!("Seed {}, endless world, {} cells deep", m.seed, m.chunks.1 * 64),
+                Some(m) if m.chunks.0 > 0 => format!("{mode}, seed {}, {} × {} cells", m.seed, m.chunks.0 * 64, m.chunks.1 * 64),
+                Some(m) if m.chunks.1 > 0 => format!("{mode}, seed {}, endless world, {} cells deep", m.seed, m.chunks.1 * 64),
                 _ => "Sandbox world".to_string(),
             };
             let info = SaveInfo {
@@ -173,7 +177,7 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "new one");
         assert_eq!(list[0].play_time_s, 10);
-        assert_eq!(list[0].world, "Seed 7, 2048 × 1024 cells");
+        assert_eq!(list[0].world, "Sandbox, seed 7, 2048 × 1024 cells");
         assert_eq!(list[1].world, "Sandbox world");
         delete(&dir, &list[0].id).unwrap();
         assert!(!new.exists() && !new.with_extension("info").exists());

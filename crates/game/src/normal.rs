@@ -41,6 +41,8 @@ pub struct NormalMode {
     /// The material the spray tool puts out. `None`: the first tank that has material.
     pub spray: Option<MaterialId>,
     pub held: NormalHeld,
+    /// Aim here instead of at the mouse (for the smoke test).
+    pub aim_override: Option<CellPos>,
     last_input: Option<PlayerInput>,
     last_windows: Option<(bool, bool)>,
     /// When the robot position of the frame arrived, and the one before, for smooth drawing.
@@ -101,6 +103,7 @@ impl NormalMode {
     /// The player input for this frame. Returns a command only when it changed.
     pub fn input(&mut self, content: &Content, mouse: CellPos, view: CellRect) -> Option<GameCommand> {
         let h = self.held;
+        let mouse = self.aim_override.unwrap_or(mouse);
         let input = PlayerInput {
             movement: MoveInput { x: h.right as i8 - h.left as i8, jump: h.jump },
             aim: mouse,

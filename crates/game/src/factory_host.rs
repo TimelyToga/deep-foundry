@@ -128,6 +128,9 @@ pub enum FactoryCommand {
     PickToCursor(PartId),
     /// Place the building in the hand with its top-left tile at `at`.
     Place { kind: BuildingKindId, at: TilePos, rotation: u8 },
+    /// Place the building in the hand at the first free place right of the robot (for tests and
+    /// the smoke test).
+    PlaceNear,
     /// Take the building at this cell back into the inventory.
     RemoveAt(CellPos),
     /// Open the window of the building at this cell.
@@ -199,6 +202,8 @@ pub struct FactoryFrame {
     pub ghost: Option<GhostView>,
     pub hover: Option<HoverBuilding>,
     pub marks: Vec<BuildingMark>,
+    /// The building placed last and its cells (for tests; later for the build animation).
+    pub last_placed: Option<(BuildingKindId, CellRect)>,
     /// Messages for the player.
     pub notices: Vec<String>,
 }
@@ -292,6 +297,7 @@ pub struct FactoryHost {
     ticks: u64,
     digging: bool,
     spraying: bool,
+    last_placed: Option<(BuildingKindId, CellRect)>,
 }
 
 impl FactoryHost {
@@ -312,6 +318,7 @@ impl FactoryHost {
             ticks: 0,
             digging: false,
             spraying: false,
+            last_placed: None,
         }
     }
 
@@ -455,6 +462,14 @@ impl FactoryHost {
             FactoryCommand::ClearCursor => self.clear_cursor(),
             FactoryCommand::PickToCursor(part) => self.pick_to_cursor(part),
             FactoryCommand::Place { kind, at, rotation } => self.place(kind, at, rotation, sim),
+            FactoryCommand::PlaceNear => {
+                let content = self.factory.content.clone();
+                let kind = self.factory.cursor.and_then(|c| content.factory.part_def(c.part).building);
+                match kind.and_then(|k| self.free_place(k, sim).map(|at| (k, at))) {
+                    Some((kind, at)) => self.place(kind, at, 0, sim),
+                    None => self.notice("No free place for the building in the hand"),
+                }
+            }
             FactoryCommand::RemoveAt(p) => self.remove_at(p, sim),
             FactoryCommand::OpenAt(p) => {
                 if let Some(id) = self.building_at(p) {
@@ -661,9 +676,12 @@ impl FactoryHost {
             self.notice(e);
             return;
         }
-        if let Err(e) = self.factory.place(kind, at, rotation, false, sim) {
-            self.notice(e.to_string());
-            return;
+        match self.factory.place(kind, at, rotation, false, sim) {
+            Ok(id) => self.last_placed = self.factory.buildings.get(id).map(|b| (kind, b.cell_rect())),
+            Err(e) => {
+                self.notice(e.to_string());
+                return;
+            }
         }
         if let Some(c) = self.factory.cursor.as_mut() {
             c.count -= 1;
@@ -677,6 +695,21 @@ impl FactoryHost {
                 }
             }
         }
+    }
+
+    /// The first free place right of the robot for a building (rotation 0), near its feet.
+    pub fn free_place(&self, kind: BuildingKindId, sim: &Simulation) -> Option<TilePos> {
+        let r = self.robot.rect();
+        let size = self.factory.content.factory.building_def(kind).size;
+        for dx in 1..12 {
+            for dy in [0, -1, 1, -2, 2] {
+                let at = TilePos::new(r.x1.div_euclid(TILE_SIZE) + dx, r.y1.div_euclid(TILE_SIZE) - size.1 as i32 + dy);
+                if self.check_place(kind, at, 0, sim).is_ok() {
+                    return Some(at);
+                }
+            }
+        }
+        None
     }
 
     fn remove_at(&mut self, p: CellPos, sim: &mut Simulation) {
@@ -853,6 +886,7 @@ impl FactoryHost {
             ghost,
             hover,
             marks,
+            last_placed: self.last_placed,
             notices: std::mem::take(&mut self.notices),
         }
     }
