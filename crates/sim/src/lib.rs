@@ -4,11 +4,17 @@
 //! The headless program and tests call it directly.
 //!
 //! Module owners (see docs/design/04-build-plan.md):
-//! - `chunk`, `world`, `lib.rs`: lead (shared interface; change through interface requests)
-//! - `naive`: Milestone 0 movement. Milestone 1 replaces it.
+//! - `chunk`, `world`, `hood`, `schedule`, `update`, `movement`, `lib.rs`: lead
+//! - `heat`: task 1B (heat and phase changes)
+//! - `react`: task 1C (reactions, fire, explosions)
 
 pub mod chunk;
-mod naive;
+pub mod heat;
+pub mod hood;
+pub mod movement;
+pub mod react;
+mod schedule;
+mod update;
 pub mod world;
 
 use chunk::{Chunk, FLAG_PARITY};
@@ -59,6 +65,7 @@ pub struct Simulation {
     sent: HashMap<ChunkPos, u64>,
     stats: SimStats,
     paint_rng: Rng,
+    pool: Option<rayon::ThreadPool>,
 }
 
 impl Simulation {
@@ -77,6 +84,7 @@ impl Simulation {
             sent: HashMap::new(),
             stats: SimStats::default(),
             paint_rng: Rng::new(config.seed ^ 0x70_6169_6e74),
+            pool: None,
         };
         if config.bedrock_border && !bedrock.is_air() {
             let (w, h) = sim.size_cells();
@@ -148,17 +156,26 @@ impl Simulation {
     pub fn tick(&mut self) {
         let start = Instant::now();
         self.stamp += 1;
-        naive::tick(&mut self.world, &self.content.materials, self.tick, self.seed, self.stamp);
-        self.tick += 1;
+        let mats = &self.content.materials;
+        let awake = schedule::movement_tick(&mut self.world, mats, self.tick, self.seed, self.stamp, self.pool.as_ref());
+        let t_move = start.elapsed().as_secs_f32() * 1000.0;
+        heat::step(&mut self.world, mats, self.tick, self.seed, self.stamp);
         let ms = start.elapsed().as_secs_f32() * 1000.0;
+        self.tick += 1;
         let loaded = self.world.chunks.iter().filter(|c| c.is_some()).count() as u32;
         self.stats = SimStats {
             tick: self.tick,
             tick_ms: ms,
-            awake_chunks: loaded,
+            awake_chunks: awake,
             loaded_chunks: loaded,
-            sections: vec![("movement", ms)],
+            sections: vec![("movement", t_move), ("heat", ms - t_move)],
         };
+    }
+
+    /// Use a private thread pool with `n` threads (1 = one thread). By default the simulation uses
+    /// the global rayon pool. The result of a tick is the same for any number of threads.
+    pub fn set_threads(&mut self, n: usize) {
+        self.pool = rayon::ThreadPoolBuilder::new().num_threads(n.max(1)).build().ok();
     }
 
     /// The cell at a position. Outside the world: bedrock.
@@ -194,6 +211,7 @@ impl Simulation {
         c.motion[i] = 0;
         c.flags[i] = (c.flags[i] & !FLAG_PARITY) | parity;
         c.version = stamp;
+        self.world.mark_dirty_around(p);
     }
 
     /// Fill a circle. Bedrock is never replaced, except by painting bedrock.
@@ -373,5 +391,237 @@ mod tests {
             s.world_hash()
         };
         assert_eq!(run(), run());
+    }
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+
+    fn big(threads: usize) -> Simulation {
+        let content = Arc::new(Content::load_default().unwrap());
+        let mut s = Simulation::new(content, SimConfig { width_chunks: 12, height_chunks: 8, seed: 9, bedrock_border: true });
+        s.set_threads(threads);
+        let c = s.content().clone();
+        let (sand, water, oil, stone, smoke) = (
+            c.expect_material("sand"),
+            c.expect_material("water"),
+            c.expect_material("oil"),
+            c.expect_material("stone"),
+            c.expect_material("smoke"),
+        );
+        for x in (40..740).step_by(90) {
+            s.paint(CellPos::new(x, 300), 12, stone, PaintMode::Replace, None);
+        }
+        s.paint(CellPos::new(150, 80), 40, sand, PaintMode::Replace, None);
+        s.paint(CellPos::new(400, 60), 50, water, PaintMode::Replace, None);
+        s.paint(CellPos::new(600, 100), 30, oil, PaintMode::Replace, None);
+        s.paint(CellPos::new(300, 400), 20, smoke, PaintMode::Replace, None);
+        s
+    }
+
+    #[test]
+    fn result_does_not_depend_on_thread_count() {
+        let mut a = big(1);
+        let mut b = big(6);
+        for t in 0..400 {
+            a.tick();
+            b.tick();
+            if t % 50 == 0 {
+                assert_eq!(a.world_hash(), b.world_hash(), "tick {t}");
+            }
+        }
+        assert_eq!(a.world_hash(), b.world_hash());
+    }
+
+    #[test]
+    fn material_is_kept_and_chunks_sleep() {
+        let mut s = big(4);
+        let all = CellRect::new(0, 0, 768, 512);
+        let c = s.content().clone();
+        let count = |s: &Simulation| {
+            ["sand", "water", "oil"].map(|n| s.count_material(all, c.expect_material(n)))
+        };
+        let before = count(&s);
+        // Oil is viscous: a wide oil slope takes about 9000 ticks to become flat.
+        for _ in 0..10_000 {
+            s.tick();
+        }
+        assert_eq!(count(&s), before, "no powder or liquid is lost");
+        // Smoke is gone after its life; sand, water and oil are at rest.
+        assert_eq!(s.count_material(all, c.expect_material("smoke")), 0);
+        assert!(s.stats().awake_chunks <= 2, "awake chunks at rest: {}", s.stats().awake_chunks);
+    }
+
+    #[test]
+    fn oil_floats_on_water() {
+        let content = Arc::new(Content::load_default().unwrap());
+        let mut s = Simulation::new(content, SimConfig { width_chunks: 2, height_chunks: 2, seed: 2, bedrock_border: true });
+        let c = s.content().clone();
+        let (water, oil) = (c.expect_material("water"), c.expect_material("oil"));
+        // Oil below, water above, in a narrow box.
+        let stone = c.expect_material("stone");
+        for y in 20..126 {
+            for x in [40, 61] {
+                s.set_cell(CellPos::new(x, y), stone, None);
+            }
+        }
+        for y in 60..126 {
+            for x in 41..61 {
+                s.set_cell(CellPos::new(x, y), if y >= 93 { oil } else { water }, None);
+            }
+        }
+        for _ in 0..4000 {
+            s.tick();
+        }
+        let top_oil = s.count_material(CellRect::new(41, 60, 61, 93), oil);
+        assert!(top_oil > 600, "most oil is on top: {top_oil} of 660");
+    }
+}
+
+#[cfg(test)]
+mod debug_awake {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn print_awake() {
+        let content = Arc::new(Content::load_default().unwrap());
+        let mut s = Simulation::new(content, SimConfig { width_chunks: 12, height_chunks: 8, seed: 9, bedrock_border: true });
+        let c = s.content().clone();
+        let (sand, water, oil, stone) = (c.expect_material("sand"), c.expect_material("water"), c.expect_material("oil"), c.expect_material("stone"));
+        for x in (40..740).step_by(90) {
+            s.paint(CellPos::new(x, 300), 12, stone, PaintMode::Replace, None);
+        }
+        s.paint(CellPos::new(150, 80), 40, sand, PaintMode::Replace, None);
+        s.paint(CellPos::new(400, 60), 50, water, PaintMode::Replace, None);
+        s.paint(CellPos::new(600, 100), 30, oil, PaintMode::Replace, None);
+        for t in 0..12000 {
+            s.tick();
+            if t % 1000 == 999 {
+                println!("tick {} awake {}", t + 1, s.stats().awake_chunks);
+            }
+            if [200, 1000, 3000, 6000].contains(&(t + 1)) {
+                dump_png(&s, CellRect::new(0, 256, 768, 512), 2, &format!("{}/../../out/mixed_{}.png", env!("CARGO_MANIFEST_DIR"), t + 1));
+            }
+        }
+        for pos in s.world.loaded_chunks().collect::<Vec<_>>() {
+            let ch = s.world.chunk(pos).unwrap();
+            if ch.dirty.is_empty() { continue; }
+            let d = ch.dirty;
+            let mut mats = std::collections::BTreeMap::new();
+            for y in d.y0..d.y1 { for x in d.x0..d.x1 { *mats.entry(c.materials.ids[ch.mat[foundry_core::local_index(x,y)] as usize].clone()).or_insert(0) += 1; } }
+            println!("{pos:?} dirty {d:?} {mats:?}");
+        }
+        let before = s.world_hash();
+        let r = CellRect::new(200, 480, 768, 512);
+        let a = ascii(&s, r);
+        s.tick();
+        let b = ascii(&s, r);
+        s.tick();
+        let c2 = ascii(&s, r);
+        for (i, ((la, lb), lc)) in a.lines().zip(b.lines()).zip(c2.lines()).enumerate() {
+            if la != lb || lb != lc {
+                let cols: Vec<usize> = la.chars().zip(lb.chars()).enumerate().filter(|(_, (p, q))| p != q).map(|(k, _)| k + 200).collect();
+                println!("row {} changed at x {:?}\n{la}\n{lb}\n{lc}", r.y0 + i as i32, cols);
+            }
+        }
+        println!("hash changed in one tick: {}", before != s.world_hash());
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn dump_png(s: &Simulation, r: CellRect, scale: u32, path: &str) {
+    let c = s.content();
+    let (w, h) = (r.width() as u32, r.height() as u32);
+    let mut img = image::RgbImage::new(w * scale, h * scale);
+    for y in 0..h {
+        for x in 0..w {
+            let m = s.cell(CellPos::new(r.x0 + x as i32, r.y0 + y as i32)).material;
+            let col = c.materials.colors[m.index()][0];
+            let a = col[3] as u32;
+            let px = if m.is_air() { [16, 18, 24] } else { [(col[0] as u32 * a / 255) as u8, (col[1] as u32 * a / 255) as u8, (col[2] as u32 * a / 255) as u8] };
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    img.put_pixel(x * scale + dx, y * scale + dy, image::Rgb(px));
+                }
+            }
+        }
+    }
+    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).ok();
+    img.save(path).unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn ascii(s: &Simulation, r: CellRect) -> String {
+    let c = s.content();
+    let mut out = String::new();
+    for y in r.y0..r.y1 {
+        for x in r.x0..r.x1 {
+            let id = &c.materials.ids[s.cell(CellPos::new(x, y)).material.index()];
+            out.push(match id.as_str() {
+                "air" => '.',
+                "bedrock" => '#',
+                "stone" => 'S',
+                "sand" => 's',
+                "water" => 'w',
+                "oil" => 'o',
+                _ => '?',
+            });
+        }
+        out.push('\n');
+    }
+    out
+}
+
+#[cfg(test)]
+mod debug_view {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn show_water() {
+        let content = Arc::new(Content::load_default().unwrap());
+        let mut s = Simulation::new(content, SimConfig { width_chunks: 4, height_chunks: 4, seed: 3, bedrock_border: true });
+        let water = s.content().expect_material("water");
+        s.paint(CellPos::new(128, 100), 10, water, PaintMode::Replace, None);
+        for _ in 0..2000 {
+            s.tick();
+        }
+        println!("{}", ascii(&s, CellRect::new(0, 244, 256, 256)));
+        println!("awake {}", s.stats().awake_chunks);
+        for c in s.world.chunks.iter_mut().flatten() {
+            c.dirty = chunk::LocalRect::FULL;
+        }
+        let h = s.world_hash();
+        s.tick();
+        println!("after waking all: changed {} awake {}", h != s.world_hash(), s.stats().awake_chunks);
+        for _ in 0..500 {
+            s.tick();
+        }
+        println!("{}", ascii(&s, CellRect::new(0, 244, 256, 256)));
+    }
+    #[test]
+    #[ignore]
+    fn show_sand_changes() {
+        let content = Arc::new(Content::load_default().unwrap());
+        let mut s = Simulation::new(content, SimConfig { width_chunks: 4, height_chunks: 4, seed: 3, bedrock_border: true });
+        let sand = s.content().expect_material("sand");
+        s.paint(CellPos::new(128, 150), 30, sand, PaintMode::Replace, None);
+        for _ in 0..3000 {
+            s.tick();
+        }
+        let r = CellRect::new(60, 200, 200, 256);
+        let a = ascii(&s, r);
+        s.tick();
+        let b = ascii(&s, r);
+        for (i, (la, lb)) in a.lines().zip(b.lines()).enumerate() {
+            if la != lb {
+                println!("row {} changed:\n{la}\n{lb}", r.y0 + i as i32);
+            }
+        }
+        println!("awake {}", s.stats().awake_chunks);
+        for pos in s.world.loaded_chunks().collect::<Vec<_>>() {
+            let ch = s.world.chunk(pos).unwrap();
+            if !ch.dirty.is_empty() { println!("{pos:?} {:?}", ch.dirty); }
+        }
     }
 }
