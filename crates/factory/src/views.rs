@@ -68,8 +68,8 @@ pub struct BuildingView {
     pub reason: String,
     pub recipe: Option<RecipeId>,
     pub recipe_name: Option<String>,
-    /// Recipes this building can run (its categories, up to its tier). The UI hides the recipes
-    /// that the player does not know yet.
+    /// Recipes this building can run (its categories, up to its tier). `Factory::building_view`
+    /// keeps only the recipes that the player knows.
     pub recipes: Vec<RecipeId>,
     /// Machine input buffers, hopper contents or lab kits.
     pub inputs: Vec<BufferView>,

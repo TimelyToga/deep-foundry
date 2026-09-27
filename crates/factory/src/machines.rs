@@ -100,6 +100,8 @@ pub enum RecipeError {
     WrongCategory { recipe: String, building: String },
     /// The recipe tier is above the machine tier.
     TierTooLow { needs: u8, has: u8 },
+    /// The player has not researched the recipe yet.
+    NotKnown { recipe: String },
 }
 
 impl std::fmt::Display for RecipeError {
@@ -108,6 +110,7 @@ impl std::fmt::Display for RecipeError {
             RecipeError::NotAMachine => write!(f, "This building has no recipes"),
             RecipeError::WrongCategory { recipe, building } => write!(f, "{building} cannot make {recipe}"),
             RecipeError::TierTooLow { needs, has } => write!(f, "Needs a tier {needs} machine; this one is tier {has}"),
+            RecipeError::NotKnown { recipe } => write!(f, "Research {recipe} first"),
         }
     }
 }
