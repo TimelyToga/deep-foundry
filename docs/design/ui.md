@@ -58,6 +58,9 @@ When the game reloads the data, it puts a new `Arc<Content>` into the model. The
 | `finished_techs` | Finished technologies. A recipe that a technology unlocks shows only when that technology is here. |
 | `hover` | The cell or the building under the mouse (entity info panel). |
 | `research` | The technology that is researched now, and its progress. |
+| `techs` | All technologies with their state, for the research window (section 3.3). The game fills it while the research window is open. |
+| `discovery_points` | Discovery points that the player can spend. |
+| `guide` | The guide goals of the open tiers, in order (section 3.4). |
 | `alerts` | Alerts, grouped by kind, with a count and a place. |
 | `building` | The open building window, or `None`. |
 | `power` | The open power network window, or `None`. |
@@ -77,7 +80,11 @@ Details of the player:
 - `hotbar: Vec<Option<ItemRef>>`: 20 quickbar slots. A quickbar slot holds an item type, not items. The count shown is the number in the inventory.
 - `crafting: Vec<CraftJobView>`: the hand crafting queue. Only the first job has progress.
 
-Details of a building window (`BuildingView`): status and status text, the current recipe, input, output and fuel slots (each slot can have a `filter`: the item it expects), material buffers (for example "Water in", "Steam out"), progress, speed, power use (with the voltage of the building and of its network) and temperature. The name, the icon, the maximum temperature and the list of recipes that the building can make come from the content (`item::building_recipes`).
+Details of a building window (`BuildingView`): status and status text, the current recipe, input, output and fuel slots (each slot can have a `filter`: the item it expects), material buffers (for example "Water in", "Steam out"), progress, speed, power use (with the voltage of the building and of its network), temperature, and `milestone` (only for the Hub, section 3.5). The name, the icon, the maximum temperature and the list of recipes that the building can make come from the content (`item::building_recipes`).
+
+- A slot grid shows at most 10 slots in a row. More slots go into more rows (the Hub has 16 slots, a crate 8).
+- Storage (a crate, the Hub) puts its slots in `inputs`. A building with no recipe, no outputs and no fuel slots shows no progress arrow.
+- Machine status (`MachineStatus`): Working (green); Idle, No recipe, Disabled (gray); No input, Output full, Output blocked, Too cold, Low power, No fuel (yellow); No power, Too hot, Wrong voltage, Room not valid, Broken (red).
 
 Details of a power network window (`PowerNetworkView`): voltage tier, satisfaction, production and its maximum, consumption, energy in batteries, current and the limit of the weakest cable, producers and consumers by building type (with history for the graph lines), total production and consumption history, and warnings (overloaded cable, wrong voltage, not enough power, no generators).
 
@@ -89,7 +96,7 @@ The game runs in the sandbox mode while there is no player and no factory (like 
 - The stack in the hand is the paint brush. A click on a material sends `ClickSlot`; the game puts that material in the hand.
 - The line above the quickbar shows the brush (material and size) instead of the hull and heat bars.
 - A click on a full quickbar slot selects it (the hand always holds something, so it does not replace the slot). A click on an empty slot puts the material in the hand there. A right click clears a slot.
-- P (production statistics) does nothing.
+- P (production statistics), T (research) and G (guide) do nothing. The HUD shows no guide tracker.
 
 Over the world, the stack in the hand is drawn at the lower right of the mouse, so the brush center stays visible.
 
@@ -97,13 +104,31 @@ Over the world, the stack in the hand is drawn at the lower right of the mouse, 
 
 `Settings` has `ui_scale`, `vsync`, `show_fps`, `show_debug` (the debug panel, F3), `key_bindings` (read only) and `simulation`: a list of number settings of the simulation (`SimSetting`: key, label, help, value, min, max, step). The settings screen shows one slider for each in the "Simulation" section. When the list is empty, it says that the liquid settings will be there. A slider move sends `ChangeSetting(SettingChange::Simulation { key, value })`.
 
+### 3.3 Research
+
+`techs: Vec<TechEntry>` has one entry for each technology:
+
+- `id`: the technology. The name, the description, the tier, the kits per unit, the number of units, the discovery points, the discoveries and the unlocked recipes come from `content.factory.techs`.
+- `state`: `Done`, `Researching` (the current research), `Available` (it can start now) or `Locked`.
+- `progress`: 0 to 1. It can be above 0 for a technology that started and then stopped.
+- `reasons`: why a locked technology cannot start, as sentences for the player (for example "Research Glass first."). Empty unless `Locked`.
+- `queue_position`: the place in the research queue (0 = next), or `None`.
+
+### 3.4 Guide
+
+`guide: Vec<GuideGoal>` has the goals of the open tiers, in order. A goal has an `id`, a `tier`, a `title`, a hint `text`, `done`, an optional `count` (have, need), for example (40, 64), and `reward_points` (discovery points it gives).
+
+### 3.5 Hub repair stage
+
+`BuildingView::milestone` is `Some` only for the Hub. `MilestoneView` has the `stage` number, the `name` and the `description` of the next repair stage (from `content.factory.milestones`), and `items`: one `Delivery { item, delivered, need }` for each item that the stage needs.
+
 Graphs use `TimeSeries`: 300 samples for each time range (5 s, 1 m, 10 m, 1 h, 10 h). The game can use `foundry_ui::graph::History` to collect them: call `push(value)` once per tick and `fill(&mut series)` when the window is open. A sample of a long range is the average of the samples of the shorter range.
 
 ## 4. The actions (`UiAction`)
 
 | Action | What the game does |
 |---|---|
-| `OpenWindow(kind)` | Information only. For `Production`, the game can start to fill `stats`. |
+| `OpenWindow(kind)` | Information only. For `Production`, the game can start to fill `stats`. For `Research`, it can start to fill `techs`. |
 | `CloseWindow(kind)` | For `Building` and `PowerNetwork`: set `model.building` or `model.power` to `None`. For the others: information only. |
 | `OpenPowerNetwork(building)` | Fill `model.power` with the network of this building. |
 | `ClickSlot { slot, click }` | Apply the Factorio slot rules (section 5) to the real inventories. |
@@ -113,8 +138,9 @@ Graphs use `TimeSeries`: 300 samples for each time range (5 s, 1 m, 10 m, 1 h, 1
 | `Craft { recipe, count }` | Add a hand crafting job. Take the ingredients now, as in Factorio. |
 | `CancelCraft { index, count }` | Remove runs from a queue job and give the ingredients back. |
 | `SetRecipe { building, recipe }` | Change the recipe of a building (`None` clears it). |
+| `StartResearch(tech)` | Research this technology now. Queue the technologies it needs first. |
 | `ShowAlert(id)` | Move the camera to the place of the alert. |
-| `NewGame { seed, size }` | Make a new world. |
+| `NewGame { seed, size, mode }` | Make a new world. `mode` is `GameMode::Normal` (the robot, the factory, research and the Hub) or `GameMode::Sandbox`. |
 | `Continue` | Load the newest save. |
 | `Pause`, `Resume` | Set `state` to `Paused` or `Playing` and stop or start the simulation. |
 | `Save { name, overwrite }` | Save the game. `overwrite` is true when the player said yes to replacing a save with that name. |
@@ -153,6 +179,8 @@ The UI reads these keys itself. The game must not use them for other things.
 |---|---|
 | E | Open or close the character screen. If a building or power window is open, close it (as in Factorio). |
 | P | Open or close the production statistics (not in the sandbox mode). |
+| T | Open or close the research window (not in the sandbox mode). |
+| G | Open or close the guide (not in the sandbox mode). |
 | Esc | Close the top window. With no window open, send `Pause`. In the pause menu: go back one page, or send `Resume`. |
 | 1 to 0 | Select quickbar slots 1 to 10 (the bottom row). |
 | Shift + 1 to 0 | Select quickbar slots 11 to 20 (the top row). |
@@ -161,7 +189,8 @@ The UI ignores keys while a text field has the keyboard.
 
 ## 8. Windows
 
-- Only one of the character screen, the statistics and a building window is open at a time, as in Factorio. A new building window closes the character screen, because the building window shows the inventory next to it.
+- The character screen, the statistics, the research window and the guide replace each other: only one of them is open at a time, as in Factorio. The UI sends `CloseWindow` for the window that it closes.
+- A new building window closes these windows too, because the building window shows the inventory next to it.
 - The power window can be open together with a building window.
 - The player moves a window by its title bar. The [X] button closes it. Esc closes the top window. A click on a window puts it on top.
 - The building window has the player inventory on its left. The two move together.
@@ -170,13 +199,16 @@ The UI ignores keys while a text field has the keyboard.
 
 | Screen | Contents |
 |---|---|
-| HUD | Quickbar (2 rows of 10) with hull and heat bars at the bottom center. Tank summary on its right. Crafting queue at the bottom left. Research box at the top left. Entity info panel at the top right. Alerts at the bottom right. FPS at the top right corner. |
+| HUD | Quickbar (2 rows of 10) with hull and heat bars at the bottom center. Tank summary on its right. Crafting queue at the bottom left. Research box at the top left (a click opens the research window). Guide tracker under the research box, or at the top left when there is no research: the first 2 goals that are not done, with the title, the count and the text (a click opens the guide; not in the sandbox mode; nothing when no goal is open). Entity info panel at the top right. Alerts at the bottom right. FPS at the top right corner. |
 | Character screen (E) | Inventory grid and tank on the left. Crafting on the right: 5 tabs (Logistics, Production, Intermediate products, Power, Research), a search field, and the recipe grid. |
-| Building window | Status line with a colored dot, tier, picture, recipe selector (a click opens a grid of recipes), input slots, progress arrow, output slots, fuel slots, material buffers, power bar (a click opens the power network), temperature bar. |
+| Building window | Status line with a colored dot, tier, picture, Hub repair stage (only the Hub), recipe selector (a click opens a grid of recipes), input slots, progress arrow, output slots, fuel slots, material buffers, power bar (a click opens the power network), temperature bar. |
+| Hub repair stage | In the Hub window: "Repair stage N: name", the description, one row for each item (icon, name, a bar with "delivered / need"), and a hint: shift + click moves a stack from the inventory into the Hub. |
+| Research (T) | Discovery points at the top. A list with a scroll bar, grouped by tier. Each technology: icon, name, a state badge (Done, Researching, Available, Locked), the queue place, the cost (kits per unit × units, discovery points, discoveries to scan), a progress bar when progress is above 0, the lock reasons in red, the icons of the recipes it unlocks (with recipe tooltips), and a Research button for available technologies. An empty list shows "No technologies yet." |
+| Guide (G) | Goals done and discovery points at the top. The goals grouped by tier. A done goal is one dim line with a check mark. An open goal shows the title, the reward, the text, and a bar with "have / need" when it counts something. |
 | Power network | Voltage tier, satisfaction, production, storage and current bars, warnings, consumers and producers by building type, graphs of consumption and production with time ranges 5s / 1m / 10m / 1h / 10h. |
 | Production statistics (P) | Time range tabs, graphs of made and used per minute, and lists of items with bars and rates. |
 | Main menu | Continue, New game, Load game, Settings, Quit game. |
-| New game | Seed (with a Random button) and world size. The sandbox sizes are Small 2048 × 1024, Normal 4096 × 2048 and Large 8192 × 4096 cells (`WorldSize::chunks`). |
+| New game | Game mode ("Normal game" or "Sandbox", default Normal game), seed (with a Random button) and world size. The sandbox sizes are Small 2048 × 1024, Normal 4096 × 2048 and Large 8192 × 4096 cells (`WorldSize::chunks`). |
 | Pause menu (Esc) | Resume, Save game, Load game, Settings, Quit to main menu, Quit game. The world is dimmed. |
 | Save game | List of saves (name, date, play time), name field, Save. A save with the same name asks "Overwrite save?". |
 | Load game | List of saves, Delete (asks first), Load. A double click loads. |
@@ -205,10 +237,10 @@ When real art exists, change `IconAtlas::build` to load it by the string id of t
 
 ## 12. Preview and tests
 
-- `cargo run -p foundry_ui --example preview` opens a window with the mock data. The mock game applies the actions, so crafting, slot clicks, saves and menus work. Extra keys: F2 steam assembler, F3 boiler, F4 electric furnace, F5 power network, F6 item in the hand, F7 hover a cell or a building, F8 main menu, F9 UI scale, F1 help.
+- `cargo run -p foundry_ui --example preview` opens a window with the mock data. The mock game applies the actions, so crafting, slot clicks, saves and menus work. Extra keys: F2 steam assembler, F3 boiler, F4 electric furnace, F5 power network, F6 item in the hand, F7 hover a cell or a building, F8 main menu, F9 UI scale, F10 the Hub, F1 help. The game keys (E, P, T, G, Esc, 1 to 0) also work.
 - `cargo test -p foundry_ui` runs the unit tests (slot rules, number formats, crafting counts, graph math, mock game) and the screenshot tests.
-- The screenshot tests render every screen at 1920 × 1080 (and some at 2560 × 1440) to `crates/ui/tests/snapshots/*.png`. A test fails when a picture changes. After a wanted change, run `UPDATE_SNAPSHOTS=1 cargo test -p foundry_ui --test snapshots` and look at the new pictures.
+- The screenshot tests render every screen at 1920 × 1080 (and some at 2560 × 1440) to `crates/ui/tests/snapshots/*.png`. A test fails when a picture changes. After a wanted change, run `UPDATE_SNAPSHOTS=1 cargo test -p foundry_ui --test snapshots` and look at the new pictures. A picture with fewer than 2000 changed pixels passes the test and is not written again; delete its file first to get the new picture.
 
 ## 13. Mock data
 
-`foundry_ui::mock` loads the real content from `assets/data`. The real factory data is still a small starter set, so the mock adds Tier 0 to Tier 2 parts, buildings, recipes and technologies from `crates/ui/mock_data/*.ron`, only for ids that the real data does not have. These files are test data for the UI, not game data. The mock invents only the state: inventory, queue, machine state, power numbers and saves.
+`foundry_ui::mock` loads the real content from `assets/data`. The real factory data is still a small starter set, so the mock adds Tier 0 to Tier 2 parts, buildings, recipes and technologies from `crates/ui/mock_data/*.ron`, only for ids that the real data does not have. These files are test data for the UI, not game data. The mock invents only the state: inventory, queue, machine state, power numbers, saves, the state of each technology (`mock::tech_entries`: done, researching, available and locked with reasons), discovery points, guide goals (texts from `assets/data/guide`, some done) and the Hub (`mock::hub_view`: 16 slots, 4 tanks and the first repair stage from the real milestone data). `MockGame` applies `StartResearch` and makes a sandbox model for `NewGame` with `GameMode::Sandbox`.

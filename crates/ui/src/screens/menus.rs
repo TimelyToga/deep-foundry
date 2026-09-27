@@ -2,7 +2,7 @@
 //! confirmations.
 
 use super::Cx;
-use crate::action::{SettingChange, UiAction, WorldSize};
+use crate::action::{GameMode, SettingChange, UiAction, WorldSize};
 use crate::format;
 use crate::model::GameState;
 use crate::theme::{self, color, font, font_bold, font_regular, size, text};
@@ -186,12 +186,30 @@ fn new_game(cx: &mut Cx, st: &mut UiState) {
     let seed_ok = st.menu.seed_text.trim().parse::<u64>().is_ok();
     let id = Id::new("new-game");
     let menu = &mut st.menu;
-    let (back, ok) = dialog(cx, id, "New game", vec2(560.0, 212.0), Some(("Play", ButtonKind::Confirm, seed_ok)), |ui, cx, r| {
+    let (back, ok) = dialog(cx, id, "New game", vec2(560.0, 306.0), Some(("Play", ButtonKind::Confirm, seed_ok)), |ui, cx, r| {
         let p = ui.painter().clone();
         let inner = Rect::from_min_size(r.min, r.size());
         widgets::shallow(&p, inner);
         let x = inner.left() + 14.0;
         let mut y = inner.top() + 14.0;
+        widgets::heading(&p, pos2(x, y), "Game mode");
+        y += 26.0;
+        let mode_w = (inner.width() - 28.0 - 10.0) * 0.5;
+        for (i, mode) in GameMode::ALL.into_iter().enumerate() {
+            let br = Rect::from_min_size(pos2(x + i as f32 * (mode_w + 10.0), y), vec2(mode_w, 52.0));
+            let resp = widgets::toggle(ui, Id::new(("game-mode", i)), br, "", menu.mode == mode);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, menu.mode == mode, mode.label()));
+            let line = match mode {
+                GameMode::Normal => "Dig, build the factory, repair the Hub.",
+                GameMode::Sandbox => "Paint any material. No robot, no factory.",
+            };
+            p.text(br.center() - vec2(0.0, 9.0), Align2::CENTER_CENTER, mode.label(), font_bold(text::BODY + 1.0), color::BUTTON_TEXT);
+            p.text(br.center() + vec2(0.0, 11.0), Align2::CENTER_CENTER, line, font_regular(text::SMALL), Color32::from_gray(40));
+            if resp.clicked() {
+                menu.mode = mode;
+            }
+        }
+        y += 52.0 + 16.0;
         widgets::heading(&p, pos2(x, y), "World seed");
         y += 26.0;
         let field = Rect::from_min_size(pos2(x, y), vec2(300.0, 30.0));
@@ -207,8 +225,9 @@ fn new_game(cx: &mut Cx, st: &mut UiState) {
         y += 28.0;
         widgets::heading(&p, pos2(x, y), "World size");
         y += 26.0;
+        let size_w = (inner.width() - 28.0 - 20.0) / 3.0;
         for (i, ws) in WorldSize::ALL.into_iter().enumerate() {
-            let br = Rect::from_min_size(pos2(x + i as f32 * 176.0, y), vec2(166.0, 52.0));
+            let br = Rect::from_min_size(pos2(x + i as f32 * (size_w + 10.0), y), vec2(size_w, 52.0));
             let selected = menu.world_size == ws;
             let resp = widgets::toggle(ui, Id::new(("world-size", i)), br, "", selected);
             let (w, h) = ws.cells();

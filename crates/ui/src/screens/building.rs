@@ -1,14 +1,14 @@
 //! The building window (Factorio entity GUI), with the player inventory next to it.
 //!
-//! Layout from top to bottom: status line, picture, recipe selector, input slots, progress,
-//! output slots, fuel slots, material buffers, power bar, temperature bar.
+//! Layout from top to bottom: status line, picture, Hub repair stage, recipe selector, input
+//! slots, progress, output slots, fuel slots, material buffers, power bar, temperature bar.
 
 use super::inventory::{self, slot_click};
 use super::{Cx, window_id};
 use crate::action::{SlotRef, UiAction, WindowKind};
 use crate::format;
 use crate::item;
-use crate::model::{BuildingSlots, BuildingView};
+use crate::model::{BuildingSlots, BuildingView, MilestoneView};
 use foundry_content::ItemRef;
 use foundry_core::RecipeId;
 use crate::theme::{self, color, font, font_bold, font_regular, size, text};
@@ -24,10 +24,44 @@ const RECIPE_H: f32 = 52.0;
 const ROW_H: f32 = 32.0;
 const GAP: f32 = 10.0;
 
+/// Slots in one row of a slot grid. More slots wrap to more rows.
+const MAX_COLS: usize = 10;
+/// The smallest space between the input and the output grids (room for the progress arrow).
+const ARROW_MIN: f32 = 64.0;
+const HUB_HINT: &str = "Put these items into the Hub. Shift + click moves a stack from your inventory.";
+
+/// The size of a slot grid with `n` slots (at least one row, so an empty grid keeps its place).
+fn grid_size(n: usize) -> Vec2 {
+    let cols = n.clamp(1, MAX_COLS);
+    let rows = n.div_ceil(MAX_COLS).max(1);
+    vec2(cols as f32 * size::SLOT + 4.0, rows as f32 * size::SLOT + 4.0)
+}
+
+/// True if the input and the output grids fit next to each other.
+fn side_by_side(b: &BuildingView) -> bool {
+    b.inputs.is_empty() || b.outputs.is_empty() || grid_size(b.inputs.len()).x + grid_size(b.outputs.len()).x + ARROW_MIN + 16.0 <= WIDTH
+}
+
+/// A machine shows its progress. Storage (a crate, the Hub) does not.
+fn shows_progress(b: &BuildingView) -> bool {
+    b.recipe.is_some() || !b.outputs.is_empty() || !b.fuel.is_empty()
+}
+
+/// The height of the input and output grids with their labels.
+fn main_grids_h(b: &BuildingView) -> f32 {
+    let (ins, outs) = (grid_size(b.inputs.len()).y, grid_size(b.outputs.len()).y);
+    // An empty grid has the height of one row, so `max` also works when one of them is empty.
+    if side_by_side(b) {
+        ins.max(outs)
+    } else {
+        ins + 6.0 + 20.0 + outs
+    }
+}
+
 fn slots_panel_h(b: &BuildingView) -> f32 {
-    let mut h = 12.0 + 20.0 + size::SLOT + 4.0;
+    let mut h = 12.0 + 20.0 + main_grids_h(b);
     if !b.fuel.is_empty() {
-        h += 26.0 + 20.0 + size::SLOT + 4.0;
+        h += 26.0 + 20.0 + grid_size(b.fuel.len()).y;
     }
     h
 }
@@ -36,8 +70,19 @@ fn has_slots(b: &BuildingView) -> bool {
     !(b.inputs.is_empty() && b.outputs.is_empty() && b.fuel.is_empty())
 }
 
-fn content_height(b: &BuildingView, recipes: &[RecipeId]) -> f32 {
+/// The height of the Hub repair stage panel.
+fn milestone_h(ctx: &egui::Context, m: &MilestoneView) -> f32 {
+    let w = WIDTH - 20.0;
+    let desc = if m.description.is_empty() { 0.0 } else { widgets::text_height(ctx, &m.description, font_regular(text::BODY), w) + 6.0 };
+    let hint = widgets::text_height(ctx, HUB_HINT, font_regular(text::SMALL), w);
+    10.0 + 26.0 + desc + m.items.len() as f32 * ROW_H + 4.0 + hint + 10.0
+}
+
+fn content_height(ctx: &egui::Context, b: &BuildingView, recipes: &[RecipeId]) -> f32 {
     let mut h = STATUS_H + PICTURE_H + GAP;
+    if let Some(m) = &b.milestone {
+        h += milestone_h(ctx, m) + GAP;
+    }
     if !recipes.is_empty() || b.recipe.is_some() {
         h += RECIPE_H + GAP;
     }
@@ -63,7 +108,7 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
     let recipes = item::building_recipes(&model.content, b.kind, &model.finished_techs);
     let inv = inventory::panel_size(cx);
     let inv_outer = widgets::window_outer(inv);
-    let b_outer = widgets::window_outer(vec2(WIDTH, content_height(b, &recipes)));
+    let b_outer = widgets::window_outer(vec2(WIDTH, content_height(ctx, b, &recipes)));
     let pair = vec2(inv_outer.x + 12.0 + b_outer.x, inv_outer.y.max(b_outer.y));
     let screen = ctx.content_rect();
     let rect = widgets::place(screen, pair, st.offset(WindowKind::Building) - vec2(0.0, 40.0));
@@ -132,6 +177,13 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
     }
     y += PICTURE_H + GAP;
 
+    // Hub: the next repair stage.
+    if let Some(m) = &b.milestone {
+        let panel = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), milestone_h(cx.ctx, m)));
+        milestone_panel(ui, cx, &p, m, panel);
+        y += panel.height() + GAP;
+    }
+
     // Recipe selector.
     let mut recipe_slot = Rect::NOTHING;
     if !recipes.is_empty() || b.recipe.is_some() {
@@ -172,24 +224,30 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
     if has_slots(b) {
         let panel = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), slots_panel_h(b)));
         widgets::shallow(&p, panel);
-        let mut sy = panel.top() + 8.0;
-        let ins_w = b.inputs.len() as f32 * size::SLOT + 4.0;
-        let outs_w = b.outputs.len() as f32 * size::SLOT + 4.0;
-        let in_grid = Rect::from_min_size(pos2(panel.left() + 8.0, sy + 20.0), vec2(ins_w, size::SLOT + 4.0));
-        let out_grid = Rect::from_min_size(pos2(panel.right() - 8.0 - outs_w, sy + 20.0), vec2(outs_w, size::SLOT + 4.0));
+        let sy = panel.top() + 8.0;
+        let in_grid = Rect::from_min_size(pos2(panel.left() + 8.0, sy + 20.0), grid_size(b.inputs.len()));
+        let out_size = grid_size(b.outputs.len());
+        let beside = side_by_side(b);
+        let out_grid = if beside {
+            Rect::from_min_size(pos2(panel.right() - 8.0 - out_size.x, sy + 20.0), out_size)
+        } else {
+            // Below the inputs, on the right.
+            Rect::from_min_size(pos2(panel.right() - 8.0 - out_size.x, in_grid.bottom() + 6.0 + 20.0), out_size)
+        };
         if !b.inputs.is_empty() {
             p.text(pos2(in_grid.left(), sy + 9.0), Align2::LEFT_CENTER, "Input", font_regular(text::SMALL), color::TEXT_DIM);
-            slot_row(ui, cx, b, BuildingSlots::Input, in_grid);
+            slot_grid(ui, cx, b, BuildingSlots::Input, in_grid);
         }
         if !b.outputs.is_empty() {
-            p.text(pos2(out_grid.right(), sy + 9.0), Align2::RIGHT_CENTER, "Output", font_regular(text::SMALL), color::TEXT_DIM);
-            slot_row(ui, cx, b, BuildingSlots::Output, out_grid);
+            p.text(pos2(out_grid.right(), out_grid.top() - 11.0), Align2::RIGHT_CENTER, "Output", font_regular(text::SMALL), color::TEXT_DIM);
+            slot_grid(ui, cx, b, BuildingSlots::Output, out_grid);
         }
-        // Progress arrow between inputs and outputs.
-        let left = if b.inputs.is_empty() { panel.left() + 8.0 } else { in_grid.right() + 12.0 };
+        // Progress arrow before the outputs: between the grids, or left of the outputs when
+        // they are below the inputs.
+        let left = if b.inputs.is_empty() || !beside { panel.left() + 8.0 } else { in_grid.right() + 12.0 };
         let right = if b.outputs.is_empty() { panel.right() - 8.0 } else { out_grid.left() - 12.0 };
-        if right - left > 40.0 {
-            let cy = in_grid.center().y;
+        if shows_progress(b) && right - left > 40.0 {
+            let cy = if beside { in_grid.top() + (size::SLOT + 4.0) * 0.5 } else { out_grid.top() + (size::SLOT + 4.0) * 0.5 };
             let bar = Rect::from_min_max(pos2(left, cy - 8.0), pos2(right - 14.0, cy + 8.0));
             widgets::bar(&p, bar, b.progress, color::PROGRESS, Some(&format::percent(b.progress)));
             let tip = pos2(right, cy);
@@ -199,12 +257,11 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
                 Stroke::new(1.0, color::WINDOW_DARK),
             ));
         }
-        sy = in_grid.bottom() + 6.0;
+        let fy = sy + 20.0 + main_grids_h(b) + 6.0;
         if !b.fuel.is_empty() {
-            p.text(pos2(panel.left() + 8.0, sy + 9.0), Align2::LEFT_CENTER, "Fuel", font_regular(text::SMALL), color::TEXT_DIM);
-            let fw = b.fuel.len() as f32 * size::SLOT + 4.0;
-            let fgrid = Rect::from_min_size(pos2(panel.left() + 8.0, sy + 20.0), vec2(fw, size::SLOT + 4.0));
-            slot_row(ui, cx, b, BuildingSlots::Fuel, fgrid);
+            p.text(pos2(panel.left() + 8.0, fy + 9.0), Align2::LEFT_CENTER, "Fuel", font_regular(text::SMALL), color::TEXT_DIM);
+            let fgrid = Rect::from_min_size(pos2(panel.left() + 8.0, fy + 20.0), grid_size(b.fuel.len()));
+            slot_grid(ui, cx, b, BuildingSlots::Fuel, fgrid);
         }
         y += panel.height() + GAP;
     }
@@ -302,11 +359,13 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
     recipe_slot
 }
 
-fn slot_row(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, grid: Rect) {
+/// Draw a slot grid. The slots fill rows of `MAX_COLS` from the top left.
+fn slot_grid(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, grid: Rect) {
     let model = cx.model;
     widgets::deep(ui.painter(), grid);
     for (i, s) in b.slots(group).iter().enumerate() {
-        let sr = Rect::from_min_size(grid.min + vec2(2.0 + i as f32 * size::SLOT, 2.0), Vec2::splat(size::SLOT));
+        let (col, row) = (i % MAX_COLS, i / MAX_COLS);
+        let sr = Rect::from_min_size(grid.min + vec2(2.0 + col as f32 * size::SLOT, 2.0 + row as f32 * size::SLOT), Vec2::splat(size::SLOT));
         let count = s.stack.filter(|x| x.count > 1).map(|x| format::count(x.count as u64));
         let content = SlotContent { item: s.stack.map(|x| x.item), count: count.as_deref(), ghost: s.filter, ..Default::default() };
         let look = if s.stack.is_some() { SlotLook::Normal } else { SlotLook::Dark };
@@ -330,6 +389,39 @@ fn slot_row(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, gr
             cx.act(UiAction::ClickSlot { slot: SlotRef::Building { building: b.id, group, index: i }, click });
         }
     }
+}
+
+/// The Hub repair stage: the name, the description, one row per item with a bar, and a hint.
+fn milestone_panel(ui: &mut Ui, cx: &mut Cx, p: &egui::Painter, m: &MilestoneView, panel: Rect) {
+    let content = &*cx.model.content;
+    widgets::shallow(p, panel);
+    let inner = panel.shrink(10.0);
+    let mut y = inner.top();
+    widgets::heading(p, pos2(inner.left(), y), &format!("Repair stage {}: {}", m.stage, m.name));
+    y += 26.0;
+    if !m.description.is_empty() {
+        y = widgets::wrapped(p, pos2(inner.left(), y), &m.description, font_regular(text::BODY), color::TEXT_DIM, inner.width()).bottom() + 6.0;
+    }
+    for (i, d) in m.items.iter().enumerate() {
+        let row = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), ROW_H - 4.0));
+        let icon = Rect::from_min_size(row.min, Vec2::splat(row.height()));
+        widgets::deep(p, icon);
+        cx.atlas.paint(p, d.item, icon.shrink(2.0), Color32::WHITE);
+        let name = item::name(content, d.item);
+        p.text(pos2(icon.right() + 8.0, row.center().y), Align2::LEFT_CENTER, name, font(text::BODY), color::TEXT);
+        let bar = Rect::from_min_max(pos2(inner.left() + 190.0, row.top() + 4.0), pos2(inner.right(), row.bottom() - 4.0));
+        let done = d.delivered >= d.need;
+        let frac = if d.need > 0 { d.delivered as f32 / d.need as f32 } else { 1.0 };
+        let label = format!("{} / {}", d.delivered, d.need);
+        widgets::bar(p, bar, frac, if done { color::GREEN } else { color::PROGRESS }, Some(&label));
+        let resp = ui.interact(row, Id::new(("b-delivery", i)), egui::Sense::hover());
+        if resp.hovered() {
+            let amount = if done { format!("Delivered: {} of {}. Done.", d.delivered, d.need) } else { format!("Delivered: {} of {}. {} more.", d.delivered, d.need, d.need - d.delivered) };
+            cx.tip(Tip::Item { item: d.item, amount: Some(amount) });
+        }
+        y += ROW_H;
+    }
+    widgets::wrapped(p, pos2(inner.left(), y + 4.0), HUB_HINT, font_regular(text::SMALL), color::TEXT_FAINT, inner.width());
 }
 
 fn recipe_picker(cx: &mut Cx, st: &mut UiState, b: &BuildingView, recipes: &[RecipeId], anchor: Rect) {
