@@ -4,8 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+description = "Headless tools: scene tests, benchmarks, PNG screenshots of the cell world."
 
 [dependencies]
 foundry_core.workspace = true
 foundry_content.workspace = true
 foundry_sim.workspace = true
+serde.workspace = true
+ron.workspace = true
+anyhow.workspace = true
+rayon.workspace = true
+png = "0.18"

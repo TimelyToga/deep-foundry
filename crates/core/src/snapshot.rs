@@ -87,6 +87,8 @@ pub struct Snapshot {
     pub particles: Vec<ParticleView>,
     /// Awake chunks and their update areas, if debug data is on. Empty otherwise.
     pub debug_chunks: Vec<DebugChunk>,
+    /// Short messages for the player, for example "Game saved." or "Load failed: ...".
+    pub notices: Vec<String>,
     pub stats: SimStats,
 }
 
@@ -94,6 +96,10 @@ impl Snapshot {
     /// Add the chunk images of an older snapshot that this snapshot does not replace.
     /// Used when the reader did not take the older snapshot in time, so that no update is lost.
     pub fn merge_older(&mut self, older: Snapshot) {
+        let mut older = older;
+        let mut notices = std::mem::take(&mut older.notices);
+        notices.append(&mut self.notices);
+        self.notices = notices;
         if older.chunks.is_empty() {
             return;
         }

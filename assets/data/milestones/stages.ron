@@ -1,0 +1,3 @@
+[
+    Milestone(stage: 1, name: "Repair the Hub frame", description: "Unlocks Tier 1: Steam.", deliver: [("bronze_plate", 40), ("bronze_gear", 20)], unlocks_tier: 1),
+]
