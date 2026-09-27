@@ -17,6 +17,13 @@ mod schedule;
 mod update;
 pub mod world;
 
+/// Something that happened in a tick that needs work outside the per-cell update.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SimEvent {
+    /// An explosion at a cell. Task 1C (explosions) handles the queue after movement.
+    Explosion { at: CellPos, strength: f32, heat: i16 },
+}
+
 use chunk::{Chunk, FLAG_PARITY};
 use foundry_content::Content;
 use foundry_core::{
@@ -66,6 +73,8 @@ pub struct Simulation {
     stats: SimStats,
     paint_rng: Rng,
     pool: Option<rayon::ThreadPool>,
+    /// Events of the last tick. See `take_events`.
+    events: Vec<SimEvent>,
 }
 
 impl Simulation {
@@ -85,6 +94,7 @@ impl Simulation {
             stats: SimStats::default(),
             paint_rng: Rng::new(config.seed ^ 0x70_6169_6e74),
             pool: None,
+            events: Vec::new(),
         };
         if config.bedrock_border && !bedrock.is_air() {
             let (w, h) = sim.size_cells();
@@ -157,7 +167,16 @@ impl Simulation {
         let start = Instant::now();
         self.stamp += 1;
         let mats = &self.content.materials;
-        let awake = schedule::movement_tick(&mut self.world, mats, self.tick, self.seed, self.stamp, self.pool.as_ref());
+        self.events.clear();
+        let awake = schedule::movement_tick(
+            &mut self.world,
+            mats,
+            self.tick,
+            self.seed,
+            self.stamp,
+            self.pool.as_ref(),
+            &mut self.events,
+        );
         let t_move = start.elapsed().as_secs_f32() * 1000.0;
         heat::step(&mut self.world, mats, self.tick, self.seed, self.stamp);
         let ms = start.elapsed().as_secs_f32() * 1000.0;
@@ -170,6 +189,11 @@ impl Simulation {
             loaded_chunks: loaded,
             sections: vec![("movement", t_move), ("heat", ms - t_move)],
         };
+    }
+
+    /// The events of the last tick (explosions, ...), in a fixed order.
+    pub fn events(&self) -> &[SimEvent] {
+        &self.events
     }
 
     /// Use a private thread pool with `n` threads (1 = one thread). By default the simulation uses
@@ -212,6 +236,35 @@ impl Simulation {
         c.flags[i] = (c.flags[i] & !FLAG_PARITY) | parity;
         c.version = stamp;
         self.world.mark_dirty_around(p);
+    }
+
+    /// Write a whole chunk at once (for world generation and loading). `materials` and
+    /// `temperatures` have `CHUNK_AREA` entries, row by row from the top. `temperatures: None` uses
+    /// each material's default temperature. The whole chunk is updated in the next tick.
+    pub fn fill_chunk(&mut self, pos: ChunkPos, materials: &[u16], temperatures: Option<&[i16]>) {
+        assert_eq!(materials.len(), CHUNK_AREA);
+        if let Some(t) = temperatures {
+            assert_eq!(t.len(), CHUNK_AREA);
+        }
+        let mats = &self.content.materials;
+        let parity = ((self.tick & 1) as u8) ^ 1;
+        let stamp = self.stamp;
+        let mut rng = Rng::for_chunk(self.seed, self.tick, pos, 0x66696c6c);
+        let Some(c) = self.world.chunk_mut(pos) else { return };
+        for i in 0..CHUNK_AREA {
+            let m = materials[i] as usize;
+            c.mat[i] = materials[i];
+            c.temp[i] = temperatures.map_or(mats.temperature[m], |t| t[i]);
+            c.shade[i] = rng.next_u32() as u8;
+            c.life[i] = match mats.life[m] {
+                Some((lo, hi)) => lo + rng.below((hi - lo) as u32 + 1) as u8,
+                None => 0,
+            };
+            c.motion[i] = 0;
+            c.flags[i] = parity;
+        }
+        c.version = stamp;
+        c.dirty = chunk::LocalRect::FULL;
     }
 
     /// Fill a circle. Bedrock is never replaced, except by painting bedrock.
