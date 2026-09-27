@@ -1,0 +1,18 @@
+// Starter recipes. Items are (id, count): materials count in units (cells), parts in pieces.
+[
+    Recipe(id: "raw_clay_brick", category: "hand", inputs: [("clay", 16)], outputs: [("raw_clay_brick", 1)], time: 1.0),
+    Recipe(id: "bronze_gear", category: "hand", inputs: [("bronze_plate", 3)], outputs: [("bronze_gear", 1)], time: 2.0),
+    Recipe(id: "bronze_kit", category: "hand", inputs: [("bronze_gear", 1), ("tin_plate", 1), ("raw_clay_brick", 1)], outputs: [("bronze_kit", 1)], time: 5.0),
+    Recipe(id: "workbench", category: "hand", inputs: [("wood", 20)], outputs: [("workbench", 1)], time: 3.0),
+    Recipe(id: "crucible", category: "hand", inputs: [("raw_clay_brick", 4)], outputs: [("crucible", 1)], time: 2.0),
+    Recipe(id: "basic_lab", category: "hand", inputs: [("wood", 20), ("copper_plate", 4)], outputs: [("basic_lab", 1)], time: 4.0),
+    Recipe(
+        id: "bronze_alloy",
+        name: Some("Molten bronze"),
+        category: "alloying",
+        inputs: [("molten_copper", 48), ("molten_tin", 16)],
+        outputs: [("molten_bronze", 64)],
+        time: 4.0,
+        min_temp: Some(1000),
+    ),
+]

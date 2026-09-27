@@ -1,0 +1,9 @@
+// Starter parts. The full Tier 0-1 list is added by the content task (docs/design/02-content.md section 4).
+[
+    Part(id: "tin_plate", name: "Tin plate", category: "intermediate", material: Some("tin_block"), units: 16, icon: Some("plate")),
+    Part(id: "copper_plate", name: "Copper plate", category: "intermediate", material: Some("copper_block"), units: 16, icon: Some("plate")),
+    Part(id: "bronze_plate", name: "Bronze plate", category: "intermediate", material: Some("bronze_block"), units: 16, icon: Some("plate")),
+    Part(id: "bronze_gear", name: "Bronze gear", category: "intermediate", material: Some("bronze_block"), units: 48, icon: Some("gear")),
+    Part(id: "raw_clay_brick", name: "Raw clay brick", description: "Bake it in a kiln to make a clay brick.", category: "intermediate", material: Some("clay"), units: 16, icon: Some("brick")),
+    Part(id: "bronze_kit", name: "Bronze research kit", description: "Research for Tier 0 technologies.", category: "research", stack: 200, icon: Some("kit")),
+]

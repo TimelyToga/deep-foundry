@@ -8,3 +8,5 @@ publish.workspace = true
 [dependencies]
 foundry_core.workspace = true
 foundry_content.workspace = true
+foundry_sim.workspace = true
+serde.workspace = true
