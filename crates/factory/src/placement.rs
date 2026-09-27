@@ -114,9 +114,10 @@ impl Buildings {
         }
         let size = t.size(def.size);
         let rect = tiles_to_cells(at, size);
-        // The world size comes from the simulation. (A world without edges would skip this.)
+        // The world size comes from the simulation. Width 0: no limit to the left and right.
         let (w, h) = sim.size_cells();
-        if rect.x0 < 0 || rect.y0 < 0 || rect.x1 > w || rect.y1 > h {
+        let outside_x = w > 0 && (rect.x0 < 0 || rect.x1 > w);
+        if outside_x || rect.y0 < 0 || rect.y1 > h {
             return Err(PlaceError::OutsideWorld);
         }
         let map = if def.layer == Layer::Front { &self.front } else { &self.back };

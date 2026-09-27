@@ -18,6 +18,8 @@ pub struct StatsView {
     pub ticks_per_second: f32,
     pub awake_chunks: u32,
     pub loaded_chunks: u32,
+    /// Changed chunks far from the view, packed in memory.
+    pub packed_chunks: u32,
     pub gpu_chunks: u32,
     pub gpu_capacity: u32,
     pub drawn_chunks: u32,
@@ -81,6 +83,7 @@ pub fn draw(ui: &mut egui::Ui, stats: &StatsView, paused: bool, overlay: bool, a
             row("tick time", format!("{:.2} ms", stats.tick_ms));
             row("ticks / s", format!("{:.1}", stats.ticks_per_second));
             row("awake chunks", format!("{} / {}", stats.awake_chunks, stats.loaded_chunks));
+            row("packed chunks", format!("{}", stats.packed_chunks));
             row("GPU chunks", format!("{} / {}", stats.gpu_chunks, stats.gpu_capacity));
             row("drawn chunks", format!("{}", stats.drawn_chunks));
             row("zoom", format!("{:.2}", stats.zoom));

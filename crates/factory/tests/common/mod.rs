@@ -103,7 +103,7 @@ pub fn content() -> Arc<Content> {
 /// A 128 × 128 cell world (16 × 16 tiles) with a bedrock border and stone from row `ground_y`
 /// down (use `None` for no ground).
 pub fn world(content: &Arc<Content>, ground_y: Option<i32>) -> Simulation {
-    let mut sim = Simulation::new(content.clone(), SimConfig { width_chunks: 2, height_chunks: 2, seed: 7, bedrock_border: true });
+    let mut sim = Simulation::new(content.clone(), SimConfig::finite(2, 2, 7));
     sim.set_threads(1);
     if let Some(g) = ground_y {
         let stone = content.expect_material("stone");
