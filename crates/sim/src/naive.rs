@@ -94,11 +94,10 @@ fn update_cell(world: &mut World, mats: &MaterialTable, p: CellPos, parity: u8, 
                         break;
                     }
                 }
-                if let Some(q) = best {
-                    if try_swap(world, mats, p, q, m, parity, stamp) {
+                if let Some(q) = best
+                    && try_swap(world, mats, p, q, m, parity, stamp) {
                         return;
                     }
-                }
             }
         }
         Phase::Gas | Phase::Fire => {
