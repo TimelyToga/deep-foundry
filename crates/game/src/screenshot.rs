@@ -242,10 +242,11 @@ fn setup_normal_screen(
         }
         UiState::Building => {
             // A crate right of the robot, with some items in it.
-            give(h, ItemRef::Part(part("crate")), 1);
+            // The start inventory has one crate.
             h.apply(FactoryCommand::PickToCursor(part("crate")), sim);
             if let Some(req) = free_place(h, sim, content.factory.building("crate").expect("crate")) {
                 h.apply(FactoryCommand::Place { kind: req.kind, at: req.at, rotation: 0 }, sim);
+                h.apply(FactoryCommand::ClearCursor, sim);
                 let cell = req.at.origin();
                 h.apply(FactoryCommand::OpenAt(cell), sim);
                 if let Some(id) = h.building_at(cell)
