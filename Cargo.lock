@@ -917,9 +917,14 @@ dependencies = [
 name = "foundry_headless"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "foundry_content",
  "foundry_core",
  "foundry_sim",
+ "png",
+ "rayon",
+ "ron",
+ "serde",
 ]
 
 [[package]]

@@ -1,0 +1,21 @@
+// Oil under water rises and floats on top of it.
+// Picture (80 x 70): open stone box, inside x 4..76 (72 wide), floor at y 66.
+// Water fills y 30..66. A 40 x 10 oil block (400 cells) starts at the bottom (x 20..60, y 56..66).
+// Floating oil is about 6 rows at the top of the liquid (y 30..36).
+Scene(
+    note: "Oil floats on water.",
+    legend: {
+        "#2a2118": "oil",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 1500,
+    checks: [
+        TotalUnchanged(material: "oil"),
+        TotalUnchanged(material: "water"),
+        // No oil stays at the bottom. (This already works with the Milestone 0 movement.)
+        Count(material: "oil", rect: (x: 4, y: 46, w: 72, h: 20), exact: 0),
+        // The oil makes a flat layer on top. Pending until the liquid density swaps (task 1A) are correct.
+        Count(material: "oil", rect: (x: 4, y: 26, w: 72, h: 12), min: 380, pending: true),
+    ],
+)
