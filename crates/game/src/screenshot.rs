@@ -171,7 +171,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             ui.model.hover = Some(HoverView::Cell { pos, material: cell.material, temperature: cell.temperature as f32 });
         }
         let mut panel = OffscreenUi::new(&device, ctx, ui, size);
-        panel.overlay = normal_view.map(|nv| (camera.clone(), nv));
+        panel.overlay = normal_view.map(|nv| (camera, nv));
         panel.layout(&device, &queue, &stats, show_debug);
         let draw_world = state.has_world();
         let clear = (!draw_world).then_some(wgpu::Color::BLACK);

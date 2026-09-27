@@ -751,20 +751,23 @@ impl FactoryHost {
     }
 
     /// The first free place right of the robot for a building (rotation 0), near its feet: the
-    /// lowest place where the building fits and its tiles are empty (air or gas).
+    /// lowest place where the building fits and at most a quarter of its cells are not empty
+    /// (loose ground that the placement pushes away).
     pub fn free_place(&self, kind: BuildingKindId, sim: &Simulation) -> Option<TilePos> {
         let content = &self.factory.content;
         let r = self.robot.rect();
         let size = content.factory.building_def(kind).size;
         let empty = |at: TilePos| {
-            let x0 = at.x * TILE_SIZE;
-            let y0 = at.y * TILE_SIZE;
-            (y0..y0 + size.1 as i32 * TILE_SIZE).all(|y| {
-                (x0..x0 + size.0 as i32 * TILE_SIZE).all(|x| {
-                    let m = sim.cell(CellPos::new(x, y)).material;
-                    matches!(content.materials.phase[m.index()], foundry_content::Phase::Empty | foundry_content::Phase::Gas)
+            let (x0, y0) = (at.x * TILE_SIZE, at.y * TILE_SIZE);
+            let (w, h) = (size.0 as i32 * TILE_SIZE, size.1 as i32 * TILE_SIZE);
+            let full = (y0..y0 + h)
+                .flat_map(|y| (x0..x0 + w).map(move |x| CellPos::new(x, y)))
+                .filter(|p| {
+                    let m = sim.cell(*p).material;
+                    !matches!(content.materials.phase[m.index()], foundry_content::Phase::Empty | foundry_content::Phase::Gas)
                 })
-            })
+                .count() as i32;
+            full * 4 <= w * h
         };
         for dx in 1..12 {
             for dy in (-3..=3).rev() {
