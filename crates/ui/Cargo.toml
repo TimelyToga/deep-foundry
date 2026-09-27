@@ -8,3 +8,8 @@ publish.workspace = true
 [dependencies]
 foundry_core.workspace = true
 foundry_content.workspace = true
+egui = { version = "=0.36.2", default-features = false, features = ["default_fonts"] }
+
+[dev-dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11"] }
+egui_kittest = { version = "=0.36.2", features = ["wgpu", "snapshot"] }
