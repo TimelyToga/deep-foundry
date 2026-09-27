@@ -99,8 +99,8 @@ impl Bench {
         (self.make)(content)
     }
 
-    /// Make the world and run `ticks` ticks.
-    pub fn run(&self, content: &Arc<Content>, ticks: u32) -> BenchResult {
+    /// Make the world and run `ticks` ticks. Returns the numbers and the simulation after the last tick.
+    pub fn run(&self, content: &Arc<Content>, ticks: u32) -> (BenchResult, Simulation) {
         let mut world = self.make(content);
         let mut times = Vec::with_capacity(ticks as usize);
         let (mut awake_sum, mut awake_max) = (0u64, 0u32);
@@ -117,7 +117,7 @@ impl Bench {
         let mean = times.iter().sum::<f64>() / n as f64;
         times.sort_by(f64::total_cmp);
         let pick = |p: usize| times.get((times.len().saturating_sub(1)) * p / 100).copied().unwrap_or(0.0);
-        BenchResult {
+        let result = BenchResult {
             ticks,
             mean_ms: round3(mean),
             p50_ms: round3(pick(50)),
@@ -126,7 +126,8 @@ impl Bench {
             awake_mean: (awake_sum as f64 / n as f64 * 10.0).round() / 10.0,
             awake_max,
             chunks_with_material: chunks_with_material(&world.sim),
-        }
+        };
+        (result, world.sim)
     }
 }
 
@@ -382,7 +383,8 @@ mod tests {
     fn every_bench_runs() {
         let content = Arc::new(Content::load_default().unwrap());
         for b in BENCHES {
-            let r = b.run(&content, 1);
+            let (r, sim) = b.run(&content, 1);
+            assert_eq!(sim.tick_count(), 1);
             assert_eq!(r.ticks, 1);
             assert!(r.chunks_with_material > 0, "{}", b.name);
         }

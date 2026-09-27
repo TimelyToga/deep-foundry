@@ -13,8 +13,9 @@ Scene(
     checks: [
         TotalUnchanged(material: "oil"),
         TotalUnchanged(material: "water"),
-        // Pending until the liquid density swaps (task 1A) are correct.
+        // No oil stays at the bottom. (This already works with the Milestone 0 movement.)
+        Count(material: "oil", rect: (x: 4, y: 46, w: 72, h: 20), exact: 0),
+        // The oil makes a flat layer on top. Pending until the liquid density swaps (task 1A) are correct.
         Count(material: "oil", rect: (x: 4, y: 26, w: 72, h: 12), min: 380, pending: true),
-        Count(material: "oil", rect: (x: 4, y: 46, w: 72, h: 20), exact: 0, pending: true),
     ],
 )
