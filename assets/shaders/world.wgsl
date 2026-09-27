@@ -99,7 +99,7 @@ fn fs_world(in: WorldVsOut) -> @location(0) vec4<f32> {
             strength *= 0.5;
         }
         // Move the color toward the glow color, but keep some of the base color so the shades still show.
-        let rgb = mix(color.rgb, g.rgb, strength * 0.7) + g.rgb * (strength * 0.15);
+        let rgb = mix(color.rgb, g.rgb, strength * 0.75) + g.rgb * (strength * 0.15);
         color = vec4<f32>(rgb, max(color.a, strength));
     }
 

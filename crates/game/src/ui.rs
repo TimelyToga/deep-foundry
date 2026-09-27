@@ -22,7 +22,11 @@ pub fn paint_materials(content: &Content) -> Vec<PaintMaterial> {
             // Show see-through colors over the dark panel color.
             let bg = [24u8, 26, 32];
             let mix = |c: u8, d: u8| ((c as u32 * a as u32 + d as u32 * (255 - a as u32)) / 255) as u8;
-            PaintMaterial { id: m, name: mats.names[m.index()].clone(), color: Color32::from_rgb(mix(r, bg[0]), mix(g, bg[1]), mix(b, bg[2])) }
+            PaintMaterial {
+                id: m,
+                name: mats.names[m.index()].clone(),
+                color: Color32::from_rgb(mix(r, bg[0]), mix(g, bg[1]), mix(b, bg[2])),
+            }
         })
         .collect()
 }
@@ -124,13 +128,15 @@ fn panel_contents(ui: &mut egui::Ui, s: PanelState<'_>, actions: &mut Vec<PanelA
                 ui.painter().rect_filled(rect, CornerRadius::same(2), m.color);
                 if selected {
                     let stroke = Stroke::new(1.0, Color32::WHITE);
-                    ui.painter().rect_stroke(rect.expand(1.0), CornerRadius::same(3), stroke, egui::StrokeKind::Outside);
+                    ui.painter().rect_stroke(
+                        rect.expand(1.0),
+                        CornerRadius::same(3),
+                        stroke,
+                        egui::StrokeKind::Outside,
+                    );
                 }
-                let text = if i < 9 {
-                    RichText::new(format!("{} {}", i + 1, m.name))
-                } else {
-                    RichText::new(format!("   {}", m.name))
-                };
+                let text =
+                    if i < 9 { RichText::new(format!("{} {}", i + 1, m.name)) } else { RichText::new(m.name.as_str()) };
                 let button = egui::Button::selectable(selected, text).right_text("").min_size(egui::vec2(72.0, 16.0));
                 if ui.add(button).clicked() {
                     *s.selected = i;

@@ -117,3 +117,58 @@ fn fractional_camera_moves_smoothly() {
     // Moving the camera right by 1/4 cell moves the edge left by 1 pixel at zoom 4.
     assert_eq!(edges, vec![32, 31, 30, 29, 28]);
 }
+
+/// Upload speed. Run with `cargo test --release -p foundry_render -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn upload_speed() {
+    let Some(mut s) = scene(2048) else { return };
+    let stone = s.content.expect_material("stone").0;
+    let mut snap = Snapshot { world_cells: (64 * 32, 64 * 16), ..Default::default() };
+    for y in 0..16 {
+        for x in 0..32 {
+            snap.chunks.push(chunk(ChunkPos::new(x, y), |_, _| (stone, 20)));
+        }
+    }
+    let camera = Camera::new(DVec2::new(1024.0, 512.0), 1.0, UVec2::new(2048, 1024));
+    let mut times = vec![];
+    for _ in 0..30 {
+        let t = std::time::Instant::now();
+        s.renderer.apply_snapshot(&snap, &camera);
+        times.push(t.elapsed().as_secs_f64() * 1000.0);
+        s.device.poll(foundry_render::wgpu::PollType::wait_indefinitely()).unwrap();
+    }
+    let steady = &times[5..];
+    let avg = steady.iter().sum::<f64>() / steady.len() as f64;
+    println!(
+        "upload of {} chunks: first {:.2} ms, then average {:.2} ms ({:.1} us per chunk)",
+        snap.chunks.len(),
+        times[0],
+        avg,
+        avg * 1000.0 / snap.chunks.len() as f64
+    );
+}
+
+/// Writes out/glow_ramp.png: stone, lava, water and smoke from 300 °C (left) to 1800 °C (right),
+/// to check the glow colors by eye. Run with `cargo test -p foundry_render -- --ignored`.
+#[test]
+#[ignore]
+fn glow_ramp_image() {
+    let Some(mut s) = scene(16) else { return };
+    let rows = ["stone", "lava", "water", "smoke"].map(|id| s.content.expect_material(id).0);
+    let mut snap = Snapshot { world_cells: (64 * 4, 64), ..Default::default() };
+    for cx in 0..4 {
+        snap.chunks.push(chunk(ChunkPos::new(cx, 0), |x, y| {
+            let wx = cx * CHUNK_SIZE + x;
+            let t = 300 + wx * 1500 / (4 * CHUNK_SIZE);
+            (rows[(y / 16) as usize], t as i16)
+        }));
+    }
+    let camera = Camera::new(DVec2::new(128.0, 32.0), 4.0, UVec2::new(1024, 256));
+    s.renderer.apply_snapshot(&snap, &camera);
+    let img = capture(&s.device, &s.queue, &mut s.renderer, &camera);
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../out/glow_ramp.png");
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    image::RgbaImage::from_raw(1024, 256, img).unwrap().save(&out).unwrap();
+    println!("saved {}", out.display());
+}

@@ -40,6 +40,9 @@ impl CameraControl {
 
     /// Zoom in (positive steps) or out (negative steps) toward a screen position.
     pub fn zoom_by(&mut self, steps: f32, anchor: DVec2) {
+        if !steps.is_finite() {
+            return;
+        }
         self.target_zoom = (self.target_zoom * ZOOM_STEP.powf(steps)).clamp(self.min_zoom, MAX_ZOOM);
         self.zoom_anchor = anchor;
     }

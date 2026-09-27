@@ -9,9 +9,9 @@
 
 use crate::args::Args;
 use crate::controls::{CameraControl, MAX_ZOOM, Stroke};
+use crate::demo;
 use crate::sim_thread::SimThread;
 use crate::ui::{self, PaintMaterial, PanelAction, PanelState, StatsView};
-use crate::demo;
 use anyhow::{Context, Result};
 use foundry_content::Content;
 use foundry_core::{CellPos, CellRect, Command, MaterialId, PaintMode};
@@ -159,7 +159,8 @@ impl Timing {
             self.tick_ms_total / self.tick_samples.max(1) as f64,
             game.stats.awake_chunks
         );
-        let refresh = game.window.current_monitor().and_then(|m| m.refresh_rate_millihertz()).map_or(0.0, |r| r as f64 / 1000.0);
+        let refresh =
+            game.window.current_monitor().and_then(|m| m.refresh_rate_millihertz()).map_or(0.0, |r| r as f64 / 1000.0);
         println!(
             "window: {}x{} px, zoom {:.2}, present mode {:?}, display refresh {:.0} Hz",
             size.x, size.y, game.controls.camera.zoom, game.config.present_mode, refresh
@@ -188,6 +189,7 @@ struct Game {
     /// Reused list of brush positions.
     paint_points: Vec<CellPos>,
     mouse: DVec2,
+    mouse_inside: bool,
     last_view: Option<CellRect>,
 
     materials: Vec<PaintMaterial>,
@@ -210,7 +212,8 @@ impl Game {
         let demo = demo::build(content.clone(), args.world, args.seed);
         let world = DVec2::new(demo.sim.size_cells().0 as f64, demo.sim.size_cells().1 as f64);
 
-        let mut attrs = Window::default_attributes().with_title("Deep Foundry").with_inner_size(LogicalSize::new(1600.0, 900.0));
+        let mut attrs =
+            Window::default_attributes().with_title("Deep Foundry").with_inner_size(LogicalSize::new(1600.0, 900.0));
         if let Some((w, h)) = args.size {
             attrs = attrs.with_inner_size(PhysicalSize::new(w, h));
         }
@@ -291,6 +294,7 @@ impl Game {
             stroke: Stroke::default(),
             paint_points: Vec::with_capacity(256),
             mouse: DVec2::ZERO,
+            mouse_inside: false,
             last_view: None,
             materials,
             selected,
@@ -326,7 +330,16 @@ impl Game {
                 self.held = Held::default();
                 self.stroke.end();
             }
+            WindowEvent::CursorLeft { .. } => self.mouse_inside = false,
+            WindowEvent::PinchGesture { delta, .. } => {
+                // Trackpad pinch. `delta` is the change of scale; it can be NaN.
+                if delta.is_finite() && !self.egui_ctx.is_pointer_over_egui() {
+                    let steps = ((1.0 + delta).max(0.1).ln() / 1.2f64.ln()) as f32;
+                    self.controls.zoom_by(steps, self.mouse);
+                }
+            }
             WindowEvent::CursorMoved { position, .. } => {
+                self.mouse_inside = true;
                 let p = DVec2::new(position.x, position.y);
                 if self.held.drag {
                     self.controls.drag(p - self.mouse);
@@ -450,6 +463,7 @@ impl Game {
         let ppp = self.egui_ctx.pixels_per_point();
         let brush = egui::pos2((self.mouse.x as f32) / ppp, (self.mouse.y as f32) / ppp);
         let brush_radius = (self.brush_radius as f32 + 0.5) * self.controls.camera.zoom / ppp;
+        let mouse_inside = self.mouse_inside;
         let mut full_output = {
             let state = PanelState {
                 materials: &self.materials,
@@ -465,9 +479,13 @@ impl Game {
                 if let Some(s) = state.take() {
                     ui::draw(ui, s, actions);
                 }
-                if !ui.ctx().is_pointer_over_egui() {
+                if mouse_inside && !ui.ctx().is_pointer_over_egui() {
                     let painter = ui.ctx().layer_painter(egui::LayerId::background());
-                    painter.circle_stroke(brush, brush_radius, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140)));
+                    painter.circle_stroke(
+                        brush,
+                        brush_radius,
+                        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140)),
+                    );
                 }
             })
         };
@@ -539,9 +557,17 @@ impl Game {
         self.renderer.render(&mut encoder, &target, &self.controls.camera);
 
         // egui on top.
-        let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: [self.config.width, self.config.height], pixels_per_point };
-        let egui_cmds =
-            ui::render_egui(&mut self.egui_renderer, &self.device, &self.queue, &mut encoder, &target, &paint_jobs, &screen);
+        let screen =
+            egui_wgpu::ScreenDescriptor { size_in_pixels: [self.config.width, self.config.height], pixels_per_point };
+        let egui_cmds = ui::render_egui(
+            &mut self.egui_renderer,
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &target,
+            &paint_jobs,
+            &screen,
+        );
         self.queue.submit(egui_cmds.into_iter().chain([encoder.finish()]));
         self.free_egui_textures();
         self.window.pre_present_notify();
@@ -598,7 +624,13 @@ impl Game {
         self.paint_points.clear();
         self.stroke.advance(cell, self.brush_radius, self.tick, &mut self.paint_points);
         for &center in &self.paint_points {
-            self.sim.send(Command::Paint { center, radius: self.brush_radius, material, mode: PaintMode::Replace, temperature: None });
+            self.sim.send(Command::Paint {
+                center,
+                radius: self.brush_radius,
+                material,
+                mode: PaintMode::Replace,
+                temperature: None,
+            });
         }
     }
 

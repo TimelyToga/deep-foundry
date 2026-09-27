@@ -13,7 +13,12 @@ pub(crate) struct ScalePass {
 }
 
 impl ScalePass {
-    pub fn new(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout, format: wgpu::TextureFormat, dir: Option<&Path>) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        frame_layout: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+        dir: Option<&Path>,
+    ) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scale"),
             entries: &[

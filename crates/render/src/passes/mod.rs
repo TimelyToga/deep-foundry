@@ -9,7 +9,11 @@ pub(crate) mod background;
 pub(crate) mod scale;
 pub(crate) mod world;
 
-pub(crate) fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType, dim: wgpu::TextureViewDimension) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn texture_entry(
+    binding: u32,
+    sample_type: wgpu::TextureSampleType,
+    dim: wgpu::TextureViewDimension,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,

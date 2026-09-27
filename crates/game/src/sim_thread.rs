@@ -74,7 +74,13 @@ impl Drop for SimThread {
     }
 }
 
-fn run(mut sim: Simulation, commands: Receiver<Command>, mailbox: &SnapshotMailbox, stop: &AtomicBool, tps: &AtomicU32) {
+fn run(
+    mut sim: Simulation,
+    commands: Receiver<Command>,
+    mailbox: &SnapshotMailbox,
+    stop: &AtomicBool,
+    tps: &AtomicU32,
+) {
     let tick = Duration::from_secs_f64(TICK_SECONDS);
     let mut next = Instant::now();
     let mut count_start = Instant::now();
@@ -147,7 +153,13 @@ mod tests {
         let sand = sim.content().expect_material("sand");
         let mut t = SimThread::start(sim);
         t.send(Command::SetView { area: CellRect::new(0, 0, 128, 128) });
-        t.send(Command::Paint { center: CellPos::new(64, 20), radius: 3, material: sand, mode: PaintMode::Replace, temperature: None });
+        t.send(Command::Paint {
+            center: CellPos::new(64, 20),
+            radius: 3,
+            material: sand,
+            mode: PaintMode::Replace,
+            temperature: None,
+        });
         let s = wait_for(&t, |s| s.tick >= 5);
         assert!(!s.paused);
         // All four chunks arrived at some point (the first snapshot has them all).

@@ -525,7 +525,6 @@ name = "deep_foundry"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
  "crossbeam-channel",
  "egui",
  "egui-wgpu",
@@ -540,7 +539,6 @@ dependencies = [
  "log",
  "pollster",
  "spin_sleep",
- "wgpu",
  "winit",
 ]
 
@@ -932,6 +930,7 @@ dependencies = [
  "foundry_content",
  "foundry_core",
  "glam",
+ "image",
  "log",
  "pollster",
  "wgpu",

@@ -18,8 +18,10 @@ use foundry_content::Content;
 use std::sync::Arc;
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,deep_foundry=info,foundry_render=info"))
-        .init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("warn,deep_foundry=info,foundry_render=info"),
+    )
+    .init();
     let args = match args::parse(std::env::args().skip(1)) {
         Ok(args::Parsed::Run(a)) => a,
         Ok(args::Parsed::Help) => {

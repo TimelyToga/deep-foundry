@@ -9,7 +9,12 @@ pub(crate) struct BackgroundPass {
 }
 
 impl BackgroundPass {
-    pub fn new(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout, format: wgpu::TextureFormat, dir: Option<&Path>) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        frame_layout: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+        dir: Option<&Path>,
+    ) -> Self {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("background"),
             bind_group_layouts: &[Some(frame_layout)],

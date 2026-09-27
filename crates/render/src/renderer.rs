@@ -53,6 +53,8 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     target_format: wgpu::TextureFormat,
+    /// The device limit `max_texture_dimension_2d`.
+    max_texture_side: u32,
 
     frame_buffer: wgpu::Buffer,
     frame_bind_group: wgpu::BindGroup,
@@ -67,6 +69,8 @@ pub struct Renderer {
     background_pass: BackgroundPass,
     scale_pass: ScalePass,
 
+    /// Reused staging memory for chunk uploads.
+    belt: wgpu::util::StagingBelt,
     /// Reused each frame.
     instances: Vec<ChunkInstance>,
     world_cells: (i32, i32),
@@ -76,7 +80,12 @@ pub struct Renderer {
 
 impl Renderer {
     /// A renderer that draws into targets of `target_format`, with the default options.
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, target_format: wgpu::TextureFormat, content: &Content) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target_format: wgpu::TextureFormat,
+        content: &Content,
+    ) -> Self {
         Self::with_options(device, queue, target_format, content, RendererOptions::default())
     }
 
@@ -121,7 +130,11 @@ impl Renderer {
         let capacity = options.max_chunks.min(device.limits().max_texture_array_layers).max(1);
         let cells = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("world cells"),
-            size: wgpu::Extent3d { width: CHUNK_SIZE as u32, height: CHUNK_SIZE as u32, depth_or_array_layers: capacity },
+            size: wgpu::Extent3d {
+                width: CHUNK_SIZE as u32,
+                height: CHUNK_SIZE as u32,
+                depth_or_array_layers: capacity,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -194,6 +207,7 @@ impl Renderer {
             device: device.clone(),
             queue: queue.clone(),
             target_format,
+            max_texture_side: device.limits().max_texture_dimension_2d,
             frame_buffer,
             frame_bind_group,
             cells,
@@ -203,6 +217,8 @@ impl Renderer {
             world_pass,
             background_pass,
             scale_pass,
+            // 4 MiB holds 128 chunks.
+            belt: wgpu::util::StagingBelt::new(device.clone(), 4 << 20),
             instances: Vec::with_capacity(capacity as usize),
             world_cells: (0, 0),
             time: 0.0,
@@ -258,8 +274,14 @@ impl Renderer {
     /// so that it sends them again when they are needed.
     pub fn apply_snapshot(&mut self, snapshot: &Snapshot, camera: &Camera) -> Vec<ChunkPos> {
         self.world_cells = snapshot.world_cells;
-        let view = camera.visible_rect();
         let mut evicted = Vec::new();
+        self.stats.uploaded_chunks = 0;
+        if snapshot.chunks.is_empty() {
+            return evicted;
+        }
+        let view = camera.visible_rect();
+        let mut encoder =
+            self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("chunk upload") });
         let mut uploaded = 0;
         for image in &snapshot.chunks {
             if image.texels.len() != CHUNK_AREA {
@@ -267,9 +289,11 @@ impl Renderer {
                 continue;
             }
             let Some(layer) = self.layers.assign(image.pos, view, &mut evicted) else { continue };
-            self.write_layer(layer, &image.texels);
+            self.upload_layer(&mut encoder, layer, &image.texels);
             uploaded += 1;
         }
+        self.belt.finish_and_recall_on_submit(&encoder);
+        self.queue.submit([encoder.finish()]);
         // A chunk that was dropped and then stored again in the same snapshot is not dropped.
         evicted.retain(|p| self.layers.get(*p).is_none());
         self.stats.uploaded_chunks = uploaded;
@@ -277,20 +301,30 @@ impl Renderer {
         evicted
     }
 
-    fn write_layer(&self, layer: u32, texels: &[CellTexel]) {
+    /// Copy one chunk into reused staging memory and add a copy command to its layer.
+    fn upload_layer(&mut self, encoder: &mut wgpu::CommandEncoder, layer: u32, texels: &[CellTexel]) {
         let size = CHUNK_SIZE as u32;
-        self.queue.write_texture(
+        let bytes: &[u8] = bytemuck::cast_slice(texels);
+        let slice = self.belt.allocate(
+            wgpu::BufferSize::new(bytes.len() as u64).expect("a chunk has data"),
+            wgpu::BufferSize::new(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64).expect("not zero"),
+        );
+        slice.get_mapped_range_mut().expect("staging memory is mapped").copy_from_slice(bytes);
+        let (buffer, offset) = (slice.buffer().clone(), slice.offset());
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset,
+                    bytes_per_row: Some(size * std::mem::size_of::<CellTexel>() as u32),
+                    rows_per_image: Some(size),
+                },
+            },
             wgpu::TexelCopyTextureInfo {
                 texture: &self.cells,
                 mip_level: 0,
                 origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
                 aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(texels),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(size * std::mem::size_of::<CellTexel>() as u32),
-                rows_per_image: Some(size),
             },
             wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
         );
@@ -303,7 +337,7 @@ impl Renderer {
             return;
         }
         // The world texture must fit in the device limit.
-        let max_side = self.device.limits().max_texture_dimension_2d as f32 - 4.0;
+        let max_side = self.max_texture_side as f32 - 4.0;
         let min_zoom = (camera.viewport.max_element() as f32 / max_side).max(1.0 / 64.0);
         let camera = Camera { zoom: camera.zoom.max(min_zoom), ..*camera };
 
@@ -376,8 +410,7 @@ impl Renderer {
         }
         // Round up, so that small zoom changes do not make a new texture each frame.
         let old = self.world_target.as_ref().map_or(UVec2::ZERO, |t| t.size);
-        let max_side = self.device.limits().max_texture_dimension_2d;
-        let size = needed.max(old).map(|v| (v.div_ceil(256) * 256).min(max_side));
+        let size = needed.max(old).map(|v| (v.div_ceil(256) * 256).min(self.max_texture_side));
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("world color"),
             size: wgpu::Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
