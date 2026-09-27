@@ -4,7 +4,7 @@
 //! and return an `egui::Response`.
 
 use crate::icons::IconAtlas;
-use crate::item::ItemId;
+use foundry_content::ItemRef;
 use crate::theme::{self, color, font, font_bold, size, text};
 use egui::{Align2, Color32, CornerRadius, FontId, Id, Painter, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 
@@ -58,13 +58,7 @@ pub fn text_shadow(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: Fon
 
 /// A count in the lower right corner of a slot, with a dark outline so it is readable on any icon.
 pub fn corner_count(p: &Painter, slot: Rect, text: &str) {
-    let pos = slot.right_bottom() + vec2(-3.0, 0.0);
-    let f = font_bold(text::COUNT);
-    let shadow = Color32::from_black_alpha(230);
-    for d in [vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 1.0), vec2(1.0, 1.0)] {
-        p.text(pos + d, Align2::RIGHT_BOTTOM, text, f.clone(), shadow);
-    }
-    p.text(pos, Align2::RIGHT_BOTTOM, text, f, color::TEXT);
+    text_outlined(p, slot.right_bottom() + vec2(-3.0, 0.0), Align2::RIGHT_BOTTOM, text, font_bold(text::COUNT), color::TEXT);
 }
 
 /// A small label in the upper left corner of a slot (quickbar key numbers).
@@ -96,11 +90,11 @@ pub enum SlotLook {
 /// What to draw in a slot.
 #[derive(Debug, Clone, Default)]
 pub struct SlotContent<'a> {
-    pub item: Option<ItemId>,
+    pub item: Option<ItemRef>,
     /// Text in the lower right corner (the count).
     pub count: Option<&'a str>,
     /// A faint icon for an empty slot that expects an item.
-    pub ghost: Option<ItemId>,
+    pub ghost: Option<ItemRef>,
     /// A fill level from the bottom (0 to 1) in a color, for bulk material slots.
     pub fill: Option<(f32, Color32)>,
     /// A progress bar along the bottom (0 to 1).
@@ -283,7 +277,7 @@ pub fn bar(p: &Painter, r: Rect, frac: f32, fill: Color32, label: Option<&str>) 
         p.rect_filled(top, CornerRadius::ZERO, Color32::from_white_alpha(38));
     }
     if let Some(t) = label {
-        text_shadow(p, r.center(), Align2::CENTER_CENTER, t, font_bold(text::SMALL), color::TEXT);
+        text_outlined(p, r.center(), Align2::CENTER_CENTER, t, font_bold(text::SMALL), color::TEXT);
     }
 }
 
@@ -317,7 +311,8 @@ pub fn status_color(c: crate::model::StatusColor) -> Color32 {
 // ---------------------------------------------------------------- tabs
 
 /// A big tab with an icon (the crafting groups). `selected` joins it to the panel below.
-pub fn icon_tab(ui: &Ui, id: Id, r: Rect, item: ItemId, label: &str, selected: bool, dim: bool, atlas: &IconAtlas) -> Response {
+#[allow(clippy::too_many_arguments)]
+pub fn icon_tab(ui: &Ui, id: Id, r: Rect, item: ItemRef, label: &str, selected: bool, dim: bool, atlas: &IconAtlas) -> Response {
     let resp = ui.interact(r, id, Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label));
     let p = ui.painter();
@@ -438,14 +433,27 @@ pub fn area(ctx: &egui::Context, id: Id, order: egui::Order, rect: Rect, add: im
 pub fn text_field(ui: &mut Ui, id: Id, r: Rect, text: &mut String, hint: &str) -> Response {
     ui.painter().rect_filled(r.expand(1.0), CornerRadius::ZERO, color::WINDOW_DARK);
     sunken(ui.painter(), r, color::FIELD);
-    let edit = egui::TextEdit::singleline(text)
-        .id(id)
-        .frame(egui::Frame::NONE)
-        .text_color(color::FIELD_TEXT)
-        .font(font(text::BODY))
-        .hint_text(egui::RichText::new(hint).color(Color32::from_gray(120)))
-        .margin(egui::Margin::symmetric(6, 4))
-        .desired_width(r.width() - 12.0)
-        .vertical_align(egui::Align::Center);
-    ui.put(r, edit)
+    ui.scope(|ui| {
+        // The hint text uses the "weak" text color: make it dark gray on the light field.
+        ui.visuals_mut().weak_text_color = Some(Color32::from_gray(128));
+        let edit = egui::TextEdit::singleline(text)
+            .id(id)
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(7, 3)))
+            .text_color(color::FIELD_TEXT)
+            .font(font(text::BODY))
+            .hint_text(hint)
+            .desired_width(r.width() - 14.0)
+            .vertical_align(egui::Align::Center);
+        ui.put(r, edit)
+    })
+    .inner
+}
+
+/// Text with a dark outline on all sides, readable on any background (light or dark bars).
+pub fn text_outlined(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, color: Color32) -> Rect {
+    let shadow = Color32::from_black_alpha(220);
+    for d in [vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 1.0), vec2(1.0, 1.0)] {
+        p.text(pos + d, anchor, text, font.clone(), shadow);
+    }
+    p.text(pos, anchor, text, font, color)
 }

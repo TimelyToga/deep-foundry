@@ -1,77 +1,22 @@
-//! Items and recipes as the UI sees them.
+//! What the UI shows about items and recipes. All of it comes from `foundry_content`:
+//! items are [`ItemRef`] (a bulk material counted in units, or a part counted in pieces;
+//! every building is also a part), recipes are `content.factory.recipes`.
 //!
-//! An item is anything that can be in a slot: a bulk material (counted in units),
-//! a part (counted in pieces), or a building in item form (counted in pieces).
-//!
-//! The real item and recipe data does not exist yet (Milestone 3-4). Until then, the
-//! game (or `crate::mock`) fills a [`Catalog`] with [`ItemInfo`] and [`RecipeView`] values.
+//! This module only adds the things the UI needs on top: the crafting tab of a recipe,
+//! where a recipe is made, the kind label, tooltip facts, and fill colors.
 
-use foundry_core::{BuildingKindId, MaterialId, RecipeId};
-use std::collections::HashMap;
+use foundry_content::{Content, ItemRef, Phase, Recipe};
+use foundry_core::{BuildingKindId, RecipeId, TechId};
+use std::borrow::Cow;
 
-/// A part type (gear, plate, circuit, kit). The number comes from the part data files
-/// when they exist. Until then the game or the mock gives the numbers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PartId(pub u16);
-
-/// Anything that can be in a slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ItemId {
-    /// Bulk material. Counts are in units (one unit is one cell).
-    Material(MaterialId),
-    /// A discrete part. Counts are in pieces.
-    Part(PartId),
-    /// A building in item form. Counts are in pieces.
-    Building(BuildingKindId),
-}
-
-impl ItemId {
-    /// True for bulk materials. Bulk materials go into the material tank, not the part slots.
-    pub fn is_bulk(self) -> bool {
-        matches!(self, ItemId::Material(_))
-    }
-}
-
-/// A number of one item. For materials the count is in units.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ItemStack {
-    pub item: ItemId,
-    pub count: u32,
-}
-
-impl ItemStack {
-    pub fn new(item: ItemId, count: u32) -> Self {
-        Self { item, count }
-    }
-}
-
-/// An amount of an item in a recipe. For materials the amount is in units.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ItemAmount {
-    pub item: ItemId,
-    pub amount: u32,
-    /// Chance to get this output (1.0 = always). Only used for recipe outputs.
-    pub chance: f32,
-}
-
-impl ItemAmount {
-    pub fn new(item: ItemId, amount: u32) -> Self {
-        Self { item, amount, chance: 1.0 }
-    }
-}
-
-/// What kind of item it is, for the tooltip and for the slot rules.
+/// What kind of item it is, for the tooltip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
-    /// A powder, for example sand or crushed ore.
     Powder,
-    /// A liquid, for example water or molten copper.
     Liquid,
-    /// A gas, for example steam.
     Gas,
-    /// A solid block material, for example stone or clay brick blocks.
+    /// A solid block material, for example stone.
     Solid,
-    /// Fire and other short-lived materials.
     Fire,
     Part,
     Building,
@@ -91,92 +36,93 @@ impl ItemKind {
     }
 }
 
-/// The shape that the icon generator draws. Real art replaces the generator later
-/// (see `crate::icons`). Each shape uses the colors in [`IconSpec`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum IconShape {
-    // Bulk materials
-    Pile,
-    Drop,
-    Gas,
-    Block,
-    Flame,
-    // Parts
-    Gear,
-    Plate,
-    Ingot,
-    Rod,
-    WireCoil,
-    Pipe,
-    Brick,
-    Circuit,
-    Kit,
-    Vial,
-    Pane,
-    Sheet,
-    Bolt,
-    VacuumTube,
-    // Buildings
-    Machine(MachineGlyph),
-    Belt,
-    Crate,
-    Barrel,
-    Wall,
-    Ladder,
-    Campfire,
-    Workbench,
-    Hopper,
-    Mold,
-    Crucible,
-    Tank,
-    Cable,
-    SolarPanel,
-    Battery,
+/// True for bulk materials (they go into the material tank, not the part slots).
+pub fn is_bulk(item: ItemRef) -> bool {
+    matches!(item, ItemRef::Material(_))
 }
 
-/// The small symbol on a machine icon. It tells the machine family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MachineGlyph {
-    None,
-    Gear,
-    Flame,
-    Hammer,
-    Crusher,
-    Drop,
-    Flask,
-    Arrow,
-    Lightning,
-    Fan,
-    Magnet,
-    Drill,
-    Wire,
-    Plus,
+pub fn kind(content: &Content, item: ItemRef) -> ItemKind {
+    match item {
+        ItemRef::Material(m) => match content.materials.phase.get(m.index()).copied().unwrap_or(Phase::Solid) {
+            Phase::Powder => ItemKind::Powder,
+            Phase::Liquid => ItemKind::Liquid,
+            Phase::Gas => ItemKind::Gas,
+            Phase::Fire => ItemKind::Fire,
+            Phase::Solid | Phase::Empty => ItemKind::Solid,
+        },
+        ItemRef::Part(p) => match content.factory.parts.get(p.0 as usize).and_then(|x| x.building) {
+            Some(_) => ItemKind::Building,
+            None => ItemKind::Part,
+        },
+    }
 }
 
-/// How to draw the icon of one item.
-#[derive(Debug, Clone, PartialEq)]
-pub struct IconSpec {
-    pub shape: IconShape,
-    /// The main colors, as RGBA. Materials use their material colors. At least one color.
-    pub colors: Vec<[u8; 4]>,
-    /// Tier of the item (0 to 5). Machines use it for the colored band.
-    pub tier: u8,
+/// The name of an item, or "Unknown item" if the id is not in the content.
+pub fn name(content: &Content, item: ItemRef) -> &str {
+    let ok = match item {
+        ItemRef::Material(m) => m.index() < content.materials.names.len(),
+        ItemRef::Part(p) => (p.0 as usize) < content.factory.parts.len(),
+    };
+    if ok { content.item_name(item) } else { "Unknown item" }
 }
 
-impl IconSpec {
-    pub fn new(shape: IconShape, color: [u8; 4]) -> Self {
-        Self { shape, colors: vec![color], tier: 0 }
+/// The building type that an item places, if any.
+pub fn building_of(content: &Content, item: ItemRef) -> Option<BuildingKindId> {
+    match item {
+        ItemRef::Part(p) => content.factory.parts.get(p.0 as usize).and_then(|x| x.building),
+        ItemRef::Material(_) => None,
     }
+}
 
-    pub fn with_tier(mut self, tier: u8) -> Self {
-        self.tier = tier;
-        self
-    }
+/// The item that places a building type.
+pub fn building_item(content: &Content, kind: BuildingKindId) -> Option<ItemRef> {
+    content.factory.buildings.get(kind.0 as usize).map(|b| ItemRef::Part(b.part))
+}
 
-    /// The first color, or gray.
-    pub fn main_color(&self) -> [u8; 4] {
-        self.colors.first().copied().unwrap_or([128, 128, 128, 255])
+/// The name of a building type.
+pub fn building_name(content: &Content, kind: BuildingKindId) -> &str {
+    content.factory.buildings.get(kind.0 as usize).map(|b| b.name.as_str()).unwrap_or("Unknown building")
+}
+
+/// One or two sentences about an item.
+pub fn description(content: &Content, item: ItemRef) -> Cow<'_, str> {
+    match item {
+        ItemRef::Part(p) => match content.factory.parts.get(p.0 as usize) {
+            Some(part) if !part.description.is_empty() => Cow::Borrowed(part.description.as_str()),
+            Some(part) => match part.building.and_then(|b| content.factory.buildings.get(b.0 as usize)) {
+                Some(b) if !b.description.is_empty() => Cow::Borrowed(b.description.as_str()),
+                _ => Cow::Borrowed(""),
+            },
+            None => Cow::Borrowed(""),
+        },
+        ItemRef::Material(_) => Cow::Borrowed(match kind(content, item) {
+            ItemKind::Powder => "A powder. It falls and makes piles.",
+            ItemKind::Liquid => "A liquid. It flows and finds its level.",
+            ItemKind::Gas => "A gas. It rises or sinks by its density and spreads out.",
+            ItemKind::Fire => "Fire. It rises, heats and ignites what it touches.",
+            _ => "A solid material. It does not move.",
+        }),
     }
+}
+
+/// Most pieces of a part in one inventory slot. For materials: `tank_capacity`.
+pub fn stack_size(content: &Content, item: ItemRef, tank_capacity: u32) -> u32 {
+    match item {
+        ItemRef::Part(p) => content.factory.parts.get(p.0 as usize).map(|x| x.stack.max(1) as u32).unwrap_or(50),
+        ItemRef::Material(_) => tank_capacity,
+    }
+}
+
+/// The main color of an item (for fill bars), as RGBA. Parts use the color of their material.
+pub fn color(content: &Content, item: ItemRef) -> [u8; 4] {
+    let mat = match item {
+        ItemRef::Material(m) => Some(m),
+        ItemRef::Part(p) => content.factory.parts.get(p.0 as usize).and_then(|x| x.material),
+    };
+    mat.and_then(|m| content.materials.colors.get(m.index()))
+        .and_then(|c| c.first())
+        .map(|c| [c[0], c[1], c[2], 255])
+        .unwrap_or([150, 150, 150, 255])
 }
 
 /// One line of facts in a tooltip, for example ("Melts at", "1085 °C").
@@ -186,32 +132,71 @@ pub struct Fact {
     pub value: String,
 }
 
-/// Everything the UI shows about one item.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ItemInfo {
-    pub id: ItemId,
-    /// The string id from the data files, for example "bronze_gear". Real art uses it as the file name.
-    pub key: String,
-    pub name: String,
-    /// One or two short sentences.
-    pub description: String,
-    pub kind: ItemKind,
-    pub icon: IconSpec,
-    /// Most pieces in one part slot. Not used for bulk materials (the tank slot capacity counts).
-    pub stack_size: u32,
-    pub tier: u8,
-    /// Extra lines for the tooltip.
-    pub facts: Vec<Fact>,
+fn fact(label: &str, value: String) -> Fact {
+    Fact { label: label.into(), value }
 }
 
-impl ItemInfo {
-    /// The main color of the item, for fill bars and graph lines.
-    pub fn color(&self) -> [u8; 4] {
-        self.icon.main_color()
+/// Facts for the tooltip of an item.
+pub fn facts(content: &Content, item: ItemRef) -> Vec<Fact> {
+    let mut v = vec![];
+    match item {
+        ItemRef::Material(m) => {
+            let t = &content.materials;
+            let i = m.index();
+            if i >= t.len() {
+                return v;
+            }
+            if t.density[i] > 0.0 {
+                v.push(fact("Density", format!("{} kg/m³", t.density[i].round())));
+            }
+            if let Some(c) = t.melt[i] {
+                v.push(fact("Melts at", format!("{} °C", c.at)));
+            }
+            if let Some(c) = t.freeze[i] {
+                v.push(fact("Freezes below", format!("{} °C", c.at)));
+            }
+            if let Some(c) = t.boil[i] {
+                v.push(fact("Boils at", format!("{} °C", c.at)));
+            }
+            if let Some(b) = t.burn[i] {
+                v.push(fact("Burns at", format!("{} °C", b.ignite_at)));
+            }
+        }
+        ItemRef::Part(p) => {
+            let Some(part) = content.factory.parts.get(p.0 as usize) else { return v };
+            if let Some(b) = part.building.and_then(|b| content.factory.buildings.get(b.0 as usize)) {
+                v.push(fact("Size", format!("{} × {} tiles", b.size.0, b.size.1)));
+                v.push(fact("Tier", b.tier.to_string()));
+                if let Some(pw) = &b.power {
+                    if pw.produce_w > 0.0 {
+                        v.push(fact("Makes", crate::format::watts(pw.produce_w as f64)));
+                    }
+                    if pw.use_w > 0.0 {
+                        v.push(fact("Power use", format!("{} ({})", crate::format::watts(pw.use_w as f64), crate::model::Voltage::from_tier(pw.tier).map(|x| x.label()).unwrap_or("-"))));
+                    }
+                    if pw.store_j > 0.0 {
+                        v.push(fact("Stores", crate::format::joules(pw.store_j as f64)));
+                    }
+                    if pw.steam_per_s > 0.0 {
+                        v.push(fact("Steam use", format!("{} units per second", pw.steam_per_s)));
+                    }
+                }
+                if b.speed != 1.0 && !b.crafts.is_empty() {
+                    v.push(fact("Speed", format!("× {}", b.speed)));
+                }
+                v.push(fact("Max temperature", format!("{} °C", b.max_temp)));
+            } else if let Some(m) = part.material
+                && part.units > 0
+            {
+                v.push(fact("Made of", format!("{} units of {}", part.units, content.materials.names[m.index()])));
+            }
+            v.push(fact("Stack size", part.stack.to_string()));
+        }
     }
+    v
 }
 
-/// The tab of the crafting menu that a recipe is in. Same groups as Factorio.
+/// The tab of the crafting menu, as in Factorio.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CraftGroup {
     Logistics,
@@ -225,6 +210,17 @@ impl CraftGroup {
     pub const ALL: [CraftGroup; 5] =
         [CraftGroup::Logistics, CraftGroup::Production, CraftGroup::Intermediate, CraftGroup::Power, CraftGroup::Research];
 
+    /// From the `group` string of a recipe ("logistics", "production", ...). Unknown: intermediate.
+    pub fn parse(s: &str) -> CraftGroup {
+        match s {
+            "logistics" => CraftGroup::Logistics,
+            "production" => CraftGroup::Production,
+            "power" => CraftGroup::Power,
+            "research" => CraftGroup::Research,
+            _ => CraftGroup::Intermediate,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             CraftGroup::Logistics => "Logistics",
@@ -234,145 +230,62 @@ impl CraftGroup {
             CraftGroup::Research => "Research",
         }
     }
+
+    pub fn short_label(self) -> &'static str {
+        match self {
+            CraftGroup::Intermediate => "Intermediate",
+            g => g.label(),
+        }
+    }
 }
 
 /// Where a recipe can be made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Maker {
-    /// In the robot's hands (hand crafting).
     Hand,
-    /// In a building of this type.
     Building(BuildingKindId),
 }
 
-/// One recipe.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RecipeView {
-    pub id: RecipeId,
-    pub name: String,
-    pub group: CraftGroup,
-    /// Row inside the crafting tab. Recipes with the same row number are on one line.
-    pub row: u8,
-    pub ingredients: Vec<ItemAmount>,
-    pub results: Vec<ItemAmount>,
-    /// Crafting time in seconds at speed 1.
-    pub time: f32,
-    /// Where it can be made. `Maker::Hand` means the player can craft it in the character screen.
-    pub made_in: Vec<Maker>,
-    /// False if research has not unlocked it yet. Locked recipes are not shown.
-    pub unlocked: bool,
-    /// Needs this temperature (°C) or more, for heat recipes. Shown in the tooltip.
-    pub min_temperature: Option<f32>,
-}
-
-impl RecipeView {
-    pub fn hand_craftable(&self) -> bool {
-        self.made_in.contains(&Maker::Hand)
+/// Where a recipe can be made: by hand (if `hand`), every building that crafts its category, and
+/// for hand recipes also the buildings that craft "hand" (the workbench).
+pub fn makers(content: &Content, recipe: &Recipe) -> Vec<Maker> {
+    let mut v = vec![];
+    if recipe.hand {
+        v.push(Maker::Hand);
     }
-
-    /// The item whose icon shows the recipe: the first result.
-    pub fn main_item(&self) -> Option<ItemId> {
-        self.results.first().map(|r| r.item)
-    }
-}
-
-/// All items and recipes. The game builds it once and changes `revision` when the data changes
-/// (for example after a data reload or a discovery). The UI rebuilds the icon atlas when
-/// `revision` changes.
-#[derive(Debug, Clone, Default)]
-pub struct Catalog {
-    pub revision: u64,
-    items: Vec<ItemInfo>,
-    item_index: HashMap<ItemId, usize>,
-    recipes: Vec<RecipeView>,
-    recipe_index: HashMap<RecipeId, usize>,
-    used_in: HashMap<ItemId, Vec<RecipeId>>,
-    made_by: HashMap<ItemId, Vec<RecipeId>>,
-}
-
-impl Catalog {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add or replace an item.
-    pub fn add_item(&mut self, info: ItemInfo) {
-        if let Some(&i) = self.item_index.get(&info.id) {
-            self.items[i] = info;
-        } else {
-            self.item_index.insert(info.id, self.items.len());
-            self.items.push(info);
+    for (i, b) in content.factory.buildings.iter().enumerate() {
+        let hand_helper = recipe.hand && b.crafts.iter().any(|c| c == "hand");
+        if b.crafts.contains(&recipe.category) || hand_helper {
+            v.push(Maker::Building(BuildingKindId(i as u16)));
         }
     }
+    v
+}
 
-    /// Add or replace a recipe.
-    pub fn add_recipe(&mut self, recipe: RecipeView) {
-        if let Some(&i) = self.recipe_index.get(&recipe.id) {
-            self.recipes[i] = recipe;
-            self.rebuild_uses();
-        } else {
-            for ing in &recipe.ingredients {
-                self.used_in.entry(ing.item).or_default().push(recipe.id);
-            }
-            for res in &recipe.results {
-                self.made_by.entry(res.item).or_default().push(recipe.id);
-            }
-            self.recipe_index.insert(recipe.id, self.recipes.len());
-            self.recipes.push(recipe);
-        }
-    }
+/// True if the player knows the recipe: no technology unlocks it, or the technology is done.
+pub fn recipe_known(recipe: &Recipe, finished: &[TechId]) -> bool {
+    recipe.unlocked_by.is_none_or(|t| finished.contains(&t))
+}
 
-    fn rebuild_uses(&mut self) {
-        self.used_in.clear();
-        self.made_by.clear();
-        for r in &self.recipes {
-            for ing in &r.ingredients {
-                self.used_in.entry(ing.item).or_default().push(r.id);
-            }
-            for res in &r.results {
-                self.made_by.entry(res.item).or_default().push(r.id);
-            }
-        }
-    }
+/// The recipes a building type can make now (known recipes of the categories it crafts).
+pub fn building_recipes(content: &Content, kind: BuildingKindId, finished: &[TechId]) -> Vec<RecipeId> {
+    let Some(b) = content.factory.buildings.get(kind.0 as usize) else { return vec![] };
+    content
+        .factory
+        .recipes
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| b.crafts.contains(&r.category) && recipe_known(r, finished))
+        .map(|(i, _)| RecipeId(i as u16))
+        .collect()
+}
 
-    pub fn item(&self, id: ItemId) -> Option<&ItemInfo> {
-        self.item_index.get(&id).map(|&i| &self.items[i])
-    }
+/// A recipe by id, if it exists.
+pub fn recipe(content: &Content, id: RecipeId) -> Option<&Recipe> {
+    content.factory.recipes.get(id.0 as usize)
+}
 
-    /// The name of an item, or "Unknown item".
-    pub fn name(&self, id: ItemId) -> &str {
-        self.item(id).map(|i| i.name.as_str()).unwrap_or("Unknown item")
-    }
-
-    /// The most pieces of this item in one part slot.
-    pub fn stack_size(&self, id: ItemId) -> u32 {
-        self.item(id).map(|i| i.stack_size.max(1)).unwrap_or(50)
-    }
-
-    pub fn items(&self) -> &[ItemInfo] {
-        &self.items
-    }
-
-    pub fn recipe(&self, id: RecipeId) -> Option<&RecipeView> {
-        self.recipe_index.get(&id).map(|&i| &self.recipes[i])
-    }
-
-    pub fn recipes(&self) -> &[RecipeView] {
-        &self.recipes
-    }
-
-    /// Recipes that use this item as an ingredient.
-    pub fn used_in(&self, id: ItemId) -> &[RecipeId] {
-        self.used_in.get(&id).map(|v| v.as_slice()).unwrap_or(&[])
-    }
-
-    /// Recipes that make this item.
-    pub fn made_by(&self, id: ItemId) -> &[RecipeId] {
-        self.made_by.get(&id).map(|v| v.as_slice()).unwrap_or(&[])
-    }
-
-    /// The item form of a building type, if the catalog has one.
-    pub fn building_item(&self, kind: BuildingKindId) -> Option<&ItemInfo> {
-        self.item(ItemId::Building(kind))
-    }
+/// The item whose icon shows a recipe: its first output.
+pub fn recipe_item(recipe: &Recipe) -> Option<ItemRef> {
+    recipe.outputs.first().map(|s| s.item)
 }

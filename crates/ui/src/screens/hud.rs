@@ -5,7 +5,8 @@ use super::Cx;
 use crate::action::UiAction;
 use crate::crafting::cancel_count;
 use crate::format;
-use crate::item::ItemId;
+use crate::item;
+use foundry_content::ItemRef;
 use crate::model::{AlertKind, HoverView, UiModel};
 use crate::theme::{self, color, font, font_bold, font_regular, rgba, size, text};
 use crate::tooltip::Tip;
@@ -36,11 +37,11 @@ fn panel_area(ctx: &egui::Context, name: &str, rect: Rect, add: impl FnOnce(&mut
     });
 }
 
-fn count_in_inventory(model: &UiModel, item: ItemId) -> u64 {
-    if item.is_bulk() {
-        model.player.tank.iter().filter(|t| t.material.map(ItemId::Material) == Some(item)).map(|t| t.units as u64).sum()
+fn count_in_inventory(model: &UiModel, it: ItemRef) -> u64 {
+    if item::is_bulk(it) {
+        model.player.tank.iter().filter(|t| t.material.map(ItemRef::Material) == Some(it)).map(|t| t.units as u64).sum()
     } else {
-        model.player.inventory.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u64).sum()
+        model.player.inventory.iter().flatten().filter(|s| s.item == it).map(|s| s.count as u64).sum()
     }
 }
 
@@ -87,7 +88,7 @@ fn quickbar(cx: &mut Cx, screen: Rect) -> Rect {
             let content = SlotContent {
                 item,
                 count: count.as_deref(),
-                label: if i < 10 { Some(KEYS[i]) } else { None },
+                label: KEYS.get(i).copied(),
                 selected: pl.selected_hotbar == Some(i),
                 dim: item.is_some() && have == 0,
                 ..Default::default()
@@ -135,8 +136,8 @@ fn tank_summary(cx: &mut Cx, qb: Rect) {
         for (i, t) in cx.model.player.tank.iter().enumerate() {
             let (col, row) = (i / 2, i % 2);
             let sr = Rect::from_min_size(grid.min + vec2(2.0 + col as f32 * size::SLOT, 2.0 + row as f32 * size::SLOT), Vec2::splat(size::SLOT));
-            let item = t.material.map(ItemId::Material);
-            let fill_color = item.and_then(|it| cx.model.catalog.item(it)).map(|info| rgba(info.color())).unwrap_or(color::GRAY);
+            let item = t.material.map(ItemRef::Material);
+            let fill_color = item.map(|x| rgba(item::color(&cx.model.content, x))).unwrap_or(color::GRAY);
             let frac = if t.capacity > 0 { t.units as f32 / t.capacity as f32 } else { 0.0 };
             let count = item.map(|_| format::count(t.units as u64));
             let content = SlotContent { item, count: count.as_deref(), fill: item.map(|_| (frac, fill_color)), ..Default::default() };
@@ -170,8 +171,8 @@ fn crafting_queue(cx: &mut Cx, screen: Rect) {
         let (shift, _) = cx.modifiers();
         for (i, job) in cx.model.player.crafting.iter().take(shown).enumerate() {
             let sr = Rect::from_min_size(grid.min + vec2(2.0 + i as f32 * size::SLOT, 2.0), Vec2::splat(size::SLOT));
-            let recipe = cx.model.catalog.recipe(job.recipe);
-            let item = recipe.and_then(|r| r.main_item());
+            let recipe = item::recipe(&cx.model.content, job.recipe);
+            let item = recipe.and_then(item::recipe_item);
             let count = format::count(job.count as u64);
             let content = SlotContent { item, count: Some(&count), progress: (i == 0).then_some(job.progress), ..Default::default() };
             let resp = widgets::slot(ui, Id::new(("queue", i)), sr, SlotLook::Normal, &content, cx.atlas);
@@ -197,33 +198,45 @@ fn crafting_queue(cx: &mut Cx, screen: Rect) {
 }
 
 fn research(cx: &mut Cx, screen: Rect) {
-    let Some(res) = &cx.model.research else { return };
+    let model = cx.model;
+    let Some(res) = &model.research else { return };
+    let Some(tech) = model.content.factory.techs.get(res.tech.0 as usize) else { return };
+    // The icon is the first thing the technology unlocks, or its first kit.
+    let icon_item = tech
+        .unlocks
+        .iter()
+        .filter_map(|r| item::recipe(&model.content, *r))
+        .find_map(item::recipe_item)
+        .or_else(|| tech.kits.first().map(|k| k.item));
     let outer = vec2(330.0, 84.0);
     let rect = Rect::from_min_size(screen.min + vec2(MARGIN, MARGIN), outer);
     panel_area(cx.ctx, "research", rect, |ui| {
         let p = ui.painter().clone();
         let icon = Rect::from_min_size(rect.min + vec2(PANEL_PAD + 2.0, PANEL_PAD + 2.0), Vec2::splat(64.0));
         widgets::deep(&p, icon.expand(2.0));
-        cx.atlas.paint(&p, res.icon, icon.shrink(8.0), Color32::WHITE);
+        if let Some(it) = icon_item {
+            cx.atlas.paint(&p, it, icon.shrink(8.0), Color32::WHITE);
+        }
         let x = icon.right() + 12.0;
         p.text(pos2(x, rect.top() + 12.0), Align2::LEFT_TOP, "Research", font_regular(text::SMALL), color::TEXT_DIM);
-        p.text(pos2(x, rect.top() + 26.0), Align2::LEFT_TOP, &res.name, font_bold(text::BODY + 1.0), color::HEADING);
+        p.text(pos2(x, rect.top() + 26.0), Align2::LEFT_TOP, &tech.name, font_bold(text::BODY + 1.0), color::HEADING);
         let bar = Rect::from_min_max(pos2(x, rect.bottom() - 26.0), pos2(rect.right() - PANEL_PAD - 4.0, rect.bottom() - 12.0));
         widgets::bar(&p, bar, res.progress, color::PROGRESS, Some(&format::percent(res.progress)));
         // Kits per unit, as small icons on the right of the title line.
         let mut kx = rect.right() - PANEL_PAD - 4.0;
-        for kit in res.kits.iter().rev() {
+        for kit in tech.kits.iter().rev() {
             let r = Rect::from_min_size(pos2(kx - 22.0, rect.top() + 10.0), Vec2::splat(22.0));
             cx.atlas.paint(&p, kit.item, r, Color32::WHITE);
             kx -= 24.0;
         }
         let resp = ui.interact(rect, Id::new("hud-research"), egui::Sense::hover());
         if resp.hovered() {
-            let kits: Vec<String> = res.kits.iter().map(|k| format!("{} × {}", k.count, cx.model.catalog.name(k.item))).collect();
-            cx.tip(Tip::Text {
-                title: res.name.clone(),
-                body: format!("Research in progress: {}.\nEach unit needs: {}.", format::percent(res.progress), kits.join(", ")),
-            });
+            let kits: Vec<String> = tech.kits.iter().map(|k| format!("{} × {}", k.count, item::name(&model.content, k.item))).collect();
+            let mut body = format!("{}\nProgress: {}.", tech.description, format::percent(res.progress));
+            if !kits.is_empty() {
+                body.push_str(&format!("\nEach of the {} units needs: {}.", tech.units, kits.join(", ")));
+            }
+            cx.tip(Tip::Text { title: tech.name.clone(), body });
         }
     });
 }
@@ -247,21 +260,24 @@ fn entity_info(cx: &mut Cx, screen: Rect) {
     let h = 58.0 + lines as f32 * 21.0 + if has_bar { 22.0 } else { 0.0 } + 8.0;
     let rect = Rect::from_min_size(pos2(screen.right() - MARGIN - width, screen.top() + top_offset), vec2(width, h));
     let model = cx.model;
+    let content = &*model.content;
     let atlas = cx.atlas;
     widgets::area(cx.ctx, Id::new(("hud", "entity")), Order::Middle, rect, |ui| {
         let p = ui.painter().clone();
         widgets::window_frame(&p, rect);
         let inner = rect.shrink(10.0);
-        let (item, title) = match hover {
-            HoverView::Cell { material, .. } => (ItemId::Material(*material), model.catalog.name(ItemId::Material(*material)).to_string()),
-            HoverView::Building { item, .. } => (*item, model.catalog.name(*item).to_string()),
+        let (it, title) = match hover {
+            HoverView::Cell { material, .. } => (Some(ItemRef::Material(*material)), item::name(content, ItemRef::Material(*material))),
+            HoverView::Building { kind, .. } => (item::building_item(content, *kind), item::building_name(content, *kind)),
         };
         let icon = Rect::from_min_size(inner.min, Vec2::splat(40.0));
         widgets::deep(&p, icon);
-        atlas.paint(&p, item, icon.shrink(4.0), Color32::WHITE);
-        p.text(pos2(icon.right() + 10.0, inner.top() + 1.0), Align2::LEFT_TOP, &title, font_bold(text::BODY + 1.0), color::HEADING);
-        let kind = model.catalog.item(item).map(|i| i.kind.label()).unwrap_or("");
-        p.text(pos2(icon.right() + 10.0, inner.top() + 21.0), Align2::LEFT_TOP, kind, font_regular(text::SMALL), color::TEXT_DIM);
+        if let Some(it) = it {
+            atlas.paint(&p, it, icon.shrink(4.0), Color32::WHITE);
+        }
+        p.text(pos2(icon.right() + 10.0, inner.top() + 1.0), Align2::LEFT_TOP, title, font_bold(text::BODY + 1.0), color::HEADING);
+        let kind_label = it.map(|x| item::kind(content, x).label()).unwrap_or("");
+        p.text(pos2(icon.right() + 10.0, inner.top() + 21.0), Align2::LEFT_TOP, kind_label, font_regular(text::SMALL), color::TEXT_DIM);
         let mut y = icon.bottom() + 8.0;
         let x = inner.left();
         let w = inner.width();
@@ -269,27 +285,28 @@ fn entity_info(cx: &mut Cx, screen: Rect) {
             HoverView::Cell { pos, temperature, .. } => {
                 let tc = temp_color(*temperature);
                 info_line(&p, &mut y, x, w, "Temperature", &format::celsius(*temperature), tc);
-                if let Some(info) = model.catalog.item(item) {
-                    for f in info.facts.iter().take(2) {
+                if let Some(it) = it {
+                    for f in item::facts(content, it).iter().take(2) {
                         info_line(&p, &mut y, x, w, &f.label, &f.value, color::TEXT);
                     }
                 }
                 info_line(&p, &mut y, x, w, "Position", &format!("{}, {}", pos.x, pos.y), color::TEXT_DIM);
             }
-            HoverView::Building { status, recipe, progress, temperature, power_w, .. } => {
+            HoverView::Building { kind, status, recipe, progress, temperature, power_w, .. } => {
                 let sc = widgets::status_color(status.color());
                 widgets::status_dot(&p, pos2(x + 6.0, y + 10.0), sc);
                 p.text(pos2(x + 18.0, y), Align2::LEFT_TOP, status.label(), font(text::BODY), color::TEXT);
                 y += 21.0;
                 if let Some(rid) = recipe {
-                    let name = model.catalog.recipe(*rid).map(|r| r.name.as_str()).unwrap_or("?");
+                    let name = item::recipe(content, *rid).map(|r| r.name.as_str()).unwrap_or("?");
                     info_line(&p, &mut y, x, w, "Recipe", name, color::TEXT);
                     let bar = Rect::from_min_size(pos2(x, y + 1.0), vec2(w, 14.0));
                     widgets::bar(&p, bar, *progress, color::PROGRESS, None);
                     y += 22.0;
                 }
-                if let Some((t, max)) = temperature {
-                    info_line(&p, &mut y, x, w, "Temperature", &format!("{} / {}", format::celsius(*t), format::celsius(*max)), widgets::danger_color(t / max.max(1.0)));
+                if let Some(t) = temperature {
+                    let max = content.factory.buildings.get(kind.0 as usize).map(|b| b.max_temp as f32).unwrap_or(200.0);
+                    info_line(&p, &mut y, x, w, "Temperature", &format!("{} / {}", format::celsius(*t), format::celsius(max)), widgets::danger_color(t / max.max(1.0)));
                 }
                 if let Some(pw) = power_w {
                     info_line(&p, &mut y, x, w, "Power", &format::watts(*pw), color::TEXT);
@@ -318,24 +335,13 @@ fn alert_color(kind: AlertKind) -> Color32 {
     }
 }
 
-/// A small symbol for an alert kind, drawn with lines.
+/// A warning triangle in the color of the alert kind.
 fn alert_symbol(p: &Painter, r: Rect, kind: AlertKind) {
     let c = alert_color(kind);
     let center = r.center();
-    // Warning triangle background.
     let tri = vec![pos2(center.x, r.top() + 2.0), pos2(r.right() - 1.0, r.bottom() - 2.0), pos2(r.left() + 1.0, r.bottom() - 2.0)];
-    p.add(egui::Shape::convex_polygon(tri, theme::shade(c, 0.35), Stroke::new(2.0, c)));
-    let sym = match kind {
-        AlertKind::Fire => "F",
-        AlertKind::Leak => "L",
-        AlertKind::MachineStopped => "!",
-        AlertKind::LowPower => "P",
-        AlertKind::Gas => "G",
-        AlertKind::Flood => "W",
-        AlertKind::TooHot => "H",
-        AlertKind::Damage => "D",
-    };
-    p.text(center + vec2(0.0, 3.0), Align2::CENTER_CENTER, sym, font_bold(12.0), color::TEXT);
+    p.add(egui::Shape::convex_polygon(tri, c, Stroke::new(1.0, theme::shade(c, 0.5))));
+    p.text(center + vec2(0.0, 3.0), Align2::CENTER_CENTER, "!", font_bold(15.0), Color32::from_rgb(20, 20, 20));
 }
 
 fn alerts(cx: &mut Cx, screen: Rect) {

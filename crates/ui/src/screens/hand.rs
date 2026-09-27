@@ -16,7 +16,7 @@ pub(crate) fn show(ctx: &egui::Context, model: &UiModel, atlas: &IconAtlas) {
     let painter = ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("foundry-hand")));
     let r = Rect::from_center_size(pos, Vec2::splat(size::SLOT));
     atlas.paint(&painter, hand.item, Rect::from_center_size(r.center(), Vec2::splat(size::ICON)), Color32::WHITE);
-    if hand.count > 1 || hand.item.is_bulk() {
+    if hand.count > 1 || crate::item::is_bulk(hand.item) {
         widgets::corner_count(&painter, r, &format::count(hand.count as u64));
     }
 }

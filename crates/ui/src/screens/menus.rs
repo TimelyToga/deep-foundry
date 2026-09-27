@@ -6,10 +6,10 @@ use crate::action::{SettingChange, UiAction, WorldSize};
 use crate::format;
 use crate::model::GameState;
 use crate::theme::{self, color, font, font_bold, font_regular, size, text};
-use crate::tooltip::Tip;
 use crate::widgets::{self, ButtonKind};
 use crate::{Confirm, MenuPage, UiState};
-use egui::{Align2, Color32, CornerRadius, Id, LayerId, Mesh, Order, Painter, Rect, Shape, Stroke, Ui, Vec2, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Id, LayerId, Mesh, Order, Painter, Rect, Shape, Ui, Vec2, pos2, vec2};
+use std::sync::Arc;
 
 const MENU_W: f32 = 320.0;
 const BIG_BUTTON_H: f32 = 40.0;
@@ -19,7 +19,7 @@ pub(crate) fn main_menu(cx: &mut Cx, st: &mut UiState) {
     let bg = Id::new("menu-background");
     widgets::area(cx.ctx, bg, Order::Middle, screen, |ui| {
         let p = ui.painter();
-        paint_strata(p, screen);
+        paint_strata(p, screen, &mut st.menu_background);
         let title_y = screen.top() + screen.height() * 0.17;
         let f = font_bold(84.0);
         p.text(pos2(screen.center().x + 4.0, title_y + 5.0), Align2::CENTER_CENTER, "DEEP FOUNDRY", f.clone(), Color32::from_black_alpha(200));
@@ -157,7 +157,14 @@ fn dialog(
     add: impl FnOnce(&mut Ui, &mut Cx, Rect),
 ) -> (bool, bool) {
     let outer = widgets::window_outer(content + vec2(0.0, 12.0 + size::BUTTON_H + 8.0));
-    let rect = widgets::place(cx.ctx.content_rect(), outer, Vec2::ZERO);
+    let screen = cx.ctx.content_rect();
+    let mut rect = widgets::place(screen, outer, Vec2::ZERO);
+    if cx.model.state == GameState::MainMenu {
+        // Keep the dialog below the game title.
+        let min_top = screen.top() + screen.height() * 0.17 + 90.0;
+        let room = (screen.bottom() - rect.bottom()).max(0.0);
+        rect = rect.translate(vec2(0.0, (min_top - rect.top()).clamp(0.0, room)));
+    }
     let (mut back, mut ok) = (false, false);
     widgets::area(cx.ctx, id, Order::Foreground, rect, |ui| {
         let f = widgets::window(ui, id, rect, title, false);
@@ -179,7 +186,7 @@ fn new_game(cx: &mut Cx, st: &mut UiState) {
     let seed_ok = st.menu.seed_text.trim().parse::<u64>().is_ok();
     let id = Id::new("new-game");
     let menu = &mut st.menu;
-    let (back, ok) = dialog(cx, id, "New game", vec2(560.0, 250.0), Some(("Play", ButtonKind::Confirm, seed_ok)), |ui, cx, r| {
+    let (back, ok) = dialog(cx, id, "New game", vec2(560.0, 212.0), Some(("Play", ButtonKind::Confirm, seed_ok)), |ui, cx, r| {
         let p = ui.painter().clone();
         let inner = Rect::from_min_size(r.min, r.size());
         widgets::shallow(&p, inner);
@@ -390,8 +397,7 @@ fn settings(cx: &mut Cx, st: &mut UiState) {
                         p.rect_filled(row, CornerRadius::ZERO, Color32::from_white_alpha(5));
                     }
                     p.text(pos2(row.left() + 10.0, row.center().y), Align2::LEFT_CENTER, action, font(text::BODY), color::TEXT);
-                    let kr = p.text(pos2(row.right() - 12.0, row.center().y), Align2::RIGHT_CENTER, key, font_bold(text::BODY), color::HEADING);
-                    let _ = kr;
+                    p.text(pos2(row.right() - 12.0, row.center().y), Align2::RIGHT_CENTER, key, font_bold(text::BODY), color::HEADING);
                 }
             });
         });
@@ -449,14 +455,29 @@ fn confirm_dialog(cx: &mut Cx, st: &mut UiState) {
         }
         st.menu.confirm = None;
     }
-    if cx.model.state == GameState::MainMenu && st.menu.page == MenuPage::Root && st.menu.confirm.is_none() {
-        // Nothing else to do: the main menu shows again.
-    }
-    let _ = cx.tip.as_ref().map(|_: &Tip| ());
 }
 
 /// The main menu background: a cut through the layers of the planet, drawn as pixel blocks.
-pub(crate) fn paint_strata(p: &Painter, screen: Rect) {
+/// Paint the main menu background. The mesh is built once for each screen size.
+fn paint_strata(p: &Painter, screen: Rect, cache: &mut Option<(Rect, Arc<Mesh>)>) {
+    let mesh = match cache {
+        Some((r, m)) if *r == screen => m.clone(),
+        _ => {
+            let m = Arc::new(strata_mesh(screen));
+            *cache = Some((screen, m.clone()));
+            m
+        }
+    };
+    p.add(Shape::Mesh(mesh));
+    // Darken the middle so the menu is easy to read.
+    let v = Rect::from_center_size(screen.center() + vec2(0.0, 60.0), vec2(screen.width() * 0.5, screen.height() * 0.8));
+    for i in 0..8 {
+        p.rect_filled(v.expand(i as f32 * 30.0), CornerRadius::same(120), Color32::from_black_alpha(12));
+    }
+}
+
+/// A cut through the layers of the planet, drawn as pixel blocks, with a dark sky.
+fn strata_mesh(screen: Rect) -> Mesh {
     // Sky gradient.
     let mut mesh = Mesh::default();
     let sky_bottom = screen.top() + screen.height() * 0.42;
@@ -464,11 +485,10 @@ pub(crate) fn paint_strata(p: &Painter, screen: Rect) {
     let bot_c = Color32::from_rgb(58, 48, 44);
     mesh.colored_vertex(screen.left_top(), top_c);
     mesh.colored_vertex(screen.right_top(), top_c);
-    mesh.colored_vertex(pos2(screen.right(), sky_bottom), bot_c);
-    mesh.colored_vertex(pos2(screen.left(), sky_bottom), bot_c);
+    mesh.colored_vertex(pos2(screen.right(), screen.bottom()), bot_c);
+    mesh.colored_vertex(pos2(screen.left(), screen.bottom()), bot_c);
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
-    p.add(Shape::mesh(mesh));
     // Layers, from the surface down: (color, relative thickness).
     let layers: [(Color32, f32); 6] = [
         (Color32::from_rgb(88, 112, 52), 0.035),
@@ -486,7 +506,6 @@ pub(crate) fn paint_strata(p: &Painter, screen: Rect) {
         h = h.wrapping_mul(0x85eb_ca6b);
         h ^ (h >> 13)
     };
-    let mut mesh = Mesh::default();
     for cx_ in 0..cols {
         let x = screen.left() + cx_ as f32 * cell;
         let wave = (cx_ as f32 * 0.09).sin() * 14.0 + (cx_ as f32 * 0.023).sin() * 30.0;
@@ -512,11 +531,5 @@ pub(crate) fn paint_strata(p: &Painter, screen: Rect) {
             y = y_end;
         }
     }
-    p.add(Shape::mesh(mesh));
-    // Darken the middle so the menu is easy to read.
-    let v = Rect::from_center_size(screen.center() + vec2(0.0, 60.0), vec2(screen.width() * 0.5, screen.height() * 0.8));
-    for i in 0..8 {
-        p.rect_filled(v.expand(i as f32 * 30.0), CornerRadius::same(120), Color32::from_black_alpha(12));
-    }
-    let _ = Stroke::NONE;
+    mesh
 }

@@ -3,7 +3,7 @@
 //! The game turns these into simulation commands (or handles them itself, for example
 //! menus and saves). The UI never changes game state directly.
 
-use crate::item::ItemId;
+use foundry_content::ItemRef;
 use crate::model::BuildingSlots;
 use foundry_core::{BuildingId, RecipeId};
 
@@ -119,7 +119,7 @@ pub enum UiAction {
     /// Select a quickbar slot (0 to 19). The game puts that item in the hand or the build tool.
     SelectHotbar(usize),
     /// Put an item type in a quickbar slot, or clear it with `None`.
-    SetHotbar { index: usize, item: Option<ItemId> },
+    SetHotbar { index: usize, item: Option<ItemRef> },
     /// Put the item in the hand back into the inventory (a click on empty UI space, or Q).
     ClearHand,
 

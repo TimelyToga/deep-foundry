@@ -178,7 +178,7 @@ impl History {
 /// The smallest "round" number that is at least `v`: 1, 2, 2.5 or 5 times a power of 10.
 /// The graph uses it as the top of the vertical axis. Returns 1 for 0 or less.
 pub fn nice_ceiling(v: f64) -> f64 {
-    if !(v > 0.0) || !v.is_finite() {
+    if !v.is_finite() || v <= 0.0 {
         return 1.0;
     }
     let exp = v.log10().floor();

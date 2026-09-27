@@ -5,6 +5,7 @@
 use super::{Cx, window_id};
 use crate::action::WindowKind;
 use crate::format;
+use crate::item;
 use crate::graph::{self, TimeRange};
 use crate::model::{PowerEntry, PowerWarning};
 use crate::theme::{self, color, font, font_bold, font_regular, text};
@@ -84,17 +85,12 @@ pub(crate) fn series_color(i: usize) -> Color32 {
 }
 
 fn summary(ui: &mut Ui, cx: &mut Cx, p: &Painter, r: Rect) {
-    let Some(net) = cx.model.power.as_ref() else { return };
+    let model = cx.model;
+    let Some(net) = model.power.as_ref() else { return };
     widgets::shallow(p, r);
     // Voltage badge.
     let badge = Rect::from_min_size(r.min + vec2(10.0, 10.0), vec2(88.0, r.height() - 20.0));
-    let tier = match net.voltage {
-        crate::model::Voltage::Lv => 2,
-        crate::model::Voltage::Mv => 3,
-        crate::model::Voltage::Hv => 4,
-        crate::model::Voltage::Ev => 5,
-    };
-    let tc = theme::tier_color(tier);
+    let tc = theme::tier_color(net.voltage.game_tier());
     widgets::deep(p, badge);
     p.rect_stroke(badge.shrink(3.0), CornerRadius::same(2), Stroke::new(2.0, tc), egui::StrokeKind::Inside);
     p.text(badge.center() - vec2(0.0, 10.0), Align2::CENTER_CENTER, net.voltage.label(), font_bold(28.0), tc);
@@ -157,10 +153,15 @@ fn summary(ui: &mut Ui, cx: &mut Cx, p: &Painter, r: Rect) {
 fn warning_row(p: &Painter, cx: &Cx, r: Rect, w: &PowerWarning) {
     let (text, c) = match w {
         PowerWarning::CableOverloaded { amps, limit_amps, cable } => {
-            (format!("Cable overloaded: {amps:.0} A on a {cable} (limit {limit_amps:.0} A). The cable gets hot."), color::RED)
+            let name = item::building_name(&cx.model.content, *cable).to_lowercase();
+            (format!("Cable overloaded: {amps:.0} A on a {name} (limit {limit_amps:.0} A). The cable gets hot."), color::RED)
         }
         PowerWarning::WrongVoltage { building, building_voltage } => (
-            format!("Wrong voltage: {} is {}. It will explode on this network.", cx.model.catalog.name(*building), building_voltage.label()),
+            format!(
+                "Wrong voltage: {} is {}. It will explode on this network.",
+                item::building_name(&cx.model.content, *building),
+                building_voltage.label()
+            ),
             color::RED,
         ),
         PowerWarning::NotEnoughPower => ("Not enough power: machines run slower.".to_string(), color::YELLOW),
@@ -183,6 +184,7 @@ fn entry_list(ui: &mut Ui, cx: &mut Cx, p: &Painter, r: Rect, title: &str, entri
     let max = entries.iter().map(|e| e.watts).fold(0.0, f64::max).max(1.0);
     let inner = list.shrink(2.0);
     let atlas = cx.atlas;
+    let content = &*cx.model.content;
     ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
         egui::ScrollArea::vertical().id_salt(("pw-list", key)).auto_shrink([false, false]).show(ui, |ui| {
             let (area, _) = ui.allocate_exact_size(vec2(inner.width(), entries.len() as f32 * ROW_H), egui::Sense::hover());
@@ -195,9 +197,11 @@ fn entry_list(ui: &mut Ui, cx: &mut Cx, p: &Painter, r: Rect, title: &str, entri
                 let sc = series_color(i);
                 let slot = Rect::from_min_size(row.min + vec2(4.0, 3.0), Vec2::splat(32.0));
                 widgets::raised(&p, slot, color::SLOT, color::SLOT_LIGHT, color::SLOT_DARK);
-                atlas.paint(&p, e.item, slot.shrink(3.0), Color32::WHITE);
+                if let Some(it) = item::building_item(content, e.kind) {
+                    atlas.paint(&p, it, slot.shrink(3.0), Color32::WHITE);
+                }
                 widgets::corner_count(&p, slot.expand(2.0), &e.count.to_string());
-                let name = cx.model.catalog.name(e.item);
+                let name = item::building_name(content, e.kind);
                 p.text(pos2(slot.right() + 10.0, row.top() + 10.0), Align2::LEFT_CENTER, name, font(text::BODY), color::TEXT);
                 let bar = Rect::from_min_max(pos2(slot.right() + 10.0, row.bottom() - 13.0), pos2(row.right() - 90.0, row.bottom() - 6.0));
                 widgets::bar(&p, bar, (e.watts / max) as f32, sc, None);

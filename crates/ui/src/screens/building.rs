@@ -7,8 +7,10 @@ use super::inventory::{self, slot_click};
 use super::{Cx, window_id};
 use crate::action::{SlotRef, UiAction, WindowKind};
 use crate::format;
-use crate::item::ItemId;
+use crate::item;
 use crate::model::{BuildingSlots, BuildingView};
+use foundry_content::ItemRef;
+use foundry_core::RecipeId;
 use crate::theme::{self, color, font, font_bold, font_regular, size, text};
 use crate::tooltip::Tip;
 use crate::widgets::{self, ButtonKind, SlotContent, SlotLook};
@@ -34,9 +36,9 @@ fn has_slots(b: &BuildingView) -> bool {
     !(b.inputs.is_empty() && b.outputs.is_empty() && b.fuel.is_empty())
 }
 
-fn content_height(b: &BuildingView) -> f32 {
+fn content_height(b: &BuildingView, recipes: &[RecipeId]) -> f32 {
     let mut h = STATUS_H + PICTURE_H + GAP;
-    if !b.recipes.is_empty() || b.recipe.is_some() {
+    if !recipes.is_empty() || b.recipe.is_some() {
         h += RECIPE_H + GAP;
     }
     if has_slots(b) {
@@ -55,18 +57,20 @@ fn content_height(b: &BuildingView) -> f32 {
 }
 
 pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
-    let Some(b) = cx.model.building.as_ref() else { return };
+    let model = cx.model;
+    let Some(b) = model.building.as_ref() else { return };
     let ctx = cx.ctx;
+    let recipes = item::building_recipes(&model.content, b.kind, &model.finished_techs);
     let inv = inventory::panel_size(cx);
     let inv_outer = widgets::window_outer(inv);
-    let b_outer = widgets::window_outer(vec2(WIDTH, content_height(b)));
+    let b_outer = widgets::window_outer(vec2(WIDTH, content_height(b, &recipes)));
     let pair = vec2(inv_outer.x + 12.0 + b_outer.x, inv_outer.y.max(b_outer.y));
     let screen = ctx.content_rect();
     let rect = widgets::place(screen, pair, st.offset(WindowKind::Building) - vec2(0.0, 40.0));
     let inv_rect = Rect::from_min_size(rect.min, inv_outer);
     let b_rect = Rect::from_min_size(pos2(inv_rect.right() + 12.0, rect.top()), b_outer);
     let id = window_id(WindowKind::Building);
-    let name = cx.model.catalog.name(b.item).to_string();
+    let name = item::building_name(&model.content, b.kind);
     let mut recipe_slot = Rect::NOTHING;
     widgets::area(ctx, id, Order::Middle, rect, |ui| {
         // Player inventory.
@@ -74,23 +78,27 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
         st.move_window(WindowKind::Building, fi.drag);
         inventory::panel(ui, cx, Rect::from_min_size(fi.content.min, inv), "Shift + click: move to building");
         // Building.
-        let fb = widgets::window(ui, id.with("b"), b_rect, &name, true);
+        let fb = widgets::window(ui, id.with("b"), b_rect, name, true);
         st.move_window(WindowKind::Building, fb.drag);
         if fb.close_clicked {
             st.close(WindowKind::Building, cx.actions);
             return;
         }
-        recipe_slot = building_panel(ui, cx, st, b, fb.content);
+        recipe_slot = building_panel(ui, cx, st, b, &recipes, fb.content);
     });
     if st.picker_open && st.is_open(WindowKind::Building) {
-        recipe_picker(cx, st, b, recipe_slot);
+        recipe_picker(cx, st, b, &recipes, recipe_slot);
     }
 }
 
-fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, r: Rect) -> Rect {
+fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, recipes: &[RecipeId], r: Rect) -> Rect {
+    let model = cx.model;
+    let content = &*model.content;
     let p = ui.painter().clone();
     let mut y = r.top();
-    let tier = cx.model.catalog.item(b.item).map(|i| i.tier).unwrap_or(0);
+    let def = content.factory.buildings.get(b.kind.0 as usize);
+    let tier = def.map(|d| d.tier).unwrap_or(0);
+    let building_item = item::building_item(content, b.kind);
 
     // Status line.
     let sc = widgets::status_color(b.status.color());
@@ -116,7 +124,9 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
             p.rect_filled(rr, CornerRadius::same(20), glow.gamma_multiply(0.018));
         }
     }
-    cx.atlas.paint(&p, b.item, Rect::from_center_size(pic.center(), Vec2::splat(112.0)), Color32::WHITE);
+    if let Some(it) = building_item {
+        cx.atlas.paint(&p, it, Rect::from_center_size(pic.center(), Vec2::splat(112.0)), Color32::WHITE);
+    }
     if b.speed != 1.0 {
         widgets::text_shadow(&p, pic.left_bottom() + vec2(8.0, -6.0), Align2::LEFT_BOTTOM, &format!("Speed ×{}", b.speed), font_bold(text::SMALL), color::TEXT_DIM);
     }
@@ -124,22 +134,23 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
 
     // Recipe selector.
     let mut recipe_slot = Rect::NOTHING;
-    if !b.recipes.is_empty() || b.recipe.is_some() {
+    if !recipes.is_empty() || b.recipe.is_some() {
         let row = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), RECIPE_H));
         widgets::shallow(&p, row);
         let slot_r = Rect::from_min_size(pos2(row.left() + 6.0, row.center().y - size::SLOT * 0.5), Vec2::splat(size::SLOT));
         recipe_slot = slot_r;
-        let recipe = b.recipe.and_then(|id| cx.model.catalog.recipe(id));
-        let content = SlotContent { item: recipe.and_then(|r| r.main_item()), selected: st.picker_open, ..Default::default() };
+        let recipe = b.recipe.and_then(|id| item::recipe(content, id).map(|r| (id, r)));
+        let slot_content = SlotContent { item: recipe.and_then(|(_, r)| item::recipe_item(r)), selected: st.picker_open, ..Default::default() };
         let look = if recipe.is_some() { SlotLook::Normal } else { SlotLook::Dark };
-        let resp = widgets::slot(ui, Id::new("b-recipe"), slot_r, look, &content, cx.atlas);
+        let resp = widgets::slot(ui, Id::new("b-recipe"), slot_r, look, &slot_content, cx.atlas);
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Select recipe"));
         let tx = slot_r.right() + 10.0;
         match recipe {
-            Some(rec) => {
+            Some((_, rec)) => {
                 p.text(pos2(tx, row.top() + 8.0), Align2::LEFT_TOP, &rec.name, font_bold(text::BODY + 1.0), color::HEADING);
                 let secs = rec.time / b.speed.max(0.01);
-                p.text(pos2(tx, row.top() + 28.0), Align2::LEFT_TOP, format!("{} per run.  Click the icon to change.", format::seconds(secs)), font_regular(text::SMALL), color::TEXT_DIM);
+                let hint = if recipes.len() > 1 { "  Click the icon to change." } else { "" };
+                p.text(pos2(tx, row.top() + 28.0), Align2::LEFT_TOP, format!("{} per run.{hint}", format::seconds(secs)), font_regular(text::SMALL), color::TEXT_DIM);
             }
             None => {
                 p.text(pos2(tx, row.center().y), Align2::LEFT_CENTER, "No recipe. Click the slot to choose one.", font(text::BODY), color::YELLOW);
@@ -147,11 +158,11 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
         }
         if resp.hovered() {
             match recipe {
-                Some(rec) => cx.tip(Tip::Recipe { recipe: rec.id, hand: false }),
+                Some((id, _)) => cx.tip(Tip::Recipe { recipe: id, hand: false }),
                 None => cx.tip(Tip::Text { title: "Select recipe".into(), body: "Choose what this building makes.".into() }),
             }
         }
-        if resp.clicked() && !b.recipes.is_empty() {
+        if resp.clicked() && !recipes.is_empty() {
             st.picker_open = !st.picker_open;
         }
         y += RECIPE_H + GAP;
@@ -206,21 +217,23 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
             let row = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), ROW_H - 4.0));
             let icon = Rect::from_min_size(row.min, Vec2::splat(row.height()));
             widgets::deep(&p, icon);
-            let item = buf.material.map(ItemId::Material);
-            if let Some(it) = item {
+            let mat = buf.material.map(ItemRef::Material);
+            if let Some(it) = mat {
                 cx.atlas.paint(&p, it, icon.shrink(2.0), Color32::WHITE);
             }
-            let name = item.map(|it| cx.model.catalog.name(it)).unwrap_or("Empty");
-            p.text(pos2(icon.right() + 8.0, row.top() + 1.0), Align2::LEFT_TOP, &buf.label, font_regular(text::SMALL), color::TEXT_DIM);
-            p.text(pos2(icon.right() + 8.0, row.bottom() + 1.0), Align2::LEFT_BOTTOM, name, font(text::SMALL), color::TEXT);
-            let bar = Rect::from_min_max(pos2(r.left() + 170.0, row.top() + 5.0), pos2(r.right(), row.bottom() - 5.0));
+            let name = mat.map(|it| item::name(content, it)).unwrap_or("Empty");
+            p.text(pos2(icon.right() + 8.0, row.center().y), Align2::LEFT_CENTER, &buf.label, font(text::BODY), color::TEXT_DIM);
+            let bar = Rect::from_min_max(pos2(r.left() + 130.0, row.top() + 3.0), pos2(r.right(), row.bottom() - 3.0));
             let frac = if buf.capacity > 0 { buf.units as f32 / buf.capacity as f32 } else { 0.0 };
-            let fill = item.and_then(|it| cx.model.catalog.item(it)).map(|info| theme::opaque(info.color())).unwrap_or(color::GRAY);
-            widgets::bar(&p, bar, frac, fill, Some(&format!("{} / {}", format::count(buf.units as u64), format::count(buf.capacity as u64))));
+            let fill = mat.map(|it| theme::opaque(item::color(content, it))).unwrap_or(color::GRAY);
+            widgets::bar(&p, bar, frac, fill, None);
+            widgets::text_outlined(&p, pos2(bar.left() + 8.0, bar.center().y), Align2::LEFT_CENTER, name, font(text::SMALL), color::TEXT);
+            let amount = format!("{} / {}", format::count(buf.units as u64), format::count(buf.capacity as u64));
+            widgets::text_outlined(&p, pos2(bar.right() - 8.0, bar.center().y), Align2::RIGHT_CENTER, &amount, font_bold(text::SMALL), color::TEXT);
             let resp = ui.interact(row, Id::new(("b-buffer", i)), egui::Sense::hover());
             if resp.hovered() {
                 let dir = if buf.output { "The building puts its product here." } else { "The building takes material from here." };
-                match item {
+                match mat {
                     Some(it) => cx.tip(Tip::Item { item: it, amount: Some(format!("{} / {} units. {dir}", buf.units, buf.capacity)) }),
                     None => cx.tip(Tip::Text { title: buf.label.clone(), body: format!("Empty. Holds {} units. {dir}", buf.capacity) }),
                 }
@@ -241,7 +254,7 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
         p.text(pos2(r.left(), row.center().y), Align2::LEFT_CENTER, "Power", font(text::BODY), color::TEXT_DIM);
         let badge = Rect::from_min_size(pos2(r.right() - 44.0, row.top() + 2.0), vec2(44.0, row.height() - 4.0));
         let wrong = pw.network_voltage.is_some_and(|v| v != pw.voltage);
-        let badge_color = if wrong { color::RED } else { theme::tier_color(voltage_tier(pw.voltage)) };
+        let badge_color = if wrong { color::RED } else { theme::tier_color(pw.voltage.game_tier()) };
         p.rect_filled(badge, CornerRadius::same(2), theme::shade(badge_color, 0.4));
         p.rect_stroke(badge, CornerRadius::same(2), Stroke::new(1.0, badge_color), egui::StrokeKind::Inside);
         p.text(badge.center(), Align2::CENTER_CENTER, pw.voltage.label(), font_bold(text::SMALL), color::TEXT);
@@ -275,12 +288,9 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
         let row = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), ROW_H - 4.0));
         p.text(pos2(r.left(), row.center().y), Align2::LEFT_CENTER, "Temperature", font(text::BODY), color::TEXT_DIM);
         let bar = Rect::from_min_max(pos2(r.left() + 110.0, row.top() + 5.0), pos2(r.right(), row.bottom() - 5.0));
-        let max = b.max_temperature.unwrap_or(1000.0).max(1.0);
+        let max = def.map(|d| d.max_temp as f32).unwrap_or(1000.0).max(1.0);
         let frac = (t / max).clamp(0.0, 1.0);
-        let label = match b.max_temperature {
-            Some(m) => format!("{} of {} max", format::celsius(t), format::celsius(m)),
-            None => format::celsius(t),
-        };
+        let label = format!("{} of {} max", format::celsius(t), format::celsius(max));
         widgets::bar(&p, bar, frac, widgets::danger_color(frac), Some(&label));
         if ui.interact(row, Id::new("b-temp"), egui::Sense::hover()).hovered() {
             cx.tip(Tip::Text {
@@ -292,16 +302,8 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
     recipe_slot
 }
 
-fn voltage_tier(v: crate::model::Voltage) -> u8 {
-    match v {
-        crate::model::Voltage::Lv => 2,
-        crate::model::Voltage::Mv => 3,
-        crate::model::Voltage::Hv => 4,
-        crate::model::Voltage::Ev => 5,
-    }
-}
-
 fn slot_row(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, grid: Rect) {
+    let model = cx.model;
     widgets::deep(ui.painter(), grid);
     for (i, s) in b.slots(group).iter().enumerate() {
         let sr = Rect::from_min_size(grid.min + vec2(2.0 + i as f32 * size::SLOT, 2.0), Vec2::splat(size::SLOT));
@@ -309,6 +311,9 @@ fn slot_row(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, gr
         let content = SlotContent { item: s.stack.map(|x| x.item), count: count.as_deref(), ghost: s.filter, ..Default::default() };
         let look = if s.stack.is_some() { SlotLook::Normal } else { SlotLook::Dark };
         let resp = widgets::slot(ui, Id::new(("b-slot", group, i)), sr, look, &content, cx.atlas);
+        if let Some(x) = s.stack {
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, item::name(&model.content, x.item)));
+        }
         if resp.hovered() {
             if let Some(st) = s.stack {
                 cx.tip(Tip::Item { item: st.item, amount: Some(st.count.to_string()) });
@@ -318,7 +323,7 @@ fn slot_row(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, gr
                     BuildingSlots::Output => "Makes",
                     BuildingSlots::Fuel => "Burns",
                 };
-                cx.tip(Tip::Text { title: format!("{what}: {}", cx.model.catalog.name(f)), body: "Empty slot.".into() });
+                cx.tip(Tip::Text { title: format!("{what}: {}", item::name(&model.content, f)), body: "Empty slot.".into() });
             }
         }
         if let Some(click) = slot_click(cx, &resp) {
@@ -327,9 +332,10 @@ fn slot_row(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, gr
     }
 }
 
-fn recipe_picker(cx: &mut Cx, st: &mut UiState, b: &BuildingView, anchor: Rect) {
+fn recipe_picker(cx: &mut Cx, st: &mut UiState, b: &BuildingView, recipes: &[RecipeId], anchor: Rect) {
+    let model = cx.model;
     let cols = 8usize;
-    let n = b.recipes.len();
+    let n = recipes.len();
     let rows = n.div_ceil(cols).max(1);
     let grid_w = cols as f32 * size::SLOT + 4.0;
     let content = vec2(grid_w, rows as f32 * size::SLOT + 4.0 + 8.0 + size::BUTTON_H);
@@ -350,12 +356,12 @@ fn recipe_picker(cx: &mut Cx, st: &mut UiState, b: &BuildingView, anchor: Rect) 
         }
         let grid = Rect::from_min_size(f.content.min, vec2(grid_w, rows as f32 * size::SLOT + 4.0));
         widgets::deep(ui.painter(), grid);
-        for (i, rid) in b.recipes.iter().enumerate() {
-            let Some(rec) = cx.model.catalog.recipe(*rid) else { continue };
+        for (i, rid) in recipes.iter().enumerate() {
+            let Some(rec) = item::recipe(&model.content, *rid) else { continue };
             let sr = Rect::from_min_size(grid.min + vec2(2.0 + (i % cols) as f32 * size::SLOT, 2.0 + (i / cols) as f32 * size::SLOT), Vec2::splat(size::SLOT));
-            let content = SlotContent { item: rec.main_item(), selected: b.recipe == Some(*rid), ..Default::default() };
+            let content = SlotContent { item: item::recipe_item(rec), selected: b.recipe == Some(*rid), ..Default::default() };
             let resp = widgets::slot(ui, Id::new(("pick", rid.0)), sr, SlotLook::Normal, &content, cx.atlas);
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &rec.name));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Use recipe {}", rec.name)));
             if resp.hovered() {
                 cx.tip(Tip::Recipe { recipe: *rid, hand: false });
             }
