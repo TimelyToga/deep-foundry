@@ -18,7 +18,9 @@ fn fs_background(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
     var color = mix(top, middle, smoothstep(0.0, 0.55, depth));
     color = mix(color, bottom, smoothstep(0.55, 1.0, depth));
 
-    let inside = all(world >= vec2<f32>(0.0)) && all(world < size);
+    // A world width of 0 means no limit to the left and right.
+    let inside_x = frame.world_cells.x <= 0.0 || (world.x >= 0.0 && world.x < size.x);
+    let inside = inside_x && world.y >= 0.0 && world.y < size.y;
     if !inside {
         color *= 0.4;
     }

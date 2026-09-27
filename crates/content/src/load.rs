@@ -1,6 +1,8 @@
 //! Loading and checking the data files.
 
 use crate::defs::{MaterialDef, Phase, PhaseChange, ReactionDef};
+use crate::factory::FactoryContent;
+use crate::factory_defs::{BuildingDef, MilestoneDef, PartDef, RecipeDef, TechDef};
 use crate::table::{Burn, Change, Matcher, MaterialTable, Reaction, TagTable};
 use crate::Content;
 use foundry_core::{DEFAULT_TEMPERATURE, MaterialId};
@@ -53,13 +55,19 @@ impl Content {
                 ron::from_str(&text).map_err(|e| ContentError::Parse { path: path.clone(), message: e.to_string() })?;
             materials.extend(list);
         }
-        let mut reactions = vec![];
-        for (path, text) in read_ron_files(&data.join("reactions"))? {
-            let list: Vec<ReactionDef> =
-                ron::from_str(&text).map_err(|e| ContentError::Parse { path: path.clone(), message: e.to_string() })?;
-            reactions.extend(list);
-        }
-        Content::build(materials, reactions)
+        let reactions: Vec<ReactionDef> = read_list(&data.join("reactions"))?;
+        let mut content = Content::build(materials, reactions)?;
+        let mut errors = vec![];
+        content.factory = FactoryContent::build(
+            &content.materials,
+            read_list::<PartDef>(&data.join("parts"))?,
+            read_list::<BuildingDef>(&data.join("buildings"))?,
+            read_list::<RecipeDef>(&data.join("recipes"))?,
+            read_list::<TechDef>(&data.join("tech"))?,
+            read_list::<MilestoneDef>(&data.join("milestones"))?,
+            &mut errors,
+        );
+        if errors.is_empty() { Ok(content) } else { Err(ContentError::Invalid(errors)) }
     }
 
     /// Load the default assets folder. See `default_assets_dir`.
@@ -251,8 +259,22 @@ impl Content {
             });
         }
 
-        if errors.is_empty() { Ok(Content { materials: t, reactions, tags }) } else { Err(ContentError::Invalid(errors)) }
+        if errors.is_empty() {
+            Ok(Content { materials: t, reactions, tags, factory: FactoryContent::default() })
+        } else {
+            Err(ContentError::Invalid(errors))
+        }
     }
+}
+
+/// Read every `.ron` file in a folder (in name order) as a list of `T`.
+fn read_list<T: serde::de::DeserializeOwned>(dir: &Path) -> Result<Vec<T>, ContentError> {
+    let mut out = vec![];
+    for (path, text) in read_ron_files(dir)? {
+        let list: Vec<T> = ron::from_str(&text).map_err(|e| ContentError::Parse { path: path.clone(), message: e.to_string() })?;
+        out.extend(list);
+    }
+    Ok(out)
 }
 
 fn read_ron_files(dir: &Path) -> Result<Vec<(PathBuf, String)>, ContentError> {
@@ -310,5 +332,46 @@ mod tests {
         assert_eq!(parse_color("#ff8000"), Some([255, 128, 0, 255]));
         assert_eq!(parse_color("#ff800080"), Some([255, 128, 0, 128]));
         assert_eq!(parse_color("ff8000"), None);
+    }
+}
+
+#[cfg(test)]
+mod factory_tests {
+    use super::*;
+    use crate::factory::ItemRef;
+
+    #[test]
+    fn default_factory_content_loads() {
+        let c = Content::load(&default_assets_dir()).expect("assets load");
+        let f = &c.factory;
+        let lab = f.building("basic_lab").expect("lab");
+        let part = f.building_def(lab).part;
+        assert_eq!(f.part_def(part).building, Some(lab), "each building is also a part");
+        assert_eq!(c.item("basic_lab"), Some(ItemRef::Part(part)));
+        assert!(matches!(c.item("clay"), Some(ItemRef::Material(_))));
+        let alloy = f.recipe("bronze_alloy").unwrap();
+        assert_eq!(f.recipe_def(alloy).unlocked_by, f.tech("bronze"));
+        assert_eq!(f.recipe_def(f.recipe("workbench").unwrap()).unlocked_by, None);
+        let bronze = c.item("molten_bronze").unwrap();
+        assert!(f.recipes_making(bronze).any(|r| r == alloy));
+        assert!(!f.milestones.is_empty());
+    }
+
+    #[test]
+    fn factory_errors_are_reported() {
+        let base = Content::load(&default_assets_dir()).unwrap();
+        let mut errors = vec![];
+        let parts: Vec<PartDef> = ron::from_str(r#"[Part(id: "sand", name: "Sand part", category: "intermediate")]"#).unwrap();
+        let recipes: Vec<RecipeDef> =
+            ron::from_str(r#"[Recipe(id: "x", category: "nowhere", inputs: [("unobtainium", 1)], outputs: [], time: 0.0)]"#).unwrap();
+        let techs: Vec<TechDef> = ron::from_str(
+            r#"[Tech(id: "a", name: "A", tier: 0, requires: ["b"]), Tech(id: "b", name: "B", tier: 0, requires: ["a"])]"#,
+        )
+        .unwrap();
+        FactoryContent::build(&base.materials, parts, vec![], recipes, techs, vec![], &mut errors);
+        let all = errors.join("\n");
+        for needle in ["both a material and a part", "no building crafts category", "unobtainium", "at least one output", "time must be above 0", "loop"] {
+            assert!(all.contains(needle), "missing error `{needle}` in:\n{all}");
+        }
     }
 }

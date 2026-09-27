@@ -85,6 +85,8 @@ fn run(
     let mut next = Instant::now();
     let mut count_start = Instant::now();
     let mut count = 0u32;
+    // Messages for the player, sent with the next snapshot.
+    let mut notices: Vec<String> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         let now = Instant::now();
         if now < next {
@@ -95,6 +97,8 @@ fn run(
         while ran < MAX_CATCH_UP && Instant::now() >= next {
             loop {
                 match commands.try_recv() {
+                    Ok(Command::SaveWorld { path }) => notices.push(save_world(&sim, &path)),
+                    Ok(Command::LoadWorld { path }) => notices.push(load_world(&mut sim, &path)),
                     Ok(cmd) => sim.apply(cmd),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => return,
@@ -103,7 +107,9 @@ fn run(
             if sim.advance() {
                 count += 1;
             }
-            mailbox.publish(sim.take_snapshot());
+            let mut snapshot = sim.take_snapshot();
+            snapshot.notices.append(&mut notices);
+            mailbox.publish(snapshot);
             next += tick;
             ran += 1;
         }
@@ -121,6 +127,39 @@ fn run(
     }
 }
 
+fn file_name(path: &std::path::Path) -> String {
+    path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| path.display().to_string())
+}
+
+/// `Command::SaveWorld`. Returns the message for the player.
+fn save_world(sim: &Simulation, path: &std::path::Path) -> String {
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        return format!("Save failed: cannot make the folder {}: {e}", dir.display());
+    }
+    match sim.save_file(path) {
+        Ok(()) => format!("Game saved: {}", file_name(path)),
+        Err(e) => format!("Save failed: {e}"),
+    }
+}
+
+/// `Command::LoadWorld`. The new world replaces the old one only if the file loads.
+/// Returns the message for the player.
+fn load_world(sim: &mut Simulation, path: &std::path::Path) -> String {
+    match Simulation::load_file_with_resolver(sim.content().clone(), &crate::demo::resolve_source, path) {
+        Ok((loaded, report)) => {
+            *sim = loaded;
+            if report.unknown_materials.is_empty() {
+                format!("Game loaded: {}", file_name(path))
+            } else {
+                format!("Game loaded: {}. Unknown materials became air: {}", file_name(path), report.unknown_materials.join(", "))
+            }
+        }
+        Err(e) => format!("Load failed: {e}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,7 +169,7 @@ mod tests {
 
     fn small_sim() -> Simulation {
         let content = Arc::new(Content::load_default().unwrap());
-        Simulation::new(content, SimConfig { width_chunks: 2, height_chunks: 2, seed: 1, bedrock_border: true })
+        Simulation::new(content, SimConfig::finite(2, 2, 1))
     }
 
     /// Wait until a snapshot matches, or fail after 2 seconds.
@@ -171,6 +210,23 @@ mod tests {
         t.send(Command::Step);
         wait_for(&t, |s| s.tick == paused.tick + 1);
         t.stop();
+    }
+
+    #[test]
+    fn save_and_load_report_notices() {
+        let dir = std::env::temp_dir().join(format!("deep-foundry-simthread-{}", std::process::id()));
+        let path = dir.join("test.dfworld");
+        let t = SimThread::start(small_sim());
+        t.send(Command::SaveWorld { path: path.clone() });
+        let s = wait_for(&t, |s| !s.notices.is_empty());
+        assert_eq!(s.notices, vec!["Game saved: test".to_string()]);
+        t.send(Command::LoadWorld { path: path.clone() });
+        let s = wait_for(&t, |s| !s.notices.is_empty());
+        assert_eq!(s.notices, vec!["Game loaded: test".to_string()]);
+        t.send(Command::LoadWorld { path: dir.join("missing.dfworld") });
+        let s = wait_for(&t, |s| !s.notices.is_empty());
+        assert!(s.notices[0].starts_with("Load failed"), "{:?}", s.notices);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

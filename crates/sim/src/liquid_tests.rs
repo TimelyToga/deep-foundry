@@ -39,7 +39,7 @@ fn content() -> Arc<Content> {
 fn scene(name: &'static str, width_chunks: i32, height_chunks: i32, liquids: &[&str]) -> Scene {
     let content = content();
     let kept = liquids.iter().map(|n| content.expect_material(n)).collect::<Vec<_>>();
-    let sim = Simulation::new(content, SimConfig { width_chunks, height_chunks, seed: 4, bedrock_border: true });
+    let sim = Simulation::new(content, SimConfig::finite(width_chunks, height_chunks, 4));
     Scene { name, sim, added: vec![0; kept.len()], kept, pour: None, sheet: vec![] }
 }
 
@@ -72,7 +72,8 @@ impl Scene {
 
     /// Total of a kept material: cells in the world plus material particles.
     fn total(&self, m: MaterialId) -> usize {
-        let cells: usize = self.sim.world.chunks.iter().flatten().map(|c| c.mat.iter().filter(|&&v| v == m.0).count()).sum();
+        let world = &self.sim.world;
+        let cells: usize = world.loaded_chunks().filter_map(|p| world.chunk(p)).map(|c| c.mat.iter().filter(|&&v| v == m.0).count()).sum();
         cells + self.sim.particles().count_material(m)
     }
 
@@ -439,7 +440,7 @@ fn debug_dam_face() {
     s.sim.tick();
     println!("normal tick: world changed {}", hash != s.sim.world_hash());
     let before = s.sim.world_hash();
-    for c in s.sim.world.chunks.iter_mut().flatten() { c.dirty = chunk::LocalRect::FULL; }
+    wake_all(&mut s.sim);
     s.sim.tick();
     println!("after waking all: world changed {} awake {}", before != s.sim.world_hash(), s.sim.stats().awake_chunks);
     let x0: i32 = std::env::var("X").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
@@ -480,7 +481,7 @@ fn debug_ball_end() {
     let mut s = ball_scene(192);
     let out = s.run(3000, None);
     println!("{out:?}");
-    for c in s.sim.world.chunks.iter_mut().flatten() { c.dirty = chunk::LocalRect::FULL; }
+    wake_all(&mut s.sim);
     let hsh = s.sim.world_hash();
     let snap: Vec<u16> = (0..384).flat_map(|x| (240..254).map(move |y| (x, y))).map(|(x, y)| s.sim.cell(CellPos::new(x, y)).material.0).collect();
     for _ in 0..4 { s.sim.tick(); println!("awake {}", s.sim.stats().awake_chunks); }
@@ -531,6 +532,17 @@ fn debug_pool() {
         if t % 200 == 0 {
             let prof: Vec<String> = s.surface(2, 510, 100, &[water]).iter().step_by(16).map(|v| format!("{}", 382 - v.unwrap_or(382))).collect();
             println!("tick {t} awake {} p {} heights {}", s.sim.stats().awake_chunks, s.sim.particles().len(), prof.join(" "));
+        }
+    }
+}
+
+/// Mark every loaded chunk for a full update in the next tick (for debugging sleep problems).
+#[cfg(test)]
+fn wake_all(sim: &mut Simulation) {
+    let all: Vec<ChunkPos> = sim.world.loaded_chunks().collect();
+    for p in all {
+        if let Some(c) = sim.world.chunk_mut(p) {
+            c.dirty = chunk::LocalRect::FULL;
         }
     }
 }

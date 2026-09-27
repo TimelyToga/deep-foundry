@@ -13,7 +13,7 @@ struct Frame {
     view_offset: vec2<f32>,
     // The world cell at world texture texel (0, 0).
     target_origin: vec2<i32>,
-    // World size in cells.
+    // World size in cells. Width 0: no limit to the left and right.
     world_cells: vec2<f32>,
     // World position (in cells) of the top-left corner of the screen.
     view_top_left: vec2<f32>,

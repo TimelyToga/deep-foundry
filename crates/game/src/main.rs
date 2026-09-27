@@ -8,9 +8,12 @@
 mod app;
 mod args;
 mod controls;
+mod debug_panel;
 mod demo;
+mod saves;
 mod screenshot;
 mod sim_thread;
+mod smoke;
 mod ui;
 
 use anyhow::Result;

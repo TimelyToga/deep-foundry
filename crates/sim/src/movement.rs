@@ -17,8 +17,8 @@ const MAX_FLOW: i32 = 16;
 /// How far a surface liquid cell looks to the side for a place to fall.
 /// Must stay below `MAX_CELL_MOVE` (the parallel reach rule).
 const LOOK_AHEAD: i32 = 31;
-/// The level pass looks at most this far along a liquid surface.
-const MAX_LEVEL_SCAN: i32 = 4096;
+/// The level pass looks at most this far (cells) along a liquid surface.
+pub const MAX_LEVEL_SCAN: i32 = 1024;
 
 /// Try to move the cell. Returns true if it moved.
 #[inline]

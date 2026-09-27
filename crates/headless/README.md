@@ -83,6 +83,11 @@ The benchmark worlds are made in code in `src/bench.rs`. Only `Simulation::tick`
 | `pile_collapse` | 16 × 16 chunks. A sand column 200 cells wide and 958 cells tall falls into a pile. |
 | `settled_world` | 64 × 32 chunks. Stone ground, a flat sand layer and closed water caves. Only one sand cell per tick moves. This shows the cost of chunks where nothing moves. |
 | `mixed` | 64 × 32 chunks. All of the above in one world. About 1,500 chunks with material. |
+| `infinite_work` | A world with no side limit. The view shows 40 × 25 chunks of falling sand and water (about 1,000 awake chunks at the start). |
+| `infinite_explored` | As `infinite_work`, plus 100,000 changed chunks far away (packed in memory). Its tick time must be the same as `infinite_work`: the cost of a tick must not depend on the size of the world. |
+| `infinite_walk` | A world with no side limit. A view of 28 × 16 chunks moves one chunk to the right each tick, so about 16 new chunks are made each tick. Every 32 ticks a hole is dug and sand and water fall in. |
+
+Scenes and the first six benchmarks use a finite box world (`SimConfig::finite`). For an infinite world, `size_cells()` returns width 0, and "with mat" shows the chunks with cells in memory.
 
 `bench/baseline.ron` records the machine that made it. Numbers from different machines do not compare well: save a new baseline on your machine before you use `--compare`. Other programs that use the CPU (for example other builds) make the numbers slower. Save and compare baselines when the machine is quiet.
 
