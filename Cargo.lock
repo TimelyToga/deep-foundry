@@ -563,6 +563,7 @@ dependencies = [
  "foundry_core",
  "foundry_render",
  "foundry_sim",
+ "foundry_ui",
  "glam",
  "image",
  "log",

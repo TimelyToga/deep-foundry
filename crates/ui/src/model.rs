@@ -56,6 +56,31 @@ pub struct UiModel {
     pub fps: f32,
     /// A short line of text at the top center, for example "Game saved". Empty for none.
     pub message: String,
+    /// `Some` in the sandbox mode: every material is in the inventory with no limit, and the
+    /// stack in the hand is the paint brush. There is no crafting.
+    pub sandbox: Option<SandboxView>,
+    /// Performance numbers. When `Some`, the HUD shows them in a small box at the top right.
+    pub perf: Option<PerfView>,
+}
+
+/// The sandbox mode (like the Factorio cheat mode).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SandboxView {
+    /// Radius of the paint brush in cells.
+    pub brush_radius: u16,
+    /// The simulation is paused (with the pause key, not the pause menu).
+    pub sim_paused: bool,
+}
+
+/// Performance numbers for the HUD.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PerfView {
+    pub fps: f32,
+    /// Time of one simulation tick in milliseconds.
+    pub tick_ms: f32,
+    pub ticks_per_second: f32,
+    pub awake_chunks: u32,
+    pub loaded_chunks: u32,
 }
 
 impl UiModel {
@@ -76,6 +101,8 @@ impl UiModel {
             settings: Settings::default(),
             fps: 0.0,
             message: String::new(),
+            sandbox: None,
+            perf: None,
         }
     }
 
@@ -484,14 +511,43 @@ pub struct Settings {
     pub ui_scale: f32,
     pub vsync: bool,
     pub show_fps: bool,
+    /// Show the debug panel (key F3).
+    pub show_debug: bool,
+    /// Number settings of the simulation (for example the liquid rules). The settings screen
+    /// shows one slider for each, in the "Simulation" section. Empty: the section says so.
+    pub simulation: Vec<SimSetting>,
     /// (action, key) pairs. Read only for now.
     pub key_bindings: Vec<(String, String)>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { ui_scale: 1.0, vsync: true, show_fps: false, key_bindings: default_key_bindings() }
+        Self {
+            ui_scale: 1.0,
+            vsync: true,
+            show_fps: false,
+            show_debug: false,
+            simulation: vec![],
+            key_bindings: default_key_bindings(),
+        }
     }
+}
+
+/// One number setting of the simulation. The UI sends
+/// `UiAction::ChangeSetting(SettingChange::Simulation { key, value })` when the player moves the slider.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimSetting {
+    /// The name the game uses, for example "liquid_spread".
+    pub key: String,
+    /// The name shown to the player, for example "Liquid spread".
+    pub label: String,
+    /// One short sentence about what it does.
+    pub help: String,
+    pub value: f32,
+    pub min: f32,
+    pub max: f32,
+    /// Round the value to steps of this size (0: no rounding).
+    pub step: f32,
 }
 
 /// The keys of the game, for the settings screen.

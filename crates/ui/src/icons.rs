@@ -26,6 +26,8 @@ pub enum IconShape {
     Gas,
     Block,
     Flame,
+    /// Air: painting air erases.
+    Eraser,
     // Parts
     Gear,
     Plate,
@@ -103,6 +105,7 @@ pub fn shape_by_name(name: &str) -> Option<IconShape> {
         "gas" => Gas,
         "block" => Block,
         "flame" | "fire" => Flame,
+        "eraser" => Eraser,
         "gear" => Gear,
         "plate" => Plate,
         "ingot" => Ingot,
@@ -218,7 +221,8 @@ pub fn spec_for(content: &Content, item: ItemRef) -> IconSpec {
                 Phase::Liquid => IconShape::Drop,
                 Phase::Gas => IconShape::Gas,
                 Phase::Fire => IconShape::Flame,
-                Phase::Solid | Phase::Empty => IconShape::Block,
+                Phase::Empty => IconShape::Eraser,
+                Phase::Solid => IconShape::Block,
             };
             IconSpec { shape, colors: material_colors(content, m), tier: 0 }
         }
@@ -480,6 +484,7 @@ pub fn draw_icon(spec: &IconSpec) -> Canvas {
         IconShape::Gas => gas(&mut c, &p),
         IconShape::Block => block(&mut c, &p),
         IconShape::Flame => flame_icon(&mut c),
+        IconShape::Eraser => eraser(&mut c),
         IconShape::Gear => gear(&mut c, &p, 15.5, 15.5, 14.0, 10.8, 4.0, 8),
         IconShape::Plate => plate(&mut c, &p),
         IconShape::Ingot => ingot(&mut c, &p),
@@ -636,6 +641,17 @@ fn flame_icon(c: &mut Canvas) {
     flame_shape(c, 16.0, 29.0, 19.0, 7.0, [255, 150, 40, 255]);
     flame_shape(c, 16.0, 29.0, 11.0, 4.0, [255, 238, 150, 255]);
     c.outline(0.4);
+}
+
+fn eraser(c: &mut Canvas) {
+    // A rubber eraser, seen from the side at an angle: a pink end and a light blue sleeve.
+    let pink = [236, 128, 150, 255];
+    let sleeve = [150, 190, 230, 255];
+    c.poly(&[(4.0, 20.0), (16.0, 8.0), (28.0, 18.0), (16.0, 30.0)], sleeve);
+    c.poly(&[(4.0, 20.0), (10.0, 14.0), (22.0, 24.0), (16.0, 30.0)], pink);
+    c.bevel(1.3, 0.7);
+    c.line((10.5, 14.5), (22.5, 24.5), 1.0, [255, 255, 255, 200]);
+    c.outline(0.35);
 }
 
 // ---------------------------------------------------------------- parts
@@ -1253,7 +1269,7 @@ impl IconAtlas {
         // Items with the same spec share one picture.
         let mut by_spec: Vec<(IconSpec, usize)> = vec![];
         let parts = (0..content.factory.parts.len()).map(|i| ItemRef::Part(foundry_core::PartId(i as u16)));
-        for item in content.materials.all().skip(1).map(ItemRef::Material).chain(parts) {
+        for item in content.materials.all().map(ItemRef::Material).chain(parts) {
             let spec = spec_for(content, item);
             let slot = match by_spec.iter().find(|(s, _)| *s == spec) {
                 Some((_, i)) => *i,
@@ -1338,6 +1354,7 @@ mod tests {
             IconShape::Gas,
             IconShape::Block,
             IconShape::Flame,
+            IconShape::Eraser,
             IconShape::Gear,
             IconShape::Plate,
             IconShape::Ingot,

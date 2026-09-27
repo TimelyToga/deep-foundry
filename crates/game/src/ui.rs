@@ -1,217 +1,177 @@
-//! The egui side panel: materials, brush, pause, and the stats (F3).
+//! The game UI: the `foundry_ui` screens with a sandbox model.
+//!
+//! There is no player and no factory yet, so the game runs in the sandbox mode (like the Factorio
+//! cheat mode): the inventory has every material with no limit, the stack in the hand is the paint
+//! brush, and the quickbar holds brush materials.
+//!
+//! `SandboxUi` owns the `UiModel` and applies the sandbox actions (slot clicks, quickbar, hand).
+//! The window code (`app.rs`) handles the world actions (new game, save, load, pause).
 
-use egui::{Color32, CornerRadius, RichText, Stroke};
-use foundry_content::Content;
+use crate::saves;
+use foundry_content::{Content, ItemRef, Stack};
 use foundry_core::MaterialId;
 use foundry_render::wgpu;
+use foundry_ui::{FoundryUi, GameState, SandboxView, SlotRef, UiAction, UiModel};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-/// A material the brush can paint.
-pub struct PaintMaterial {
-    pub id: MaterialId,
-    pub name: String,
-    pub color: Color32,
-}
-
-/// All materials except air and bedrock, in data file order.
-pub fn paint_materials(content: &Content) -> Vec<PaintMaterial> {
-    let mats = &content.materials;
-    mats.all()
-        .filter(|&m| !m.is_air() && mats.ids[m.index()] != "bedrock")
-        .map(|m| {
-            let [r, g, b, a] = mats.colors[m.index()][0];
-            // Show see-through colors over the dark panel color.
-            let bg = [24u8, 26, 32];
-            let mix = |c: u8, d: u8| ((c as u32 * a as u32 + d as u32 * (255 - a as u32)) / 255) as u8;
-            PaintMaterial {
-                id: m,
-                name: mats.names[m.index()].clone(),
-                color: Color32::from_rgb(mix(r, bg[0]), mix(g, bg[1]), mix(b, bg[2])),
-            }
-        })
-        .collect()
-}
-
-/// Numbers for the stats panel.
-#[derive(Debug, Clone, Default)]
-pub struct StatsView {
-    pub fps: f32,
-    pub frame_ms: f32,
-    pub cpu_ms: f32,
-    pub tick: u64,
-    pub tick_ms: f32,
-    pub ticks_per_second: f32,
-    pub awake_chunks: u32,
-    pub loaded_chunks: u32,
-    pub gpu_chunks: u32,
-    pub gpu_capacity: u32,
-    pub drawn_chunks: u32,
-    pub zoom: f32,
-    /// Cell under the mouse.
-    pub cursor: Option<(i32, i32)>,
-}
-
-/// The panel's view of the game state. The panel changes the fields it owns.
-pub struct PanelState<'a> {
-    pub materials: &'a [PaintMaterial],
-    pub selected: &'a mut usize,
-    pub brush_radius: &'a mut u16,
-    pub paused: bool,
-    pub show_stats: bool,
-    pub stats: &'a StatsView,
-}
-
-/// What the player asked for in the panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PanelAction {
-    TogglePause,
-    Step,
-}
-
+/// Largest brush radius in cells.
 pub const MAX_BRUSH: u16 = 40;
-pub const PANEL_WIDTH: f32 = 200.0;
 
-/// Colors, text sizes and spacing for a compact dark look.
-pub fn apply_style(ctx: &egui::Context) {
-    use egui::{FontFamily, FontId, TextStyle};
-    ctx.set_visuals(egui::Visuals::dark());
-    ctx.all_styles_mut(|style| {
-        style.text_styles = [
-            (TextStyle::Heading, FontId::new(14.0, FontFamily::Proportional)),
-            (TextStyle::Body, FontId::new(12.0, FontFamily::Proportional)),
-            (TextStyle::Button, FontId::new(12.0, FontFamily::Proportional)),
-            (TextStyle::Small, FontId::new(10.0, FontFamily::Proportional)),
-            (TextStyle::Monospace, FontId::new(11.0, FontFamily::Monospace)),
-        ]
-        .into();
-        style.spacing.item_spacing = egui::vec2(6.0, 3.0);
-        style.spacing.button_padding = egui::vec2(5.0, 1.0);
-        style.spacing.interact_size.y = 18.0;
-        style.spacing.slider_width = 110.0;
-        let v = &mut style.visuals;
-        v.panel_fill = Color32::from_rgba_unmultiplied(16, 18, 24, 236);
-        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_gray(44));
-        v.selection.bg_fill = Color32::from_rgb(52, 84, 128);
-        v.widgets.inactive.corner_radius = CornerRadius::same(3);
-        v.widgets.hovered.corner_radius = CornerRadius::same(3);
-        v.widgets.active.corner_radius = CornerRadius::same(3);
-    });
+/// The quickbar at the start. The bottom row (keys 1 to 0) has the main materials and air as
+/// the eraser. Ids that the data files do not have are left out.
+const HOTBAR_BOTTOM: [&str; 10] = ["sand", "water", "oil", "lava", "stone", "wood", "fire", "steam", "methane", "air"];
+const HOTBAR_TOP: [&str; 10] =
+    ["dirt", "gravel", "clay", "ice", "snow", "sulfuric_acid", "molten_copper", "charcoal", "raw_coal", "smoke"];
+
+/// How long a message stays on the screen.
+const MESSAGE_TIME: Duration = Duration::from_secs(4);
+
+pub struct SandboxUi {
+    pub ui: FoundryUi,
+    pub model: UiModel,
+    pub saves_dir: PathBuf,
+    message_until: Option<Instant>,
+    /// Every message since the start, for `--smoke-test`.
+    pub message_log: Vec<String>,
 }
 
-pub fn draw(ui: &mut egui::Ui, s: PanelState<'_>, actions: &mut Vec<PanelAction>) {
-    let frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(10, 8));
-    egui::Panel::left("tools").resizable(false).exact_size(PANEL_WIDTH).frame(frame).show(ui, |ui| {
-        egui::ScrollArea::vertical().show(ui, |ui| panel_contents(ui, s, actions));
-    });
-}
-
-fn panel_contents(ui: &mut egui::Ui, s: PanelState<'_>, actions: &mut Vec<PanelAction>) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("DEEP FOUNDRY").heading().strong().color(Color32::from_rgb(230, 180, 110)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (label, color) = if s.paused {
-                ("PAUSED", Color32::from_rgb(240, 190, 80))
-            } else {
-                ("RUNNING", Color32::from_rgb(120, 210, 140))
-            };
-            ui.label(RichText::new(label).small().strong().color(color));
-        });
-    });
-    ui.add_space(4.0);
-
-    section(ui, "MATERIALS");
-    egui::Grid::new("materials").num_columns(2).spacing(egui::vec2(4.0, 2.0)).show(ui, |ui| {
-        for (i, m) in s.materials.iter().enumerate() {
-            let selected = *s.selected == i;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(11.0, 11.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, CornerRadius::same(2), m.color);
-                if selected {
-                    let stroke = Stroke::new(1.0, Color32::WHITE);
-                    ui.painter().rect_stroke(
-                        rect.expand(1.0),
-                        CornerRadius::same(3),
-                        stroke,
-                        egui::StrokeKind::Outside,
-                    );
-                }
-                let text =
-                    if i < 9 { RichText::new(format!("{} {}", i + 1, m.name)) } else { RichText::new(m.name.as_str()) };
-                let button = egui::Button::selectable(selected, text).right_text("").min_size(egui::vec2(72.0, 16.0));
-                if ui.add(button).clicked() {
-                    *s.selected = i;
-                }
-            });
-            if i % 2 == 1 {
-                ui.end_row();
-            }
-        }
-    });
-
-    ui.add_space(6.0);
-    section(ui, "BRUSH");
-    let mut radius = *s.brush_radius as i32;
-    ui.horizontal(|ui| {
-        ui.add(egui::Slider::new(&mut radius, 0..=MAX_BRUSH as i32));
-        ui.label(RichText::new("[ ]").small().weak());
-    });
-    *s.brush_radius = radius as u16;
-    ui.label(RichText::new("Left mouse paints. Right mouse erases.").small().weak());
-
-    ui.add_space(6.0);
-    section(ui, "SIMULATION");
-    ui.horizontal(|ui| {
-        let text = if s.paused { "Resume" } else { "Pause" };
-        if ui.button(text).on_hover_text("Space").clicked() {
-            actions.push(PanelAction::TogglePause);
-        }
-        if ui.add_enabled(s.paused, egui::Button::new("Step")).on_hover_text("Period (.)").clicked() {
-            actions.push(PanelAction::Step);
-        }
-    });
-
-    if s.show_stats {
-        ui.add_space(6.0);
-        section(ui, "STATS (F3)");
-        let st = s.stats;
-        egui::Grid::new("stats").num_columns(2).spacing(egui::vec2(10.0, 1.0)).show(ui, |ui| {
-            let mut row = |name: &str, value: String| {
-                ui.label(RichText::new(name).small().weak());
-                ui.label(RichText::new(value).monospace());
-                ui.end_row();
-            };
-            row("FPS", format!("{:.0}", st.fps));
-            row("frame", format!("{:.2} ms", st.frame_ms));
-            row("CPU / frame", format!("{:.2} ms", st.cpu_ms));
-            row("tick", format!("{}", st.tick));
-            row("tick time", format!("{:.2} ms", st.tick_ms));
-            row("ticks / s", format!("{:.1}", st.ticks_per_second));
-            row("awake chunks", format!("{} / {}", st.awake_chunks, st.loaded_chunks));
-            row("GPU chunks", format!("{} / {}", st.gpu_chunks, st.gpu_capacity));
-            row("drawn chunks", format!("{}", st.drawn_chunks));
-            row("zoom", format!("{:.2}", st.zoom));
-            if let Some((x, y)) = st.cursor {
-                row("cursor", format!("{x}, {y}"));
-            }
-        });
+impl SandboxUi {
+    pub fn new(ctx: &egui::Context, content: Arc<Content>, saves_dir: PathBuf) -> Self {
+        let ui = FoundryUi::new(ctx);
+        let mut model = UiModel::new(content.clone());
+        model.player.inventory = content
+            .materials
+            .all()
+            .filter(|m| content.materials.ids[m.index()] != "bedrock")
+            .map(|m| Some(Stack { item: ItemRef::Material(m), count: 1 }))
+            .collect();
+        let slot = |id: &str| content.material(id).map(ItemRef::Material);
+        model.player.hotbar = HOTBAR_BOTTOM.iter().chain(HOTBAR_TOP.iter()).map(|id| slot(id)).collect();
+        model.player.selected_hotbar = Some(0);
+        model.player.hand = model.player.hotbar[0].map(|item| Stack { item, count: 1 });
+        model.player.craft_speed = 1.0;
+        model.sandbox = Some(SandboxView { brush_radius: 6, sim_paused: false });
+        model.settings.show_fps = true;
+        model.settings.key_bindings = key_bindings();
+        model.saves = saves::list(&saves_dir);
+        Self { ui, model, saves_dir, message_until: None, message_log: Vec::new() }
     }
 
-    ui.add_space(8.0);
-    section(ui, "KEYS");
-    ui.label(
-        RichText::new("WASD, arrows, middle drag: move\nWheel: zoom    1-9: material\nSpace: pause    Period: step\n[ ]: brush size    F3: stats")
-            .small()
-            .weak(),
-    );
+    /// The material that the brush paints: the material in the hand.
+    pub fn brush_material(&self) -> Option<MaterialId> {
+        match self.model.player.hand?.item {
+            ItemRef::Material(m) => Some(m),
+            ItemRef::Part(_) => None,
+        }
+    }
+
+    pub fn brush_radius(&self) -> u16 {
+        self.model.sandbox.map_or(6, |s| s.brush_radius)
+    }
+
+    pub fn set_brush_radius(&mut self, r: u16) {
+        if let Some(s) = self.model.sandbox.as_mut() {
+            s.brush_radius = r.min(MAX_BRUSH);
+        }
+    }
+
+    pub fn state(&self) -> GameState {
+        self.model.state
+    }
+
+    /// Show a short message at the top of the screen.
+    pub fn message(&mut self, text: impl Into<String>, now: Instant) {
+        self.model.message = text.into();
+        self.message_log.push(self.model.message.clone());
+        self.message_until = Some(now + MESSAGE_TIME);
+    }
+
+    /// Remove the message when its time is over.
+    pub fn update_message(&mut self, now: Instant) {
+        if self.message_until.is_some_and(|t| now >= t) {
+            self.model.message.clear();
+            self.message_until = None;
+        }
+    }
+
+    /// Read the save folder again.
+    pub fn refresh_saves(&mut self) {
+        self.model.saves = saves::list(&self.saves_dir);
+    }
+
+    /// Apply the actions that change only the sandbox hand and quickbar.
+    /// Returns false for actions the window code must handle.
+    pub fn sandbox_action(&mut self, action: &UiAction) -> bool {
+        let p = &mut self.model.player;
+        match *action {
+            UiAction::ClickSlot { slot: SlotRef::Inventory(i), .. } => {
+                // The stacks have no limit: a click puts the material in the hand, and the
+                // inventory does not change.
+                if let Some(Some(stack)) = p.inventory.get(i) {
+                    p.hand = Some(Stack { item: stack.item, count: 1 });
+                    p.selected_hotbar = p.hotbar.iter().position(|h| *h == Some(stack.item));
+                }
+                true
+            }
+            UiAction::ClickSlot { .. } => true,
+            UiAction::SelectHotbar(i) => {
+                if let Some(Some(item)) = p.hotbar.get(i) {
+                    p.hand = Some(Stack { item: *item, count: 1 });
+                    p.selected_hotbar = Some(i);
+                }
+                true
+            }
+            UiAction::SetHotbar { index, item } => {
+                if let Some(slot) = p.hotbar.get_mut(index) {
+                    *slot = item;
+                    if item.is_some() && item == p.hand.map(|h| h.item) {
+                        p.selected_hotbar = Some(index);
+                    } else if p.selected_hotbar == Some(index) && item.is_none() {
+                        p.selected_hotbar = None;
+                    }
+                }
+                true
+            }
+            UiAction::ClearHand => {
+                p.hand = None;
+                p.selected_hotbar = None;
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
-fn section(ui: &mut egui::Ui, title: &str) {
-    ui.label(RichText::new(title).small().strong().color(Color32::from_gray(150)));
-    ui.separator();
+/// The keys of the sandbox, for the settings screen.
+fn key_bindings() -> Vec<(String, String)> {
+    [
+        ("Paint with the material in the hand", "Left mouse"),
+        ("Erase (paint air)", "Right mouse"),
+        ("Brush size", "[  and  ]"),
+        ("Materials window", "E"),
+        ("Quickbar slot 1-10", "1 - 0"),
+        ("Quickbar slot 11-20", "Shift + 1 - 0"),
+        ("Empty the hand", "Q"),
+        ("Move the view", "W A S D, arrow keys"),
+        ("Move the view faster", "Shift"),
+        ("Move the view with the mouse", "Middle mouse drag"),
+        ("Zoom", "Mouse wheel"),
+        ("Pause the simulation", "Space"),
+        ("One tick (while paused)", ". (period)"),
+        ("Pause menu / close window", "Esc"),
+        ("Debug panel", "F3"),
+    ]
+    .iter()
+    .map(|(a, k)| (a.to_string(), k.to_string()))
+    .collect()
 }
 
-/// Draw egui on top of `target`. Returns command buffers that must be sent before the encoder's
-/// (they are empty unless egui paint callbacks are used).
+/// Draw egui on top of `target`. With `clear`, fill the target with that color first
+/// (when there is no world under the UI). Returns command buffers that must be sent before the
+/// encoder's (they are empty unless egui paint callbacks are used).
+#[allow(clippy::too_many_arguments)]
 pub fn render_egui(
     renderer: &mut egui_wgpu::Renderer,
     device: &wgpu::Device,
@@ -220,18 +180,60 @@ pub fn render_egui(
     target: &wgpu::TextureView,
     jobs: &[egui::ClippedPrimitive],
     screen: &egui_wgpu::ScreenDescriptor,
+    clear: Option<wgpu::Color>,
 ) -> Vec<wgpu::CommandBuffer> {
     let cmds = renderer.update_buffers(device, queue, encoder, jobs, screen);
+    let load = match clear {
+        Some(c) => wgpu::LoadOp::Clear(c),
+        None => wgpu::LoadOp::Load,
+    };
     let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("egui"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: target,
             depth_slice: None,
             resolve_target: None,
-            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
         })],
         ..Default::default()
     });
     renderer.render(&mut pass.forget_lifetime(), jobs, screen);
     cmds
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sandbox() -> SandboxUi {
+        let ctx = egui::Context::default();
+        let content = Arc::new(Content::load_default().unwrap());
+        SandboxUi::new(&ctx, content, std::env::temp_dir().join("deep-foundry-no-saves-here"))
+    }
+
+    #[test]
+    fn starts_with_sand_in_the_hand_and_air_on_key_0() {
+        let s = sandbox();
+        let c = s.model.content.clone();
+        assert_eq!(s.brush_material(), c.material("sand"));
+        assert_eq!(s.model.player.hotbar[9], Some(ItemRef::Material(MaterialId::AIR)));
+        // Every material except bedrock is in the inventory.
+        assert_eq!(s.model.player.inventory.len(), c.materials.len() - 1);
+    }
+
+    #[test]
+    fn inventory_click_and_quickbar_select_set_the_brush() {
+        let mut s = sandbox();
+        let c = s.model.content.clone();
+        let water = ItemRef::Material(c.expect_material("water"));
+        let i = s.model.player.inventory.iter().position(|x| x.map(|x| x.item) == Some(water)).unwrap();
+        assert!(s.sandbox_action(&UiAction::ClickSlot { slot: SlotRef::Inventory(i), click: foundry_ui::SlotClick::LEFT }));
+        assert_eq!(s.brush_material(), c.material("water"));
+        assert_eq!(s.model.player.selected_hotbar, Some(1));
+        s.sandbox_action(&UiAction::SelectHotbar(9));
+        assert_eq!(s.brush_material(), Some(MaterialId::AIR));
+        s.sandbox_action(&UiAction::ClearHand);
+        assert_eq!(s.brush_material(), None);
+        assert!(!s.sandbox_action(&UiAction::Pause));
+    }
 }

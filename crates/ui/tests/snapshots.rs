@@ -240,6 +240,48 @@ fn settings_dialog() {
 }
 
 #[test]
+fn sandbox_hud() {
+    let mut h = harness(HD, mock::sandbox_model(mock::content()), |_| {});
+    settle(&mut h);
+    h.snapshot_options("sandbox_hud_1920", &options());
+}
+
+#[test]
+fn sandbox_materials_window() {
+    let mut h = harness(HD, mock::sandbox_model(mock::content()), |ui| ui.open_window(WindowKind::Character));
+    settle(&mut h);
+    h.get_by_label("Water").hover();
+    settle(&mut h);
+    h.snapshot_options("sandbox_materials_1920", &options());
+}
+
+#[test]
+fn sandbox_click_puts_material_in_hand_action() {
+    let model = mock::sandbox_model(mock::content());
+    let lava = mock::it(&model.content, "lava");
+    let index = model.player.inventory.iter().position(|s| s.is_some_and(|s| s.item == lava)).unwrap();
+    let mut h = harness(HD, model, |ui| ui.open_window(WindowKind::Character));
+    settle(&mut h);
+    h.get_by_label("Lava").click();
+    settle(&mut h);
+    let want = UiAction::ClickSlot { slot: foundry_ui::SlotRef::Inventory(index), click: foundry_ui::SlotClick::LEFT };
+    assert!(h.state().actions.contains(&want), "{:?}", h.state().actions);
+    // In the sandbox, a click on a full quickbar slot selects it (the hand always holds the brush).
+    h.get_by_label("Quickbar Water").click();
+    settle(&mut h);
+    assert!(h.state().actions.contains(&UiAction::SelectHotbar(1)), "{:?}", h.state().actions);
+}
+
+#[test]
+fn settings_with_simulation_sliders() {
+    let mut model = menu_model(GameState::MainMenu);
+    model.settings.simulation = mock::example_sim_settings();
+    let mut h = harness(HD, model, |ui| ui.open_menu(MenuPage::Settings));
+    settle(&mut h);
+    h.snapshot_options("settings_simulation_1920", &options());
+}
+
+#[test]
 fn large_screen_hud_and_character() {
     let mut h = harness(QHD, playing(), |ui| ui.open_window(WindowKind::Character));
     settle(&mut h);

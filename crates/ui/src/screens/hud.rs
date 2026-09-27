@@ -24,8 +24,44 @@ pub(crate) fn show(cx: &mut Cx, _st: &mut UiState) {
     tank_summary(cx, qb);
     crafting_queue(cx, screen);
     research(cx, screen);
-    entity_info(cx, screen);
+    let top = perf_box(cx, screen);
+    entity_info(cx, screen, top);
     alerts(cx, screen);
+}
+
+/// The performance box at the top right. Returns the y below it.
+fn perf_box(cx: &mut Cx, screen: Rect) -> f32 {
+    let Some(pf) = cx.model.perf else {
+        return if cx.model.settings.show_fps { screen.top() + 30.0 } else { screen.top() + MARGIN };
+    };
+    let width = 300.0;
+    let rect = Rect::from_min_size(pos2(screen.right() - MARGIN - width, screen.top() + MARGIN), vec2(width, 62.0));
+    panel_area(cx.ctx, "perf", rect, |ui| {
+        let p = ui.painter().clone();
+        let inner = rect.shrink(10.0);
+        let cols = [
+            ("FPS", if pf.fps > 0.0 { format!("{:.0}", pf.fps) } else { "-".into() }),
+            ("Tick", format!("{:.2} ms", pf.tick_ms)),
+            ("Ticks/s", if pf.ticks_per_second > 0.0 { format!("{:.0}", pf.ticks_per_second) } else { "-".into() }),
+            ("Awake", format!("{} / {}", pf.awake_chunks, pf.loaded_chunks)),
+        ];
+        let w = inner.width() / cols.len() as f32;
+        for (i, (label, value)) in cols.iter().enumerate() {
+            let x = inner.left() + i as f32 * w;
+            p.text(pos2(x, inner.top()), Align2::LEFT_TOP, *label, font_regular(text::SMALL), color::TEXT_DIM);
+            p.text(pos2(x, inner.top() + 18.0), Align2::LEFT_TOP, value, font_bold(text::BODY), color::TEXT);
+        }
+        if ui.interact(rect, Id::new("hud-perf"), egui::Sense::hover()).hovered() {
+            cx.tip(Tip::Text {
+                title: "Performance".into(),
+                body: "FPS: frames per second of the window. Tick: time of one simulation step. \
+                       Ticks/s: simulation steps per second (60 is full speed). \
+                       Awake: chunks that the simulation updates, of all loaded chunks."
+                    .into(),
+            });
+        }
+    });
+    rect.bottom() + 8.0
 }
 
 /// A HUD panel: the window frame without a title.
@@ -52,71 +88,104 @@ fn quickbar(cx: &mut Cx, screen: Rect) -> Rect {
     let rect = Rect::from_min_size(pos2((screen.center().x - outer.x * 0.5).round(), screen.bottom() - MARGIN - outer.y), outer);
     panel_area(ctx, "quickbar", rect, |ui| {
         let p = ui.painter().clone();
-        let pl = &cx.model.player;
-        // Hull and heat bars.
         let bars = Rect::from_min_size(rect.min + vec2(PANEL_PAD, PANEL_PAD), vec2(outer.x - 2.0 * PANEL_PAD, BARS_H));
-        let half = (bars.width() - 8.0) * 0.5;
-        let hull_r = Rect::from_min_size(bars.min, vec2(half, BARS_H));
-        let heat_r = Rect::from_min_size(bars.min + vec2(half + 8.0, 0.0), vec2(half, BARS_H));
-        let hull_frac = if pl.hull_max > 0.0 { pl.hull / pl.hull_max } else { 0.0 };
-        let hull_color = if hull_frac < 0.3 { color::RED } else { color::HULL };
-        widgets::bar(&p, hull_r, hull_frac, hull_color, Some(&format!("Hull {} / {}", pl.hull.round(), pl.hull_max.round())));
-        let heat_frac = if pl.heat_limit > 0.0 { (pl.temperature / pl.heat_limit).max(0.0) } else { 0.0 };
-        widgets::bar(&p, heat_r, heat_frac, widgets::danger_color(heat_frac), Some(&format!("Heat {} of {}", format::celsius(pl.temperature), format::celsius(pl.heat_limit))));
-        let hull_hover = ui.interact(hull_r, Id::new("hud-hull"), egui::Sense::hover()).hovered();
-        let heat_hover = ui.interact(heat_r, Id::new("hud-heat"), egui::Sense::hover()).hovered();
-        if hull_hover {
-            cx.tip(Tip::Text { title: "Hull".into(), body: "The health of the robot. At 0 the robot is rebuilt at the Hub.".into() });
+        if let Some(sb) = cx.model.sandbox {
+            brush_line(&p, cx.model, bars, sb);
+        } else {
+            hull_and_heat(ui, cx, &p, bars);
         }
-        if heat_hover {
-            cx.tip(Tip::Text {
-                title: "Heat".into(),
-                body: format!("The temperature of the robot. Above {} the robot takes damage.", format::celsius(pl.heat_limit)),
-            });
-        }
-
-        // Slots: the bottom row is slots 1-10 (keys 1-0), the top row is 11-20 (Shift + 1-0).
-        let grid = Rect::from_min_size(pos2(rect.left() + PANEL_PAD, bars.bottom() + 6.0), vec2(grid_w + 4.0, 2.0 * size::SLOT + 4.0));
-        widgets::deep(&p, grid);
-        const KEYS: [&str; 10] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
-        for i in 0..20usize {
-            let (row, col) = if i < 10 { (1, i) } else { (0, i - 10) };
-            let sr = Rect::from_min_size(grid.min + vec2(2.0 + col as f32 * size::SLOT, 2.0 + row as f32 * size::SLOT), Vec2::splat(size::SLOT));
-            let item = pl.hotbar.get(i).copied().flatten();
-            let have = item.map(|it| count_in_inventory(cx.model, it)).unwrap_or(0);
-            let count = item.filter(|_| have > 0).map(|_| format::count(have));
-            let content = SlotContent {
-                item,
-                count: count.as_deref(),
-                label: KEYS.get(i).copied(),
-                selected: pl.selected_hotbar == Some(i),
-                dim: item.is_some() && have == 0,
-                ..Default::default()
-            };
-            let look = if item.is_some() { SlotLook::Normal } else { SlotLook::Dark };
-            let resp = widgets::slot(ui, Id::new(("hotbar", i)), sr, look, &content, cx.atlas);
-            if resp.hovered() {
-                match item {
-                    Some(it) => cx.tip(Tip::Item { item: it, amount: None }),
-                    None => cx.tip(Tip::Text {
-                        title: "Empty quickbar slot".into(),
-                        body: "Hold an item and click here to put it in the quickbar.".into(),
-                    }),
-                }
-            }
-            if resp.clicked() {
-                match pl.hand {
-                    Some(h) => cx.act(UiAction::SetHotbar { index: i, item: Some(h.item) }),
-                    None if item.is_some() => cx.act(UiAction::SelectHotbar(i)),
-                    None => {}
-                }
-            }
-            if resp.secondary_clicked() && item.is_some() {
-                cx.act(UiAction::SetHotbar { index: i, item: None });
-            }
-        }
+        quickbar_slots(ui, cx, &p, rect, bars, grid_w);
     });
     rect
+}
+
+/// The sandbox line above the quickbar: the brush material and size, and the pause state.
+fn brush_line(p: &Painter, model: &UiModel, r: Rect, sb: crate::model::SandboxView) {
+    let name = model.player.hand.map(|h| item::name(&model.content, h.item)).unwrap_or("Nothing in the hand");
+    let left = format!("Brush: {name}, {} cells across", sb.brush_radius * 2 + 1);
+    widgets::text_outlined(p, pos2(r.left() + 2.0, r.center().y), Align2::LEFT_CENTER, &left, font_bold(text::SMALL), color::HEADING);
+    let (right, c) = if sb.sim_paused { ("Simulation paused (Space)", color::YELLOW) } else { ("[ ] size    Q empty hand", color::TEXT_FAINT) };
+    widgets::text_outlined(p, pos2(r.right() - 2.0, r.center().y), Align2::RIGHT_CENTER, right, font_regular(text::SMALL), c);
+}
+
+fn hull_and_heat(ui: &mut Ui, cx: &mut Cx, p: &Painter, bars: Rect) {
+    let pl = &cx.model.player;
+    let half = (bars.width() - 8.0) * 0.5;
+    let hull_r = Rect::from_min_size(bars.min, vec2(half, BARS_H));
+    let heat_r = Rect::from_min_size(bars.min + vec2(half + 8.0, 0.0), vec2(half, BARS_H));
+    let hull_frac = if pl.hull_max > 0.0 { pl.hull / pl.hull_max } else { 0.0 };
+    let hull_color = if hull_frac < 0.3 { color::RED } else { color::HULL };
+    widgets::bar(p, hull_r, hull_frac, hull_color, Some(&format!("Hull {} / {}", pl.hull.round(), pl.hull_max.round())));
+    let heat_frac = if pl.heat_limit > 0.0 { (pl.temperature / pl.heat_limit).max(0.0) } else { 0.0 };
+    let heat_text = format!("Heat {} of {}", format::celsius(pl.temperature), format::celsius(pl.heat_limit));
+    widgets::bar(p, heat_r, heat_frac, widgets::danger_color(heat_frac), Some(&heat_text));
+    let hull_hover = ui.interact(hull_r, Id::new("hud-hull"), egui::Sense::hover()).hovered();
+    let heat_hover = ui.interact(heat_r, Id::new("hud-heat"), egui::Sense::hover()).hovered();
+    if hull_hover {
+        cx.tip(Tip::Text { title: "Hull".into(), body: "The health of the robot. At 0 the robot is rebuilt at the Hub.".into() });
+    }
+    if heat_hover {
+        cx.tip(Tip::Text {
+            title: "Heat".into(),
+            body: format!("The temperature of the robot. Above {} the robot takes damage.", format::celsius(pl.heat_limit)),
+        });
+    }
+}
+
+/// The 20 quickbar slots. The bottom row is slots 1-10 (keys 1-0), the top row is 11-20 (Shift + 1-0).
+fn quickbar_slots(ui: &mut Ui, cx: &mut Cx, p: &Painter, rect: Rect, bars: Rect, grid_w: f32) {
+    let model = cx.model;
+    let pl = &model.player;
+    let sandbox = model.sandbox.is_some();
+    let grid = Rect::from_min_size(pos2(rect.left() + PANEL_PAD, bars.bottom() + 6.0), vec2(grid_w + 4.0, 2.0 * size::SLOT + 4.0));
+    widgets::deep(p, grid);
+    const KEYS: [&str; 10] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
+    for i in 0..20usize {
+        let (row, col) = if i < 10 { (1, i) } else { (0, i - 10) };
+        let sr = Rect::from_min_size(grid.min + vec2(2.0 + col as f32 * size::SLOT, 2.0 + row as f32 * size::SLOT), Vec2::splat(size::SLOT));
+        let item = pl.hotbar.get(i).copied().flatten();
+        // In the sandbox every material has no limit, so there is no count.
+        let have = if sandbox { 1 } else { item.map(|it| count_in_inventory(model, it)).unwrap_or(0) };
+        let count = item.filter(|_| have > 0 && !sandbox).map(|_| format::count(have));
+        let content = SlotContent {
+            item,
+            count: count.as_deref(),
+            label: KEYS.get(i).copied(),
+            selected: pl.selected_hotbar == Some(i),
+            dim: item.is_some() && have == 0,
+            ..Default::default()
+        };
+        let look = if item.is_some() { SlotLook::Normal } else { SlotLook::Dark };
+        let resp = widgets::slot(ui, Id::new(("hotbar", i)), sr, look, &content, cx.atlas);
+        if let Some(it) = item {
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Quickbar {}", item::name(&model.content, it))));
+        }
+        if resp.hovered() {
+            match item {
+                Some(it) if sandbox => cx.tip(Tip::Item {
+                    item: it,
+                    amount: Some("Click: paint with it. Right click: clear the slot.".into()),
+                }),
+                Some(it) => cx.tip(Tip::Item { item: it, amount: None }),
+                None => cx.tip(Tip::Text {
+                    title: "Empty quickbar slot".into(),
+                    body: "Hold an item and click here to put it in the quickbar.".into(),
+                }),
+            }
+        }
+        if resp.clicked() {
+            // In the sandbox the hand always holds the brush, so a click on a full slot selects it.
+            match (pl.hand, item) {
+                (Some(h), None) => cx.act(UiAction::SetHotbar { index: i, item: Some(h.item) }),
+                (Some(h), Some(_)) if !sandbox => cx.act(UiAction::SetHotbar { index: i, item: Some(h.item) }),
+                (_, Some(_)) => cx.act(UiAction::SelectHotbar(i)),
+                (None, None) => {}
+            }
+        }
+        if resp.secondary_clicked() && item.is_some() {
+            cx.act(UiAction::SetHotbar { index: i, item: None });
+        }
+    }
 }
 
 fn tank_summary(cx: &mut Cx, qb: Rect) {
@@ -247,7 +316,7 @@ fn info_line(p: &Painter, y: &mut f32, x: f32, w: f32, label: &str, value: &str,
     *y += 21.0;
 }
 
-fn entity_info(cx: &mut Cx, screen: Rect) {
+fn entity_info(cx: &mut Cx, screen: Rect, top: f32) {
     let Some(hover) = &cx.model.hover else { return };
     let width = 300.0;
     let (lines, has_bar) = match hover {
@@ -256,9 +325,8 @@ fn entity_info(cx: &mut Cx, screen: Rect) {
             (1 + recipe.is_some() as usize + temperature.is_some() as usize + power_w.is_some() as usize, recipe.is_some())
         }
     };
-    let top_offset = if cx.model.settings.show_fps { 30.0 } else { MARGIN };
     let h = 58.0 + lines as f32 * 21.0 + if has_bar { 22.0 } else { 0.0 } + 8.0;
-    let rect = Rect::from_min_size(pos2(screen.right() - MARGIN - width, screen.top() + top_offset), vec2(width, h));
+    let rect = Rect::from_min_size(pos2(screen.right() - MARGIN - width, top), vec2(width, h));
     let model = cx.model;
     let content = &*model.content;
     let atlas = cx.atlas;
@@ -384,7 +452,8 @@ fn alerts(cx: &mut Cx, screen: Rect) {
 /// FPS counter and the message line. Drawn in every game state.
 pub(crate) fn overlay_text(cx: &mut Cx) {
     let screen = cx.ctx.content_rect();
-    let show_fps = cx.model.settings.show_fps;
+    // The performance box shows the FPS when it is on.
+    let show_fps = cx.model.settings.show_fps && cx.model.perf.is_none();
     let msg = &cx.model.message;
     if !show_fps && msg.is_empty() {
         return;

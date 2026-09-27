@@ -14,12 +14,19 @@ OPTIONS:
     --exit-after SECONDS     Quit after this time and print the average FPS and frame time
     --no-vsync               Do not wait for the display refresh (to measure the highest FPS)
     --size WxH               Window size in screen pixels (default 1600x900 points)
+    --saves DIR              Folder for saved games (default: the app data folder of the system)
+    --ui-state STATE         Start in this screen: menu, newgame, load, settings, pause, save,
+                             playing, inventory or debug (default: menu; playing with --exit-after)
+    --ui-scale S             Size of the UI, 0.75 to 2 (default 1)
+    --smoke-test             Play a fixed list of UI actions in the window (new game, paint, pause,
+                             save, load, quit to menu, continue, delete) and quit; exit code 1 on a
+                             failure. Use it with --saves and an empty folder.
     --screenshot OUT.png     Render one image with no window, save it, and quit
       --ticks N              Ticks to run before the screenshot (default 0)
       --size WxH             Image size in pixels (default 1600x900)
       --zoom Z               Screen pixels per cell (default 2)
       --center X,Y           World cell at the image center (default: the middle of the demo area)
-      --ui                   Also draw the side panel
+      --no-ui                Draw only the world, with no UI (default screen: playing)
     -h, --help               Show this text
 ";
 
@@ -36,8 +43,51 @@ pub struct Args {
     pub size: Option<(u32, u32)>,
     pub zoom: Option<f32>,
     pub center: Option<(f64, f64)>,
-    /// Draw the egui panel in the screenshot.
-    pub ui: bool,
+    /// Screenshots: draw only the world.
+    pub no_ui: bool,
+    /// Folder for saves. `None`: the default folder.
+    pub saves: Option<PathBuf>,
+    /// The screen to start in. `None`: the default.
+    pub ui_state: Option<UiState>,
+    pub ui_scale: f32,
+    /// Run the scripted check of the UI flow in the window.
+    pub smoke_test: bool,
+}
+
+/// The screens that `--ui-state` can start in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiState {
+    Menu,
+    NewGame,
+    Load,
+    Settings,
+    Pause,
+    Save,
+    Playing,
+    Inventory,
+    Debug,
+}
+
+impl UiState {
+    fn parse(s: &str) -> Option<UiState> {
+        Some(match s {
+            "menu" => UiState::Menu,
+            "newgame" => UiState::NewGame,
+            "load" => UiState::Load,
+            "settings" => UiState::Settings,
+            "pause" => UiState::Pause,
+            "save" => UiState::Save,
+            "playing" => UiState::Playing,
+            "inventory" => UiState::Inventory,
+            "debug" => UiState::Debug,
+            _ => return None,
+        })
+    }
+
+    /// True for the screens that show a world.
+    pub fn has_world(self) -> bool {
+        matches!(self, UiState::Pause | UiState::Save | UiState::Playing | UiState::Inventory | UiState::Debug)
+    }
 }
 
 impl Default for Args {
@@ -52,7 +102,11 @@ impl Default for Args {
             size: None,
             zoom: None,
             center: None,
-            ui: false,
+            no_ui: false,
+            saves: None,
+            ui_state: None,
+            ui_scale: 1.0,
+            smoke_test: false,
         }
     }
 }
@@ -61,6 +115,12 @@ impl Args {
     /// Size of a screenshot image.
     pub fn image_size(&self) -> (u32, u32) {
         self.size.unwrap_or((1600, 900))
+    }
+
+    /// The screen to start in: `--ui-state`, else the game for `--exit-after` (to measure the
+    /// frame rate of the world), else the main menu.
+    pub fn start_state(&self) -> UiState {
+        self.ui_state.unwrap_or(if self.exit_after.is_some() { UiState::Playing } else { UiState::Menu })
     }
 }
 
@@ -110,7 +170,20 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 }
                 out.zoom = Some(z);
             }
-            "--ui" => out.ui = true,
+            "--no-ui" => out.no_ui = true,
+            "--smoke-test" => out.smoke_test = true,
+            "--saves" => out.saves = Some(PathBuf::from(value("--saves")?)),
+            "--ui-state" => {
+                let v = value("--ui-state")?;
+                out.ui_state = Some(UiState::parse(&v).ok_or_else(|| format!("--ui-state: unknown screen `{v}`"))?);
+            }
+            "--ui-scale" => {
+                let s: f32 = number(&value("--ui-scale")?, "--ui-scale")?;
+                if !(0.75..=2.0).contains(&s) {
+                    return Err("--ui-scale must be 0.75 to 2".into());
+                }
+                out.ui_scale = s;
+            }
             "--center" => out.center = Some(pair::<f64>(&value("--center")?, ',', "--center")?),
             other => return Err(format!("unknown option `{other}`")),
         }
@@ -166,11 +239,24 @@ mod tests {
     }
 
     #[test]
+    fn ui_options() {
+        let a = run(&["--ui-state", "inventory", "--ui-scale", "1.25", "--saves", "s", "--no-ui"]).unwrap();
+        assert_eq!(a.ui_state, Some(UiState::Inventory));
+        assert_eq!(a.ui_scale, 1.25);
+        assert_eq!(a.saves, Some(PathBuf::from("s")));
+        assert!(a.no_ui);
+        assert_eq!(run(&[]).unwrap().start_state(), UiState::Menu);
+        assert_eq!(run(&["--exit-after", "5"]).unwrap().start_state(), UiState::Playing);
+    }
+
+    #[test]
     fn errors() {
         assert!(run(&["--world", "0x4"]).is_err());
         assert!(run(&["--size", "800"]).is_err());
         assert!(run(&["--bogus"]).is_err());
         assert!(run(&["--seed"]).is_err());
+        assert!(run(&["--ui-state", "bogus"]).is_err());
+        assert!(run(&["--ui-scale", "3"]).is_err());
         assert_eq!(parse(["--help".to_string()]), Ok(Parsed::Help));
     }
 }

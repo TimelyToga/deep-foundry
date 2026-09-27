@@ -18,6 +18,8 @@ pub enum ItemKind {
     /// A solid block material, for example stone.
     Solid,
     Fire,
+    /// Air: empty space. Painting it erases.
+    Empty,
     Part,
     Building,
 }
@@ -30,6 +32,7 @@ impl ItemKind {
             ItemKind::Gas => "Gas",
             ItemKind::Solid => "Solid material",
             ItemKind::Fire => "Fire",
+            ItemKind::Empty => "Empty space",
             ItemKind::Part => "Part",
             ItemKind::Building => "Building",
         }
@@ -48,7 +51,8 @@ pub fn kind(content: &Content, item: ItemRef) -> ItemKind {
             Phase::Liquid => ItemKind::Liquid,
             Phase::Gas => ItemKind::Gas,
             Phase::Fire => ItemKind::Fire,
-            Phase::Solid | Phase::Empty => ItemKind::Solid,
+            Phase::Empty => ItemKind::Empty,
+            Phase::Solid => ItemKind::Solid,
         },
         ItemRef::Part(p) => match content.factory.parts.get(p.0 as usize).and_then(|x| x.building) {
             Some(_) => ItemKind::Building,
@@ -100,6 +104,7 @@ pub fn description(content: &Content, item: ItemRef) -> Cow<'_, str> {
             ItemKind::Liquid => "A liquid. It flows and finds its level.",
             ItemKind::Gas => "A gas. It rises or sinks by its density and spreads out.",
             ItemKind::Fire => "Fire. It rises, heats and ignites what it touches.",
+            ItemKind::Empty => "Empty space. Paint with it to erase.",
             _ => "A solid material. It does not move.",
         }),
     }
