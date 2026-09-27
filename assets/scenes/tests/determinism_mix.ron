@@ -1,0 +1,21 @@
+// Many materials move at once. Two runs with the same seed must give the same world.
+// The second run uses a rayon pool with one thread.
+// Picture (96 x 64): open stone box with water at the bottom, and blocks of
+// sand, oil, smoke, steam and lava above it.
+Scene(
+    note: "Same seed, same result: world hashes are compared every 100 ticks.",
+    legend: {
+        "#d9c38c": "sand",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+        "#2a2118": "oil",
+        "#3b3a3e": "smoke",
+        "#e8eef5": (material: "steam", temperature: 300),
+        "#ff5a1a": "lava",
+    },
+    ticks: 600,
+    checks: [
+        Deterministic(every: 100),
+        TotalUnchanged(material: "sand"),
+    ],
+)
