@@ -21,6 +21,15 @@ impl MaterialId {
     }
 }
 
+/// A part: a discrete item such as a gear, a plate or a research kit. Buildings are parts too
+/// (the item you place). Index into the part table of `foundry_content`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PartId(pub u16);
+
+/// A technology in the tech tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TechId(pub u16);
+
 /// A building type (from data). Used from Milestone 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BuildingKindId(pub u16);

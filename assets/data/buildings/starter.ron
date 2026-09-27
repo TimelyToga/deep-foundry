@@ -1,0 +1,43 @@
+// Starter buildings. The full Tier 0-1 list is added by the content task (docs/design/02-content.md section 5).
+[
+    Building(
+        id: "workbench",
+        name: "Workbench",
+        description: "Hand crafting is 2 times faster near it.",
+        kind: "workbench",
+        size: (2, 2),
+        tier: 0,
+        body: "wood_block",
+        crafts: ["hand"],
+        speed: 2.0,
+        params: {"reach": 6.0},
+    ),
+    Building(
+        id: "crucible",
+        name: "Crucible",
+        description: "Holds molten metal. Takes heat from the cells below it. Makes alloys.",
+        kind: "crucible",
+        size: (1, 1),
+        tier: 0,
+        body: "terracotta",
+        max_temp: 1600,
+        ports: [
+            (kind: BulkIn, tile: (0, 0), side: Up),
+            (kind: FluidOut, tile: (0, 0), side: Right, name: Some("Tap")),
+            (kind: Heat, tile: (0, 0), side: Down),
+        ],
+        crafts: ["alloying"],
+        params: {"capacity": 200.0},
+    ),
+    Building(
+        id: "basic_lab",
+        name: "Basic lab",
+        description: "Research with bronze kits.",
+        kind: "lab",
+        size: (2, 2),
+        tier: 0,
+        body: "wood_block",
+        ports: [(kind: PartIn, tile: (0, 0), side: Up)],
+        category: Some("research"),
+    ),
+]

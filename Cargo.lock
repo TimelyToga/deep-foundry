@@ -911,6 +911,8 @@ version = "0.1.0"
 dependencies = [
  "foundry_content",
  "foundry_core",
+ "foundry_sim",
+ "serde",
 ]
 
 [[package]]
