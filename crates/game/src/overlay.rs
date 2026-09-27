@@ -49,6 +49,9 @@ pub fn draw(painter: &Painter, camera: &Camera, ppp: f32, frame: &FactoryFrame, 
     for m in &frame.marks {
         status_mark(painter, &v, m.rect, m.status);
     }
+    for (r, text) in &frame.labels {
+        label(painter, &v, *r, text);
+    }
     if let Some(r) = &frame.robot {
         robot(painter, &v, r, frame);
     }
@@ -170,6 +173,16 @@ fn port_arrow(p: &Painter, v: &View, tx: i32, ty: i32, side: Side, kind: PortKin
     let (px, py) = (-dy * s, dx * s);
     let pts = vec![v.pos(tip.0, tip.1), v.pos(base.0 + px, base.1 + py), v.pos(base.0 - px, base.1 - py)];
     p.add(Shape::convex_polygon(pts, color, Stroke::new(1.0, Color32::from_black_alpha(160))));
+}
+
+/// A name tag over the top middle of a building.
+fn label(p: &Painter, v: &View, r: foundry_core::CellRect, text: &str) {
+    let top = v.pos((r.x0 + r.x1) as f64 * 0.5, r.y0 as f64) - vec2(0.0, 6.0);
+    let font = FontId::proportional(14.0);
+    let galley = p.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE);
+    let bg = Rect::from_center_size(top - vec2(0.0, galley.size().y * 0.5), galley.size() + vec2(12.0, 4.0));
+    p.rect_filled(bg, CornerRadius::same(3), Color32::from_black_alpha(170));
+    p.text(top, Align2::CENTER_BOTTOM, text, font, Color32::from_rgb(255, 214, 140));
 }
 
 /// A round icon with "!" over the top middle of a building that does not work.

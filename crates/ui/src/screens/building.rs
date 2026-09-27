@@ -235,7 +235,10 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
             Rect::from_min_size(pos2(panel.right() - 8.0 - out_size.x, in_grid.bottom() + 6.0 + 20.0), out_size)
         };
         if !b.inputs.is_empty() {
-            p.text(pos2(in_grid.left(), sy + 9.0), Align2::LEFT_CENTER, "Input", font_regular(text::SMALL), color::TEXT_DIM);
+            // Storage and the Hub (no recipe, no outputs, no fuel) hold items: "Contents".
+            let storage = b.recipe.is_none() && b.outputs.is_empty() && b.fuel.is_empty();
+            let label = if storage { "Contents" } else { "Input" };
+            p.text(pos2(in_grid.left(), sy + 9.0), Align2::LEFT_CENTER, label, font_regular(text::SMALL), color::TEXT_DIM);
             slot_grid(ui, cx, b, BuildingSlots::Input, in_grid);
         }
         if !b.outputs.is_empty() {

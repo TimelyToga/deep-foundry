@@ -204,6 +204,8 @@ pub struct FactoryFrame {
     pub marks: Vec<BuildingMark>,
     /// The building placed last and its cells (for tests; later for the build animation).
     pub last_placed: Option<(BuildingKindId, CellRect)>,
+    /// Name tags over buildings in the view (the Hub and its next repair stage).
+    pub labels: Vec<(CellRect, String)>,
     /// Messages for the player.
     pub notices: Vec<String>,
 }
@@ -298,6 +300,11 @@ pub struct FactoryHost {
     digging: bool,
     spraying: bool,
     last_placed: Option<(BuildingKindId, CellRect)>,
+    /// Buildings that were already put on the quickbar once (as in Factorio, a building goes to a
+    /// free quickbar slot the first time the player gets it).
+    on_quickbar: std::collections::BTreeSet<PartId>,
+    /// The last ghost check: the request, its result and the tick of the check.
+    ghost_check: Option<(GhostRequest, Option<String>, u64)>,
 }
 
 impl FactoryHost {
@@ -319,6 +326,44 @@ impl FactoryHost {
             digging: false,
             spraying: false,
             last_placed: None,
+            on_quickbar: Default::default(),
+            ghost_check: None,
+        }
+        .with_quickbar_seen()
+    }
+
+    /// Count the buildings on the quickbar and in the inventory as seen, so a loaded game does not
+    /// put them on the quickbar again.
+    fn with_quickbar_seen(mut self) -> Self {
+        let contents = self.factory.player.contents();
+        let parts = self.hotbar.iter().flatten().copied().chain(contents.iter().map(|s| s.item));
+        let seen: Vec<PartId> = parts
+            .filter_map(|i| match i {
+                ItemRef::Part(p) => Some(p),
+                ItemRef::Material(_) => None,
+            })
+            .collect();
+        self.on_quickbar.extend(seen);
+        self
+    }
+
+    /// Put new buildings from the inventory on a free quickbar slot.
+    fn fill_quickbar(&mut self) {
+        let content = self.factory.content.clone();
+        let mut new = vec![];
+        for s in self.factory.player.slots.iter().flatten() {
+            if content.factory.part_def(s.part).building.is_some() && !self.on_quickbar.contains(&s.part) && !new.contains(&s.part) {
+                new.push(s.part);
+            }
+        }
+        for p in new {
+            self.on_quickbar.insert(p);
+            if self.hotbar.contains(&Some(ItemRef::Part(p))) {
+                continue;
+            }
+            if let Some(slot) = self.hotbar.iter_mut().find(|h| h.is_none()) {
+                *slot = Some(ItemRef::Part(p));
+            }
         }
     }
 
@@ -648,7 +693,15 @@ impl FactoryHost {
     pub fn check_place(&self, kind: BuildingKindId, at: TilePos, rotation: u8, sim: &Simulation) -> Result<(), String> {
         let content = &self.factory.content;
         let Some(def) = content.factory.buildings.get(kind.0 as usize) else { return Err("Unknown building".into()) };
-        self.factory.can_place(kind, at, rotation, false, sim).map_err(|e| e.to_string())?;
+        self.factory.can_place(kind, at, rotation, false, sim).map_err(|e| match e {
+            // The robot cannot dig this material yet: say so, not "dig first".
+            foundry_factory::PlaceError::Blocked { material, name, can_dig: true, .. }
+                if content.materials.hardness[material.index()] > tools::dig_limit(&self.factory) =>
+            {
+                format!("Blocked by {}: too hard to dig with this drill head", name.to_lowercase())
+            }
+            e => e.to_string(),
+        })?;
         let size = if rotation & 1 == 1 { (def.size.1, def.size.0) } else { def.size };
         let r = CellRect::new(
             at.x * TILE_SIZE,
@@ -697,14 +750,26 @@ impl FactoryHost {
         }
     }
 
-    /// The first free place right of the robot for a building (rotation 0), near its feet.
+    /// The first free place right of the robot for a building (rotation 0), near its feet: the
+    /// lowest place where the building fits and its tiles are empty (air or gas).
     pub fn free_place(&self, kind: BuildingKindId, sim: &Simulation) -> Option<TilePos> {
+        let content = &self.factory.content;
         let r = self.robot.rect();
-        let size = self.factory.content.factory.building_def(kind).size;
+        let size = content.factory.building_def(kind).size;
+        let empty = |at: TilePos| {
+            let x0 = at.x * TILE_SIZE;
+            let y0 = at.y * TILE_SIZE;
+            (y0..y0 + size.1 as i32 * TILE_SIZE).all(|y| {
+                (x0..x0 + size.0 as i32 * TILE_SIZE).all(|x| {
+                    let m = sim.cell(CellPos::new(x, y)).material;
+                    matches!(content.materials.phase[m.index()], foundry_content::Phase::Empty | foundry_content::Phase::Gas)
+                })
+            })
+        };
         for dx in 1..12 {
-            for dy in [0, -1, 1, -2, 2] {
+            for dy in (-3..=3).rev() {
                 let at = TilePos::new(r.x1.div_euclid(TILE_SIZE) + dx, r.y1.div_euclid(TILE_SIZE) - size.1 as i32 + dy);
-                if self.check_place(kind, at, 0, sim).is_ok() {
+                if empty(at) && self.check_place(kind, at, 0, sim).is_ok() {
                     return Some(at);
                 }
             }
@@ -801,6 +866,9 @@ impl FactoryHost {
         if self.factory.buildings.now().is_multiple_of(GUIDE_PERIOD) {
             self.guide_due = true;
         }
+        if self.ticks.is_multiple_of(15) {
+            self.fill_quickbar();
+        }
     }
 
     fn scan(&mut self, sim: &Simulation) {
@@ -834,16 +902,22 @@ impl FactoryHost {
         let techs = (self.research_open && tick.is_multiple_of(TECH_PERIOD)).then(|| f.progress.tech_views(&content));
         let guide = self.guide_due.then(|| f.guide_view());
         self.guide_due = false;
+        // The placement check can search many cells (loose cells to push away), so it runs when
+        // the ghost moves and then only a few times per second.
         let ghost = self.input.ghost.map(|g| {
+            let error = match &self.ghost_check {
+                Some((r, e, t)) if *r == g && self.ticks < t + 10 => e.clone(),
+                _ => {
+                    let e = self.check_place(g.kind, g.at, g.rotation, sim).err();
+                    self.ghost_check = Some((g, e.clone(), self.ticks));
+                    e
+                }
+            };
             let def = content.factory.building_def(g.kind);
             let size = if g.rotation & 1 == 1 { (def.size.1, def.size.0) } else { def.size };
-            GhostView {
-                request: g,
-                size,
-                error: self.check_place(g.kind, g.at, g.rotation, sim).err(),
-                ports: f.ghost_ports(g.kind, g.at, g.rotation, false),
-            }
+            GhostView { request: g, size, error, ports: self.factory.ghost_ports(g.kind, g.at, g.rotation, false) }
         });
+        let f = &self.factory;
         let hover = self.building_at(self.input.aim).and_then(|id| {
             let b = f.buildings.get(id)?;
             let v = f.building_view(id)?;
@@ -863,6 +937,18 @@ impl FactoryHost {
             .iter()
             .filter(|(_, b)| b.status.is_problem() && !b.cell_rect().intersect(&view).is_empty())
             .map(|(_, b)| BuildingMark { rect: b.cell_rect(), status: b.status })
+            .collect();
+        let labels = f
+            .buildings
+            .iter()
+            .filter(|(_, b)| content.factory.building_def(b.kind).kind == "hub" && !b.cell_rect().intersect(&view).is_empty())
+            .map(|(_, b)| {
+                let text = match f.progress.next_milestone(&content) {
+                    Some(m) => format!("Hub: needs repair stage {}", m.stage),
+                    None => "Hub".to_string(),
+                };
+                (b.cell_rect(), text)
+            })
             .collect();
         FactoryFrame {
             tick,
@@ -887,6 +973,7 @@ impl FactoryHost {
             hover,
             marks,
             last_placed: self.last_placed,
+            labels,
             notices: std::mem::take(&mut self.notices),
         }
     }

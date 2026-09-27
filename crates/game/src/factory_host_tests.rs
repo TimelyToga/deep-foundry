@@ -131,6 +131,7 @@ fn hand_craft_place_open_and_take_back_a_workbench() {
     assert_eq!(g.frame().crafting.len(), 1);
     g.ticks(4 * 60);
     assert_eq!(g.count(ItemRef::Part(workbench)), 1, "crafted");
+    assert!(g.host.hotbar.contains(&Some(ItemRef::Part(workbench))), "a new building goes on the quickbar");
     assert_eq!(g.count(ItemRef::Material(g.content.expect_material("wood"))), 10);
 
     // A quickbar key takes it into the hand; the ghost is green at a free place.
@@ -172,7 +173,7 @@ fn placing_needs_the_building_in_the_hand_and_reach() {
     assert_eq!(g.host.factory.buildings.count_of(kind), 0);
     assert!(g.frame().notices.iter().any(|n| n.contains("in the hand")));
     g.apply(FactoryCommand::PickToCursor(g.part("crate")));
-    let far = TilePos::new(at.x + 40, at.y);
+    let far = TilePos::new(at.x, at.y - 20);
     assert_eq!(g.host.check_place(kind, far, 0, &g.sim), Err("Too far away".to_string()));
 }
 
