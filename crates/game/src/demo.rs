@@ -1,5 +1,7 @@
 //! The demo world, made by a chunk source: stone ground with gentle hills, a dirt layer, a sand
-//! dune, a water pool, a small lava pocket, gravel patches and a few wooden posts.
+//! dune, a water pool, a small lava pocket, gravel patches, a few wooden posts, and small
+//! deposits of clay, copper ore (malachite) and tin ore (cassiterite in gravel) near the start,
+//! so the Tier 0 loop can be played. World generation (a later task) replaces this.
 //!
 //! The world has no limit to the left and right. The hills go on without end. The pool, dune,
 //! lava pocket, posts and gravel repeat in sections of `SECTION` cells. Each section except the
@@ -42,6 +44,9 @@ struct Materials {
     lava: u16,
     wood: u16,
     bedrock: u16,
+    clay: u16,
+    malachite: u16,
+    cassiterite: u16,
 }
 
 /// An ellipse: center and radii.
@@ -77,6 +82,12 @@ struct Section {
     posts: [i32; 3],
     lava: Ellipse,
     gravel: [Ellipse; 6],
+    /// Clay in the dirt: one patch right of the start, one at the left bank of the pool.
+    clay: [Ellipse; 2],
+    /// Malachite (copper ore) in the dirt, left of the start.
+    malachite: Ellipse,
+    /// A gravel bed with cassiterite (tin ore), right of the start.
+    tin: Ellipse,
 }
 
 /// Sizes of the features in cells.
@@ -109,6 +120,9 @@ impl DemoSource {
             lava: id("lava"),
             wood: id("wood"),
             bedrock: id("bedrock"),
+            clay: id("clay"),
+            malachite: id("malachite"),
+            cassiterite: id("cassiterite"),
         };
         Self { m, surface_y, bottom_y }
     }
@@ -156,7 +170,14 @@ impl DemoSource {
             let cy = self.surface(cx, phases) + 60 + rng.below(256) as i32;
             Ellipse { cx, cy, rx: 12 + rng.below(20) as i32, ry: 6 + rng.below(8) as i32 }
         });
-        Section { pool, water_top, ball, dune, posts, lava, gravel }
+        // Small deposits near the start, a few cells under the ground (in the dirt layer).
+        let deposit = |cx: i32, rx: i32, ry: i32| Ellipse { cx, cy: self.surface(cx, phases) + 4 + ry, rx, ry };
+        // The start is at 0.48 with the Hub there and the robot right of it: clay is in reach of
+        // the robot, malachite is left of the Hub, the tin gravel is before the dune.
+        let clay = [deposit(at(0.497), 12, 5), deposit(pool.0 - 36, 14, 5)];
+        let malachite = deposit(at(0.459), 9, 4);
+        let tin = deposit(at(0.512), 12, 4);
+        Section { pool, water_top, ball, dune, posts, lava, gravel, clay, malachite, tin }
     }
 }
 
@@ -172,6 +193,9 @@ impl ChunkSource for DemoSource {
         let ball = touches(sec.ball.bounds());
         let lava = touches(sec.lava.bounds());
         let gravel: Vec<&Ellipse> = sec.gravel.iter().filter(|g| touches(g.bounds())).collect();
+        let clay: Vec<&Ellipse> = sec.clay.iter().filter(|g| touches(g.bounds())).collect();
+        let malachite = touches(sec.malachite.bounds());
+        let tin = touches(sec.tin.bounds());
 
         for lx in 0..CHUNK_SIZE {
             let x = x0 + lx;
@@ -201,6 +225,15 @@ impl ChunkSource for DemoSource {
                 };
                 if mat == m.stone && gravel.iter().any(|g| g.contains(x, y)) {
                     mat = m.gravel;
+                }
+                if mat == m.dirt || mat == m.stone {
+                    if clay.iter().any(|g| g.contains(x, y)) {
+                        mat = m.clay;
+                    } else if malachite && sec.malachite.contains(x, y) && cell_hash(x, y, cells.seed) % 10 < 7 {
+                        mat = m.malachite;
+                    } else if tin && sec.tin.contains(x, y) {
+                        mat = if cell_hash(x, y, cells.seed) % 10 < 4 { m.cassiterite } else { m.gravel };
+                    }
                 }
                 if x >= sec.pool.0 && x < sec.pool.1 && y >= sec.water_top && y < ground {
                     mat = m.water;
@@ -241,6 +274,16 @@ impl ChunkSource for DemoSource {
     fn settings(&self) -> String {
         format!("surface={} bottom={} section={SECTION}", self.surface_y, self.bottom_y)
     }
+}
+
+/// A number from a cell position and the seed, for patchy deposits.
+fn cell_hash(x: i32, y: i32, seed: u64) -> u64 {
+    let mut h = (x as u32 as u64) << 32 | (y as u32 as u64);
+    h ^= seed.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    h
 }
 
 /// The chunk source of a saved world: the demo source, else a built-in source.
@@ -306,7 +349,7 @@ mod tests {
         let demo = build(content.clone(), Shape::Infinite { depth_chunks: 16 }, 5);
         for s in [0, 1, -3, 700] {
             let r = section_rect(s, demo.sim.size_cells().1);
-            for id in ["stone", "dirt", "sand", "water", "lava", "wood", "bedrock", "gravel"] {
+            for id in ["stone", "dirt", "sand", "water", "lava", "wood", "bedrock", "gravel", "clay", "malachite", "cassiterite"] {
                 let n = demo.sim.count_material(r, content.expect_material(id));
                 assert!(n > 0, "no {id} in section {s}");
             }

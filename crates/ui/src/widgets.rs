@@ -281,6 +281,38 @@ pub fn bar(p: &Painter, r: Rect, frac: f32, fill: Color32, label: Option<&str>) 
     }
 }
 
+/// A small label in a colored box (tier, voltage, research state). `left_center` is the middle of
+/// its left edge. Returns the box.
+pub fn badge(p: &Painter, left_center: Pos2, label: &str, c: Color32) -> Rect {
+    let galley = p.layout_no_wrap(label.to_string(), font_bold(text::SMALL), color::TEXT);
+    let r = Rect::from_min_size(pos2(left_center.x, left_center.y - 10.0), vec2(galley.size().x + 14.0, 20.0));
+    p.rect_filled(r, CornerRadius::same(2), theme::shade(c, 0.45));
+    p.rect_stroke(r, CornerRadius::same(2), Stroke::new(1.0, c), StrokeKind::Inside);
+    p.galley(r.center() - galley.size() * 0.5, galley, color::TEXT);
+    r
+}
+
+/// A check mark in a square of size `r` (done goals, checkboxes).
+pub fn check_mark(p: &Painter, r: Rect, c: Color32) {
+    let s = Stroke::new(3.0, c);
+    let at = |x: f32, y: f32| pos2(r.left() + x * r.width(), r.top() + y * r.height());
+    p.line_segment([at(0.22, 0.5), at(0.42, 0.72)], s);
+    p.line_segment([at(0.42, 0.72), at(0.78, 0.25)], s);
+}
+
+/// The height of a text that wraps at `width`.
+pub fn text_height(ctx: &egui::Context, text: &str, font: FontId, width: f32) -> f32 {
+    ctx.fonts_mut(|f| f.layout(text.to_string(), font, Color32::WHITE, width).size().y)
+}
+
+/// Draw a text that wraps at `width`, with its top left at `pos`. Returns its rectangle.
+pub fn wrapped(p: &Painter, pos: Pos2, text: &str, font: FontId, c: Color32, width: f32) -> Rect {
+    let galley = p.layout(text.to_string(), font, c, width);
+    let r = Rect::from_min_size(pos, galley.size());
+    p.galley(pos, galley, c);
+    r
+}
+
 /// A bar whose color goes from green to yellow to red as it fills (temperature, load).
 pub fn danger_color(frac: f32) -> Color32 {
     if frac < 0.6 {

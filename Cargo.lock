@@ -561,6 +561,7 @@ dependencies = [
  "env_logger",
  "foundry_content",
  "foundry_core",
+ "foundry_factory",
  "foundry_render",
  "foundry_sim",
  "foundry_ui",
@@ -568,6 +569,8 @@ dependencies = [
  "image",
  "log",
  "pollster",
+ "ron",
+ "serde",
  "spin_sleep",
  "winit",
 ]

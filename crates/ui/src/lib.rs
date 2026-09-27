@@ -26,7 +26,7 @@ pub mod widgets;
 
 mod screens;
 
-pub use action::{ClickButton, SettingChange, SlotClick, SlotRef, UiAction, WindowKind, WorldSize};
+pub use action::{ClickButton, GameMode, SettingChange, SlotClick, SlotRef, UiAction, WindowKind, WorldSize};
 pub use foundry_content::{ItemRef, Stack};
 pub use item::{CraftGroup, ItemKind, Maker};
 pub use model::*;
@@ -66,6 +66,7 @@ pub(crate) struct MenuState {
     pub confirm: Option<Confirm>,
     pub seed_text: String,
     pub world_size: WorldSize,
+    pub mode: GameMode,
     pub save_name: String,
     pub selected_save: Option<String>,
 }
@@ -73,8 +74,6 @@ pub(crate) struct MenuState {
 /// The state that belongs to the UI (not to the game).
 #[derive(Debug, Clone)]
 pub(crate) struct UiState {
-    pub character_open: bool,
-    pub production_open: bool,
     /// Open windows, the top one last. Esc closes the last one.
     pub stack: Vec<WindowKind>,
     /// How far the player moved each window from its default place.
@@ -97,8 +96,6 @@ pub(crate) struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            character_open: false,
-            production_open: false,
             stack: vec![],
             offsets: HashMap::new(),
             craft_tab: CraftGroup::Intermediate,
@@ -115,36 +112,42 @@ impl Default for UiState {
     }
 }
 
+/// The windows that replace each other, as in Factorio: only one of them is open at a time.
+/// A building window closes them.
+pub(crate) const MAIN_WINDOWS: [WindowKind; 4] = [WindowKind::Character, WindowKind::Production, WindowKind::Research, WindowKind::Guide];
+
 impl UiState {
-    /// Open a window that the UI owns. The character screen and the statistics replace each
-    /// other, as in Factorio.
-    pub fn open(&mut self, kind: WindowKind) {
-        match kind {
-            WindowKind::Character => {
-                self.character_open = true;
-                self.production_open = false;
-                self.stack.retain(|k| *k != WindowKind::Production);
+    /// Open a window that the UI owns. The main windows (`MAIN_WINDOWS`) replace each other.
+    /// Sends `CloseWindow` for each window that it closes.
+    pub fn open(&mut self, kind: WindowKind, actions: &mut Vec<UiAction>) {
+        if matches!(kind, WindowKind::Building | WindowKind::PowerNetwork) {
+            return;
+        }
+        for other in MAIN_WINDOWS {
+            if other != kind && self.is_open(other) {
+                self.close(other, actions);
             }
-            WindowKind::Production => {
-                self.production_open = true;
-                self.character_open = false;
-                self.stack.retain(|k| *k != WindowKind::Character);
-            }
-            WindowKind::Building | WindowKind::PowerNetwork => return,
         }
         self.raise(kind);
     }
 
     /// Close a window and tell the game.
     pub fn close(&mut self, kind: WindowKind, actions: &mut Vec<UiAction>) {
-        match kind {
-            WindowKind::Character => self.character_open = false,
-            WindowKind::Production => self.production_open = false,
-            WindowKind::Building => self.picker_open = false,
-            WindowKind::PowerNetwork => {}
+        if kind == WindowKind::Building {
+            self.picker_open = false;
         }
         self.stack.retain(|k| *k != kind);
         actions.push(UiAction::CloseWindow(kind));
+    }
+
+    /// Open a window (and send `OpenWindow`), or close it if it is open.
+    pub fn toggle(&mut self, kind: WindowKind, actions: &mut Vec<UiAction>) {
+        if self.is_open(kind) {
+            self.close(kind, actions);
+        } else {
+            self.open(kind, actions);
+            actions.push(UiAction::OpenWindow(kind));
+        }
     }
 
     /// Put a window on top.
@@ -219,10 +222,10 @@ impl FoundryUi {
         std::mem::take(&mut self.actions)
     }
 
-    /// Open a window that the UI owns (`Character` or `Production`).
+    /// Open a window that the UI owns (`Character`, `Production`, `Research` or `Guide`).
     /// `Building` and `PowerNetwork` open when the game fills `UiModel::building` or `UiModel::power`.
     pub fn open_window(&mut self, kind: WindowKind) {
-        self.state.open(kind);
+        self.state.open(kind, &mut self.actions);
     }
 
     /// True if the window is open.
@@ -283,8 +286,6 @@ impl FoundryUi {
             Some(last) if last != model.state => {
                 if model.state == GameState::MainMenu {
                     st.stack.clear();
-                    st.character_open = false;
-                    st.production_open = false;
                     st.picker_open = false;
                 }
                 // A new menu (or the game) starts at its first page.
@@ -298,15 +299,14 @@ impl FoundryUi {
         if building != st.last_building {
             st.picker_open = false;
             if building.is_some() {
-                // As in Factorio: a building window replaces the character screen.
-                for kind in [WindowKind::Character, WindowKind::Production] {
+                // As in Factorio: a building window replaces the character screen and the other
+                // main windows.
+                for kind in MAIN_WINDOWS {
                     if st.stack.contains(&kind) {
                         self.actions.push(UiAction::CloseWindow(kind));
                     }
                 }
-                st.character_open = false;
-                st.production_open = false;
-                st.stack.retain(|k| !matches!(k, WindowKind::Character | WindowKind::Production | WindowKind::Building));
+                st.stack.retain(|k| !MAIN_WINDOWS.contains(k) && *k != WindowKind::Building);
                 st.stack.push(WindowKind::Building);
             } else {
                 st.stack.retain(|k| *k != WindowKind::Building);
@@ -328,12 +328,7 @@ impl FoundryUi {
     }
 
     fn toggle(&mut self, kind: WindowKind) {
-        if self.is_open(kind) {
-            self.close(kind);
-        } else {
-            self.open_window(kind);
-            self.actions.push(UiAction::OpenWindow(kind));
-        }
+        self.state.toggle(kind, &mut self.actions);
     }
 
     fn handle_keys(&mut self, ctx: &egui::Context, model: &UiModel) {
@@ -344,10 +339,13 @@ impl FoundryUi {
         use egui::Key;
         const DIGITS: [Key; 10] =
             [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9, Key::Num0];
-        let (esc, e, p, shift, digit) = ctx.input(|i| {
+        let (esc, e, shift, digit) = ctx.input(|i| {
             let digit = DIGITS.iter().position(|k| i.key_pressed(*k));
-            (i.key_pressed(Key::Escape), i.key_pressed(Key::E), i.key_pressed(Key::P), i.modifiers.shift, digit)
+            (i.key_pressed(Key::Escape), i.key_pressed(Key::E), i.modifiers.shift, digit)
         });
+        // Windows of the normal game. The sandbox has no statistics, research or guide.
+        let normal_keys = [(Key::P, WindowKind::Production), (Key::T, WindowKind::Research), (Key::G, WindowKind::Guide)];
+        let normal: Vec<WindowKind> = ctx.input(|i| normal_keys.iter().filter(|(k, _)| i.key_pressed(*k)).map(|(_, w)| *w).collect());
         match model.state {
             GameState::MainMenu | GameState::Paused => {
                 if esc {
@@ -384,9 +382,10 @@ impl FoundryUi {
                         }
                     }
                 }
-                // The sandbox has no production statistics.
-                if p && model.sandbox.is_none() {
-                    self.toggle(WindowKind::Production);
+                if model.sandbox.is_none() {
+                    for kind in normal {
+                        self.toggle(kind);
+                    }
                 }
                 if let Some(d) = digit {
                     self.actions.push(UiAction::SelectHotbar(d + if shift { 10 } else { 0 }));

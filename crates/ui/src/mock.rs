@@ -6,7 +6,7 @@
 //! - [`model`] invents only the state: inventory, queue, machine state, power numbers, saves.
 //! - [`MockGame`] applies `UiAction`s to the model the way the game will.
 
-use crate::action::{SettingChange, SlotClick, SlotRef, UiAction, WindowKind};
+use crate::action::{GameMode, SettingChange, SlotClick, SlotRef, UiAction, WindowKind};
 use crate::crafting::{Stock, craftable_count};
 use crate::graph::{SAMPLES, TimeSeries};
 use crate::item;
@@ -177,6 +177,7 @@ pub fn steam_assembler_view(c: &Content) -> BuildingView {
         speed: 1.0,
         power: None,
         temperature: Some(96.0),
+        milestone: None,
     }
 }
 
@@ -199,6 +200,7 @@ pub fn boiler_view(c: &Content) -> BuildingView {
         speed: 1.0,
         power: None,
         temperature: Some(212.0),
+        milestone: None,
     }
 }
 
@@ -222,7 +224,137 @@ pub fn electric_furnace_view(c: &Content) -> BuildingView {
         speed: 1.0,
         power: Some(PowerUse { use_w: 7740.0, max_w: 9000.0, voltage: Voltage::Lv, network_voltage: Some(Voltage::Lv), satisfaction: 0.86 }),
         temperature: Some(1140.0),
+        milestone: None,
     }
+}
+
+/// The Hub with its 16 slots, 4 tanks and the first repair stage (from the real milestone data).
+pub fn hub_view(c: &Content) -> BuildingView {
+    let milestone = c.factory.milestones.first().map(|m| {
+        // Delivered so far: all of the first item, some of the second, a few of the rest.
+        let delivered = |i: usize, need: u32| match i {
+            0 => need,
+            1 => need * 3 / 5,
+            _ => need * 9 / 25,
+        };
+        MilestoneView {
+            stage: m.stage,
+            name: m.name.clone(),
+            description: m.description.clone(),
+            items: m.deliver.iter().enumerate().map(|(i, s)| Delivery { item: s.item, delivered: delivered(i, s.count), need: s.count }).collect(),
+        }
+    });
+    let mut inputs = vec![slot(st(c, "bronze_gear", 12), None), slot(st(c, "clay_brick", 36), None), slot(st(c, "tin_plate", 20), None)];
+    inputs.resize(16, BuildingSlot::default());
+    let m = |id: &str| Some(c.expect_material(id));
+    let tank = |i: usize, material, units| MaterialBuffer { label: format!("Tank {i}"), material, units, capacity: 1000, output: false };
+    BuildingView {
+        id: BuildingId { index: 1, generation: 1 },
+        kind: bk(c, "hub"),
+        status: MachineStatus::Idle,
+        status_detail: "Waiting for repair parts.".into(),
+        recipe: None,
+        inputs,
+        outputs: vec![],
+        fuel: vec![],
+        buffers: vec![tank(1, m("clay"), 420), tank(2, m("charcoal"), 150), tank(3, None, 0), tank(4, None, 0)],
+        progress: 0.0,
+        speed: 1.0,
+        power: None,
+        temperature: None,
+        milestone,
+    }
+}
+
+/// The research window entries for all technologies of the content. `finished` are done,
+/// `current` is researched now. The others are available when the technologies they need are
+/// done, their tier is open (tier 0 and 1) and their discoveries are made. Else they are locked,
+/// with the reasons.
+pub fn tech_entries(c: &Content, finished: &[TechId], current: Option<(TechId, f32)>) -> Vec<TechEntry> {
+    let scanned = ["malachite", "cassiterite"];
+    c.factory
+        .techs
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let id = TechId(i as u16);
+            let mut e = TechEntry { id, state: TechState::Available, progress: 0.0, reasons: vec![], queue_position: None };
+            if finished.contains(&id) {
+                e.state = TechState::Done;
+                e.progress = 1.0;
+            } else if let Some((_, p)) = current.filter(|(t, _)| *t == id) {
+                e.state = TechState::Researching;
+                e.progress = p;
+            } else {
+                if t.tier >= 2 {
+                    e.reasons.push(format!("Repair the Hub (stage {}) to open Tier {}.", t.tier, t.tier));
+                }
+                let missing: Vec<&str> =
+                    t.requires.iter().filter(|r| !finished.contains(r)).filter_map(|r| c.factory.techs.get(r.0 as usize)).map(|r| r.name.as_str()).collect();
+                if !missing.is_empty() {
+                    e.reasons.push(format!("Research {} first.", missing.join(" and ")));
+                }
+                let scans: Vec<String> = t.discoveries.iter().filter(|d| !scanned.contains(&d.as_str())).map(|d| item::discovery_name(c, d)).collect();
+                if !scans.is_empty() {
+                    e.reasons.push(format!("Scan {} with F.", scans.join(" and ")));
+                }
+                if !e.reasons.is_empty() {
+                    e.state = TechState::Locked;
+                }
+            }
+            e
+        })
+        .collect()
+}
+
+/// Guide goals, with texts from the real guide data (`assets/data/guide`). Some are done.
+pub fn guide_goals() -> Vec<GuideGoal> {
+    let g = |id: &str, tier: u8, title: &str, text: &str, done: bool, count: Option<(u32, u32)>, reward_points: u32| GuideGoal {
+        id: id.into(),
+        tier,
+        title: title.into(),
+        text: text.into(),
+        done,
+        count,
+        reward_points,
+    };
+    vec![
+        g("t0_dig", 0, "Dig", "Hold the left mouse button to dig. The cells you dig go into your material tank. Dig 100 units of sand.", true, Some((100, 100)), 1),
+        g("t0_clay", 0, "Find clay", "Clay is a brown powder. Look near water and under the dirt. You make bricks from clay. Dig 64 units of clay.", true, Some((64, 64)), 1),
+        g("t0_wood", 0, "Cut a tree", "Dig the trunk of a tree to get wood. Wood is fuel, and your first buildings are made of it. Collect 60 units of wood.", true, Some((60, 60)), 1),
+        g("t0_workbench", 0, "Build a workbench", "Open the crafting menu and make a workbench from 20 wood. Place it. Hand crafting is 2 times faster near a workbench.", true, Some((1, 1)), 1),
+        g("t0_research_bronze", 0, "Research Bronze", "Open the tech tree and research Bronze. It needs scans of copper ore and tin ore.", true, None, 1),
+        g("t0_kits", 0, "Make research kits", "A bronze research kit needs a bronze gear, a clay brick and a tin plate. Put the kits in your labs.", false, Some((6, 10)), 1),
+        g(
+            "t0_hub",
+            0,
+            "Repair the Hub",
+            "The Hub is your landing pod. Open it to see the parts the first repair needs, then deliver them. This opens Tier 1: Steam.",
+            false,
+            None,
+            5,
+        ),
+        g(
+            "t1_steam",
+            1,
+            "Make steam",
+            "Build a small boiler. It burns fuel and turns water into steam. Steam machines take steam from pipes. Do not let a hot boiler run dry: cold water in a dry, hot boiler makes it explode.",
+            true,
+            Some((1, 1)),
+            2,
+        ),
+        g("t1_stone", 1, "Dig into stone", "Research the bronze drill head. With it you can dig stone and go down into the upper stone layer.", false, None, 1),
+        g("t1_coal", 1, "Find coal", "Coal is a black rock in the stone layer. You make coke from it. Dig 200 units of coal.", false, Some((120, 200)), 1),
+        g(
+            "t1_coke_oven",
+            1,
+            "Build a coke oven",
+            "Build a closed room from brick walls with a coke oven controller. Coal that is heated with no air turns into coke. The oven also makes creosote (a liquid) and coal gas.",
+            false,
+            Some((0, 1)),
+            2,
+        ),
+    ]
 }
 
 /// An LV network with some load problems.
@@ -397,6 +529,18 @@ pub fn model(content: Arc<Content>) -> UiModel {
     model.finished_techs = ["bronze", "research", "steam_power", "steam_machines_1", "iron_logistics"].iter().map(|t| tid(c, t)).collect();
     model.hover = Some(HoverView::Cell { pos: CellPos { x: 4133, y: 612 }, material: c.expect_material("raw_malachite"), temperature: 24.0 });
     model.research = Some(ResearchView { tech: tid(c, "steam_machines_2"), progress: 0.62 });
+    model.techs = tech_entries(c, &model.finished_techs, Some((tid(c, "steam_machines_2"), 0.62)));
+    // A technology that started and then stopped, and one in the queue.
+    for e in &mut model.techs {
+        if e.id == tid(c, "bronze_drill_head") {
+            e.progress = 0.3;
+        }
+        if e.id == tid(c, "glass") {
+            e.queue_position = Some(0);
+        }
+    }
+    model.discovery_points = 7;
+    model.guide = guide_goals();
     model.alerts = vec![
         AlertView { id: 1, kind: AlertKind::MachineStopped, text: "Steam crusher stopped: output full".into(), count: 2, pos: Some(CellPos { x: 4200, y: 640 }) },
         AlertView { id: 2, kind: AlertKind::Fire, text: "Fire next to the kiln".into(), count: 1, pos: Some(CellPos { x: 4050, y: 590 }) },
@@ -538,8 +682,23 @@ impl MockGame {
                 }
             }
             UiAction::ShowAlert(id) => md.message = format!("The camera moves to alert {id}."),
-            UiAction::NewGame { seed, size } => {
-                *md = model(content);
+            UiAction::StartResearch(tech) => {
+                let progress = md.techs.iter().find(|e| e.id == tech).map(|e| e.progress).unwrap_or(0.0);
+                md.research = Some(ResearchView { tech, progress });
+                for e in &mut md.techs {
+                    if e.id == tech {
+                        e.state = TechState::Researching;
+                        e.queue_position = None;
+                    } else if e.state == TechState::Researching {
+                        e.state = TechState::Available;
+                    }
+                }
+            }
+            UiAction::NewGame { seed, size, mode } => {
+                *md = match mode {
+                    GameMode::Normal => model(content),
+                    GameMode::Sandbox => sandbox_model(content),
+                };
                 let (w, h) = size.cells();
                 md.message = format!("New world: seed {seed}, {w} × {h} cells.");
             }
@@ -875,6 +1034,27 @@ mod tests {
         assert!(m.recipe_known(rid(&c, "bronze_gear")));
         // Electricity is not researched: its recipes are hidden.
         assert!(!m.recipe_known(rid(&c, "steam_turbine")));
+    }
+
+    #[test]
+    fn mock_research_guide_and_hub() {
+        let c = content();
+        let m = model(c.clone());
+        assert_eq!(m.techs.len(), c.factory.techs.len());
+        for state in [TechState::Done, TechState::Researching, TechState::Available, TechState::Locked] {
+            assert!(m.techs.iter().any(|e| e.state == state), "{state:?}");
+        }
+        assert!(m.techs.iter().filter(|e| e.state == TechState::Locked).all(|e| !e.reasons.is_empty()));
+        assert!(m.guide.iter().any(|g| g.done) && m.guide.iter().any(|g| !g.done));
+        let hub = hub_view(&c);
+        assert_eq!(hub.inputs.len(), 16);
+        assert_eq!(hub.buffers.len(), 4);
+        assert_eq!(hub.milestone.as_ref().map(|m| m.stage), Some(1));
+        let mut g = MockGame::new(c.clone());
+        let drill = tid(&c, "bronze_drill_head");
+        g.apply(UiAction::StartResearch(drill));
+        assert_eq!(g.model.research.as_ref().map(|r| r.tech), Some(drill));
+        assert_eq!(g.model.techs.iter().filter(|e| e.state == TechState::Researching).count(), 1);
     }
 
     #[test]

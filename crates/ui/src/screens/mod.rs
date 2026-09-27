@@ -1,13 +1,16 @@
-//! The screens: HUD, character screen, building window, power window, statistics, menus.
+//! The screens: HUD, character screen, building window, power window, statistics, research,
+//! guide, menus.
 
 pub(crate) mod building;
 pub(crate) mod character;
+pub(crate) mod guide;
 pub(crate) mod hand;
 pub(crate) mod hud;
 pub(crate) mod inventory;
 pub(crate) mod menus;
 pub(crate) mod power;
 pub(crate) mod production;
+pub(crate) mod research;
 
 use crate::action::{UiAction, WindowKind};
 use crate::crafting::Stock;
@@ -61,6 +64,8 @@ pub(crate) fn show_all(cx: &mut Cx, st: &mut UiState) {
                     WindowKind::Building => building::show(cx, st),
                     WindowKind::PowerNetwork => power::show(cx, st),
                     WindowKind::Production => production::show(cx, st),
+                    WindowKind::Research => research::show(cx, st),
+                    WindowKind::Guide => guide::show(cx, st),
                 }
             }
             raise_on_click(cx.ctx, st);
