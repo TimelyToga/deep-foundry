@@ -1,9 +1,24 @@
-// Starter parts. The full Tier 0-1 list is added by the content task (docs/design/02-content.md section 4).
+// Tier 0-1 parts. See docs/design/02-content.md section 4.
+// Materials in this file: bricks are named after the fired part, so the raw block
+// materials are "clay_brick_block" and "firebrick_block" (see assets/data/README.md).
 [
+    // Tier 0
     Part(id: "tin_plate", name: "Tin plate", category: "intermediate", material: Some("tin_block"), units: 16, icon: Some("plate")),
     Part(id: "copper_plate", name: "Copper plate", category: "intermediate", material: Some("copper_block"), units: 16, icon: Some("plate")),
     Part(id: "bronze_plate", name: "Bronze plate", category: "intermediate", material: Some("bronze_block"), units: 16, icon: Some("plate")),
     Part(id: "bronze_gear", name: "Bronze gear", category: "intermediate", material: Some("bronze_block"), units: 48, icon: Some("gear")),
     Part(id: "raw_clay_brick", name: "Raw clay brick", description: "Bake it in a kiln to make a clay brick.", category: "intermediate", material: Some("clay"), units: 16, icon: Some("brick")),
+    Part(id: "clay_brick", name: "Clay brick", description: "A fired brick. Kiln walls, crucibles and molds are made of it.", category: "intermediate", material: Some("clay_brick_block"), units: 16, icon: Some("brick")),
+    Part(id: "raw_firebrick", name: "Raw firebrick", description: "Clay and sand. Bake it hot to make a firebrick.", category: "intermediate", material: Some("clay"), units: 16, icon: Some("brick")),
+    Part(id: "firebrick", name: "Firebrick", description: "A brick that stays strong up to 1800 degrees C. Furnace walls.", category: "intermediate", material: Some("firebrick_block"), units: 16, icon: Some("brick")),
     Part(id: "bronze_kit", name: "Bronze research kit", description: "Research for Tier 0 technologies.", category: "research", stack: 200, icon: Some("kit")),
+
+    // Tier 1
+    Part(id: "bronze_pipe_section", name: "Bronze pipe section", description: "48 units of bronze. Boilers and pipes need it.", category: "intermediate", material: Some("bronze_block"), units: 48, icon: Some("pipe")),
+    Part(id: "copper_wire", name: "Copper wire", description: "4 units of copper. Cables and coils.", category: "intermediate", stack: 200, material: Some("copper_block"), units: 4, icon: Some("wire")),
+    Part(id: "steel_plate", name: "Steel plate", description: "16 units of steel in a flat plate.", category: "intermediate", material: Some("steel_block"), units: 16, icon: Some("plate")),
+    Part(id: "glass_pane", name: "Glass pane", description: "16 units of glass. Labs and windows.", category: "intermediate", material: Some("glass"), units: 16, icon: Some("pane")),
+    Part(id: "glass_vial", name: "Glass vial", description: "8 units of glass. Research kits need vials.", category: "intermediate", material: Some("glass"), units: 8, icon: Some("vial")),
+    Part(id: "rubber_sheet", name: "Rubber sheet", description: "16 units of rubber. Insulation and belts.", category: "intermediate", material: Some("rubber"), units: 16, icon: Some("sheet")),
+    Part(id: "steam_kit", name: "Steam research kit", description: "Research for Tier 1 technologies.", category: "research", stack: 200, icon: Some("kit")),
 ]

@@ -1,11 +1,34 @@
-// Starter recipes. Items are (id, count): materials count in units (cells), parts in pieces.
+// Tier 0-1 recipes. Items are (id, count): materials count in units (cells), parts in pieces.
+// See docs/design/02-content.md section 6.
 [
-    Recipe(id: "raw_clay_brick", category: "hand", inputs: [("clay", 16)], outputs: [("raw_clay_brick", 1)], time: 1.0),
-    Recipe(id: "bronze_gear", category: "hand", inputs: [("bronze_plate", 3)], outputs: [("bronze_gear", 1)], time: 2.0),
-    Recipe(id: "bronze_kit", category: "hand", inputs: [("bronze_gear", 1), ("tin_plate", 1), ("raw_clay_brick", 1)], outputs: [("bronze_kit", 1)], time: 5.0),
+    // --- Building recipes: known from the start (no tech unlocks them) ---
     Recipe(id: "workbench", category: "hand", inputs: [("wood", 20)], outputs: [("workbench", 1)], time: 3.0),
     Recipe(id: "crucible", category: "hand", inputs: [("raw_clay_brick", 4)], outputs: [("crucible", 1)], time: 2.0),
-    Recipe(id: "basic_lab", category: "hand", inputs: [("wood", 20), ("copper_plate", 4)], outputs: [("basic_lab", 1)], time: 4.0),
+    Recipe(id: "campfire", category: "hand", inputs: [("wood", 10)], outputs: [("campfire", 1)], time: 1.0),
+    Recipe(id: "wood_wall", category: "hand", inputs: [("wood", 8)], outputs: [("wood_wall", 1)], time: 0.5),
+    Recipe(id: "clay_brick_wall", category: "hand", inputs: [("clay_brick", 2)], outputs: [("clay_brick_wall", 1)], time: 0.5),
+    Recipe(id: "kiln_controller", category: "hand", inputs: [("clay_brick", 8), ("wood", 2)], outputs: [("kiln_controller", 1)], time: 2.0),
+    Recipe(id: "kiln_hatch", category: "hand", inputs: [("clay_brick", 4), ("wood", 2)], outputs: [("kiln_hatch", 1)], time: 1.0),
+    Recipe(id: "bellows", category: "hand", inputs: [("wood", 10), ("tin_plate", 2)], outputs: [("bellows", 1)], time: 2.0),
+    Recipe(id: "plate_mold", category: "hand", inputs: [("clay_brick", 4)], outputs: [("plate_mold", 1)], time: 1.0),
+    Recipe(id: "stamp_mill", category: "hand", inputs: [("wood", 30), ("bronze_gear", 4)], outputs: [("stamp_mill", 1)], time: 4.0),
+    Recipe(id: "sluice", category: "hand", inputs: [("wood", 20)], outputs: [("sluice", 1)], time: 2.0),
+    Recipe(id: "hopper", category: "hand", inputs: [("wood", 6)], outputs: [("hopper", 1)], time: 1.0),
+    Recipe(id: "wood_belt", category: "hand", inputs: [("wood", 4)], outputs: [("wood_belt", 2)], time: 0.5),
+    Recipe(id: "barrel", category: "hand", inputs: [("wood", 8)], outputs: [("barrel", 1)], time: 1.0),
+    Recipe(id: "crate", category: "hand", inputs: [("wood", 8)], outputs: [("crate", 1)], time: 1.0),
+    Recipe(id: "basic_lab", category: "hand", inputs: [("wood", 20), ("copper_plate", 4), ("clay_brick", 4)], outputs: [("basic_lab", 1)], time: 4.0),
+
+    // --- Tier 0 intermediates: known from the start ---
+    Recipe(id: "raw_clay_brick", category: "hand", inputs: [("clay", 16)], outputs: [("raw_clay_brick", 1)], time: 1.0),
+    Recipe(id: "clay_brick", name: Some("Clay brick"), category: "kiln", inputs: [("raw_clay_brick", 1)], outputs: [("clay_brick", 1)], time: 20.0, min_temp: Some(900)),
+    Recipe(id: "raw_firebrick", category: "hand", inputs: [("clay", 12), ("sand", 4)], outputs: [("raw_firebrick", 1)], time: 1.0),
+    Recipe(id: "firebrick", name: Some("Firebrick"), category: "kiln", inputs: [("raw_firebrick", 1)], outputs: [("firebrick", 1)], time: 30.0, min_temp: Some(1200)),
+    Recipe(id: "charcoal", category: "kiln", inputs: [("wood", 32)], outputs: [("charcoal", 24)], byproducts: [(item: "smoke", count: 8, chance: 1.0)], time: 30.0, min_temp: Some(300)),
+    Recipe(id: "tin_plate", category: "casting_plate", inputs: [("molten_tin", 16)], outputs: [("tin_plate", 1)], time: 6.0),
+    Recipe(id: "copper_plate", category: "casting_plate", inputs: [("molten_copper", 16)], outputs: [("copper_plate", 1)], time: 8.0),
+    Recipe(id: "bronze_gear", category: "hand", inputs: [("bronze_plate", 3)], outputs: [("bronze_gear", 1)], time: 2.0),
+    Recipe(id: "bronze_kit", category: "hand", inputs: [("bronze_gear", 1), ("tin_plate", 1), ("raw_clay_brick", 1)], outputs: [("bronze_kit", 1)], time: 5.0),
     Recipe(
         id: "bronze_alloy",
         name: Some("Molten bronze"),
@@ -15,4 +38,78 @@
         time: 4.0,
         min_temp: Some(1000),
     ),
+    Recipe(id: "bronze_plate", category: "casting_plate", inputs: [("molten_bronze", 16)], outputs: [("bronze_plate", 1)], time: 8.0),
+
+    // --- Tier 1: gated by technologies (see tech/starter.ron) ---
+    Recipe(id: "small_boiler", category: "assembling", hand: true, inputs: [("bronze_plate", 10), ("clay_brick", 8), ("bronze_pipe_section", 2)], outputs: [("small_boiler", 1)], time: 5.0),
+    Recipe(id: "bronze_pipe_section", category: "assembling", hand: true, inputs: [("bronze_plate", 3)], outputs: [("bronze_pipe_section", 1)], time: 2.0),
+    Recipe(id: "bronze_pipe", category: "hand", inputs: [("bronze_pipe_section", 1)], outputs: [("bronze_pipe", 1)], time: 0.5),
+    Recipe(id: "steam_crusher", category: "assembling", hand: true, inputs: [("bronze_plate", 8), ("bronze_gear", 4), ("bronze_pipe_section", 2)], outputs: [("steam_crusher", 1)], time: 5.0),
+    Recipe(id: "steam_wire_drawer", category: "assembling", hand: true, inputs: [("bronze_plate", 6), ("bronze_gear", 2), ("bronze_pipe_section", 1)], outputs: [("steam_wire_drawer", 1)], time: 5.0),
+    Recipe(id: "steam_extractor", category: "assembling", hand: true, inputs: [("bronze_plate", 6), ("bronze_pipe_section", 2)], outputs: [("steam_extractor", 1)], time: 5.0),
+    Recipe(id: "steam_press", category: "assembling", hand: true, inputs: [("bronze_plate", 8), ("bronze_gear", 4)], outputs: [("steam_press", 1)], time: 5.0),
+    Recipe(id: "steam_lab", category: "assembling", hand: true, inputs: [("bronze_plate", 10), ("glass_pane", 4), ("bronze_pipe_section", 2)], outputs: [("steam_lab", 1)], time: 5.0),
+    Recipe(id: "copper_wire", category: "wire_drawing", hand: true, inputs: [("copper_plate", 1)], outputs: [("copper_wire", 4)], time: 1.0),
+    Recipe(id: "iron_belt", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("bronze_gear", 1)], outputs: [("iron_belt", 2)], time: 1.0),
+
+    Recipe(id: "crushed_magnetite", category: "crushing", inputs: [("raw_magnetite", 16)], outputs: [("crushed_magnetite", 16)], time: 4.0),
+    Recipe(id: "crushed_hematite", category: "crushing", inputs: [("raw_hematite", 16)], outputs: [("crushed_hematite", 16)], time: 4.0),
+    Recipe(id: "crushed_limestone", category: "crushing", inputs: [("raw_limestone", 16)], outputs: [("crushed_limestone", 16)], time: 4.0),
+    Recipe(id: "crushed_slag", category: "crushing", inputs: [("slag_block", 16)], outputs: [("crushed_slag", 16)], time: 4.0),
+
+    Recipe(id: "firebrick_wall", category: "hand", inputs: [("firebrick", 2)], outputs: [("firebrick_wall", 1)], time: 0.5),
+    Recipe(id: "coke_oven_controller", category: "hand", inputs: [("clay_brick", 8), ("wood", 2)], outputs: [("coke_oven_controller", 1)], time: 2.0),
+    Recipe(id: "coke_oven_hatch", category: "hand", inputs: [("clay_brick", 4), ("wood", 2)], outputs: [("coke_oven_hatch", 1)], time: 1.0),
+    Recipe(
+        id: "coke",
+        category: "coke_oven",
+        inputs: [("raw_coal", 32)],
+        outputs: [("coke", 24)],
+        byproducts: [(item: "creosote", count: 8, chance: 1.0), (item: "coal_gas", count: 4, chance: 1.0)],
+        time: 60.0,
+        min_temp: Some(300),
+    ),
+
+    Recipe(id: "blast_furnace_controller", category: "hand", inputs: [("firebrick", 8), ("wood", 2)], outputs: [("blast_furnace_controller", 1)], time: 3.0),
+    Recipe(id: "blast_furnace_hatch", category: "hand", inputs: [("firebrick", 4), ("wood", 2)], outputs: [("blast_furnace_hatch", 1)], time: 1.5),
+    Recipe(
+        id: "pig_iron_smelting",
+        name: Some("Molten pig iron"),
+        category: "blast_furnace",
+        inputs: [("crushed_magnetite", 16), ("coke", 8), ("crushed_limestone", 4)],
+        outputs: [("molten_pig_iron", 14)],
+        byproducts: [(item: "molten_slag", count: 4, chance: 1.0)],
+        time: 20.0,
+        min_temp: Some(1400),
+    ),
+    Recipe(id: "steel_converter", category: "hand", inputs: [("firebrick", 12), ("bronze_plate", 6)], outputs: [("steel_converter", 1)], time: 4.0),
+    Recipe(
+        id: "steel_converting",
+        name: Some("Molten steel"),
+        category: "steel_converting",
+        inputs: [("molten_pig_iron", 64)],
+        outputs: [("molten_steel", 60)],
+        byproducts: [(item: "slag_block", count: 4, chance: 1.0)],
+        time: 10.0,
+        min_temp: Some(1500),
+    ),
+    Recipe(id: "steel_plate", category: "casting_plate", inputs: [("molten_steel", 16)], outputs: [("steel_plate", 1)], time: 10.0),
+
+    Recipe(id: "pane_mold", category: "hand", inputs: [("clay_brick", 4)], outputs: [("pane_mold", 1)], time: 1.0),
+    Recipe(id: "vial_mold", category: "hand", inputs: [("clay_brick", 4)], outputs: [("vial_mold", 1)], time: 1.0),
+    Recipe(
+        id: "molten_glass",
+        category: "kiln",
+        inputs: [("sand", 16), ("ash", 4)],
+        outputs: [("molten_glass", 16)],
+        time: 10.0,
+        min_temp: Some(1100),
+    ),
+    Recipe(id: "glass_pane", category: "casting_pane", inputs: [("molten_glass", 16)], outputs: [("glass_pane", 1)], time: 6.0),
+    Recipe(id: "glass_vial", category: "casting_vial", inputs: [("molten_glass", 8)], outputs: [("glass_vial", 1)], time: 4.0),
+
+    Recipe(id: "resin", category: "extracting", inputs: [("rubber_wood", 16)], outputs: [("resin", 8)], time: 5.0),
+    Recipe(id: "rubber_sheet", category: "pressing", inputs: [("rubber", 16)], outputs: [("rubber_sheet", 1)], time: 3.0),
+
+    Recipe(id: "steam_kit", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("bronze_pipe_section", 1), ("glass_vial", 1)], outputs: [("steam_kit", 1)], time: 8.0),
 ]
