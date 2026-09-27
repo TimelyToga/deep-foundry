@@ -8,7 +8,7 @@ use egui::{Vec2, vec2};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, SnapshotOptions};
 use foundry_ui::mock;
-use foundry_ui::{FoundryUi, GameState, MenuPage, UiAction, UiModel, WindowKind};
+use foundry_ui::{FoundryUi, GameMode, GameState, MenuPage, UiAction, UiModel, WindowKind};
 
 type Setup = Box<dyn FnOnce(&mut FoundryUi)>;
 
@@ -169,6 +169,52 @@ fn production_statistics() {
     let mut h = harness(HD, playing(), |ui| ui.open_window(WindowKind::Production));
     settle(&mut h);
     h.snapshot_options("production_1920", &options());
+}
+
+#[test]
+fn research_window() {
+    let mut h = harness(HD, playing(), |ui| ui.open_window(WindowKind::Research));
+    settle(&mut h);
+    h.get_all_by_label("Unlocks Small boiler").next().unwrap().hover();
+    settle(&mut h);
+    h.snapshot_options("research_1920", &options());
+}
+
+#[test]
+fn research_window_empty() {
+    let mut model = playing();
+    model.techs.clear();
+    let mut h = harness(HD, model, |ui| ui.open_window(WindowKind::Research));
+    settle(&mut h);
+    h.snapshot_options("research_empty_1920", &options());
+}
+
+#[test]
+fn guide_window() {
+    let mut h = harness(HD, playing(), |ui| ui.open_window(WindowKind::Guide));
+    settle(&mut h);
+    h.snapshot_options("guide_1920", &options());
+}
+
+#[test]
+fn building_hub() {
+    let mut model = playing();
+    model.building = Some(mock::hub_view(&model.content));
+    let mut h = harness(HD, model, |_| {});
+    settle(&mut h);
+    h.snapshot_options("building_hub_1920", &options());
+}
+
+/// With no research, the guide tracker is at the top left. The mouse is on it.
+#[test]
+fn hud_guide_tracker() {
+    let mut model = playing();
+    model.research = None;
+    let mut h = harness(HD, model, |_| {});
+    settle(&mut h);
+    h.get_by_label("Open guide").hover();
+    settle(&mut h);
+    h.snapshot_options("hud_guide_1920", &options());
 }
 
 fn menu_model(state: GameState) -> UiModel {
@@ -362,6 +408,71 @@ fn keys_open_and_close_windows() {
     h.key_press(egui::Key::Num3);
     settle(&mut h);
     assert!(h.state().actions.contains(&UiAction::SelectHotbar(2)));
+}
+
+#[test]
+fn research_and_guide_keys_and_clicks() {
+    let mut h = harness(HD, playing(), |_| {});
+    settle(&mut h);
+    let is_open = |h: &Harness<State>, kind| h.state().ui.as_ref().unwrap().is_open(kind);
+    h.key_press(egui::Key::T);
+    settle(&mut h);
+    assert!(is_open(&h, WindowKind::Research));
+    // The main windows replace each other.
+    h.key_press(egui::Key::G);
+    settle(&mut h);
+    assert!(is_open(&h, WindowKind::Guide) && !is_open(&h, WindowKind::Research));
+    assert!(h.state().actions.contains(&UiAction::CloseWindow(WindowKind::Research)));
+    h.key_press(egui::Key::E);
+    settle(&mut h);
+    assert!(is_open(&h, WindowKind::Character) && !is_open(&h, WindowKind::Guide));
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    // A click on the HUD research box opens the research window.
+    h.get_by_label("Open research").click();
+    settle(&mut h);
+    assert!(is_open(&h, WindowKind::Research));
+    assert!(h.state().actions.contains(&UiAction::OpenWindow(WindowKind::Research)));
+    // The first Research button is the first available technology.
+    h.get_all_by_label("Research").next().unwrap().click();
+    settle(&mut h);
+    let drill = mock::tid(&h.state().model.content, "bronze_drill_head");
+    assert!(h.state().actions.contains(&UiAction::StartResearch(drill)), "{:?}", h.state().actions);
+    // A building window closes the research window.
+    let hub = mock::hub_view(&h.state().model.content);
+    h.state_mut().model.building = Some(hub);
+    settle(&mut h);
+    assert!(!is_open(&h, WindowKind::Research) && is_open(&h, WindowKind::Building));
+}
+
+#[test]
+fn sandbox_has_no_research_or_guide() {
+    let mut h = harness(HD, mock::sandbox_model(mock::content()), |_| {});
+    settle(&mut h);
+    for key in [egui::Key::T, egui::Key::G, egui::Key::P] {
+        h.key_press(key);
+        settle(&mut h);
+    }
+    let ui = h.state().ui.as_ref().unwrap();
+    assert!(!ui.is_open(WindowKind::Research) && !ui.is_open(WindowKind::Guide) && !ui.is_open(WindowKind::Production));
+}
+
+#[test]
+fn new_game_sends_the_mode() {
+    let mut h = harness(HD, menu_model(GameState::MainMenu), |_| {});
+    settle(&mut h);
+    h.get_by_label("New game").click();
+    settle(&mut h);
+    h.get_by_label("Play").click();
+    settle(&mut h);
+    assert!(h.state().actions.iter().any(|a| matches!(a, UiAction::NewGame { mode: GameMode::Normal, .. })), "{:?}", h.state().actions);
+    h.get_by_label("New game").click();
+    settle(&mut h);
+    h.get_by_label("Sandbox").click();
+    settle(&mut h);
+    h.get_by_label("Play").click();
+    settle(&mut h);
+    assert!(h.state().actions.iter().any(|a| matches!(a, UiAction::NewGame { mode: GameMode::Sandbox, .. })), "{:?}", h.state().actions);
 }
 
 #[test]
