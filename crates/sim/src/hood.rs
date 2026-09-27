@@ -13,7 +13,7 @@ use crate::particles::Spawn;
 use crate::react::ReactTable;
 use crate::schedule::PassInput;
 use crate::{SimEvent, SimSettings};
-use crate::chunk::{Chunk, FLAG_PARITY, LocalRect};
+use crate::chunk::{Chunk, FLAG_PARITY, LocalRect, MOTION_SPEED};
 use foundry_content::{MaterialTable, Phase};
 use foundry_core::{CHUNK_MASK, CHUNK_SHIFT, CellPos, MAX_CELL_MOVE, MaterialId, Rng};
 use std::ptr::{addr_of, addr_of_mut};
@@ -44,6 +44,10 @@ pub struct Hood<'a> {
     pub events: Vec<SimEvent>,
     /// New particles (cells that left the grid), added after the pass.
     pub spawns: Vec<Spawn>,
+    /// World positions of liquid cells for the level pass (see `movement::level`).
+    pub levels: Vec<CellPos>,
+    /// World positions of top liquid cells that moved away (see `movement::wake_row_ends`).
+    pub opened: Vec<CellPos>,
 }
 
 impl<'a> Hood<'a> {
@@ -65,6 +69,8 @@ impl<'a> Hood<'a> {
             origin,
             events: Vec::new(),
             spawns: Vec::new(),
+            levels: Vec::new(),
+            opened: Vec::new(),
         }
     }
 
@@ -126,6 +132,17 @@ impl<'a> Hood<'a> {
         }
         // SAFETY: valid pointer (see `new`); element access only.
         MaterialId(unsafe { *addr_of!((*p).mat).cast::<u16>().add(i) })
+    }
+
+    /// True if a cell in row `y` of the center chunk, with x in `x0..x1`, has a fall speed.
+    /// A fast check for the fall pass.
+    #[inline]
+    pub fn center_row_falls(&self, y: i32, x0: i32, x1: i32) -> bool {
+        debug_assert!((0..64).contains(&y) && 0 <= x0 && x1 <= 64);
+        let p = self.ptrs[4];
+        // SAFETY: the center chunk exists (see `new`); the row is in the job's own chunk.
+        let row = unsafe { std::slice::from_raw_parts(addr_of!((*p).motion).cast::<u8>().add((y << CHUNK_SHIFT) as usize), 64) };
+        row[x0 as usize..x1 as usize].iter().fold(0, |a, &m| a | m) & MOTION_SPEED != 0
     }
 
     #[inline(always)]

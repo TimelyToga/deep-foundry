@@ -91,6 +91,11 @@ pub struct MaterialDef {
     /// Liquids: chance (0 to 1) that a cell that lands fast flies off as a droplet.
     #[serde(default)]
     pub splash: f32,
+    /// Liquids: chance (0 to 1) that a cell that can flow sideways waits one tick instead.
+    /// 0 flows every tick (water). A value of 0.5 or more also makes the liquid rest with a
+    /// slope instead of a flat top (lava, mud).
+    #[serde(default)]
+    pub viscosity: f32,
     /// Powders: chance (0 to 1) that a diagonal slide stops. Higher gives steeper piles.
     #[serde(default)]
     pub friction: f32,
