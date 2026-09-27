@@ -733,10 +733,10 @@ impl World {
     }
 
     /// A raw pointer to a live chunk, for the level pass of the movement tick (see `schedule.rs`).
-    /// `Air`: the chunk is all air and has no cells in memory. `Unknown`: outside the world, packed
-    /// or not in memory (the level pass does not look there).
+    /// `Air`: the chunk is all air and has no cells in memory. `Unknown`: outside the world,
+    /// outside every simulation area, packed or not in memory (the level pass does not look there).
     pub(crate) fn raw_chunk(&mut self, c: ChunkPos) -> RawChunk {
-        if !self.chunk_in_bounds(c) {
+        if !self.chunk_in_bounds(c) || !self.areas.simulates(c) {
             return RawChunk::Unknown;
         }
         if let Some(b) = self.live.get_mut(&c) {

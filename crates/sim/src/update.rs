@@ -4,7 +4,6 @@ use crate::chunk::{LocalRect, MOTION_SPEED};
 use crate::hood::Hood;
 use crate::{movement, react};
 use foundry_content::Phase;
-use foundry_core::{CellPos, MaterialId};
 
 /// Update the cells of the center chunk inside `work`: rows from bottom to top.
 pub fn update_chunk(h: &mut Hood, work: LocalRect, left_to_right: bool) {
@@ -40,23 +39,6 @@ pub fn fall_chunk(h: &mut Hood, work: LocalRect, left_to_right: bool) -> bool {
             if matches!(phase, Phase::Powder | Phase::Liquid) {
                 moved |= movement::fall_only(h, x, y, phase);
             }
-        }
-    }
-    moved
-}
-
-/// The level pass for the collected cells of one chunk (world positions, all in the hood's center
-/// chunk). `(p, false)`: a cell that may walk (`movement::level`). `(p, true)`: a place that a
-/// top cell left (`movement::wake_row_ends`). `far` reads the material of any world cell in this
-/// chunk row and the rows next to it. Far cells to update in the next tick go to `wake`.
-/// Returns true if a cell moved.
-pub fn level_cells(h: &mut Hood, cells: &[(CellPos, bool)], far: &impl Fn(i32, i32) -> MaterialId, wake: &mut Vec<CellPos>) -> bool {
-    let mut moved = false;
-    for &(p, opened) in cells {
-        if opened {
-            movement::wake_row_ends(h.mats, p, far, wake);
-        } else {
-            moved |= movement::level(h, p.x - h.origin.x, p.y - h.origin.y, far, wake);
         }
     }
     moved

@@ -36,6 +36,10 @@ pub fn try_move(h: &mut Hood, x: i32, y: i32, m: MaterialId, phase: Phase) -> bo
 /// It touches only cells in its own column. Returns true if it moved.
 #[inline]
 pub fn fall_only(h: &mut Hood, x: i32, y: i32, phase: Phase) -> bool {
+    // A liquid cell that can only sink one cell is handled by the normal passes (see `liquid`).
+    if phase == Phase::Liquid && shallow_hole(h, x, y) {
+        return false;
+    }
     let top = phase == Phase::Liquid && h.mat(x, y - 1).is_air();
     if !fall(h, x, y) {
         return false;
@@ -70,7 +74,8 @@ fn fall(h: &mut Hood, x: i32, y: i32) -> bool {
         return false;
     }
     let motion = h.motion(x, y);
-    let mut speed = ((motion & MOTION_SPEED) + 1).min(MAX_FALL_SPEED);
+    let old = motion & MOTION_SPEED;
+    let mut speed = (old + 1).min(MAX_FALL_SPEED);
     let dist = 1 + (speed as i32) / 4;
     let mut to = y + 1;
     for k in 2..=dist {
@@ -79,6 +84,11 @@ fn fall(h: &mut Hood, x: i32, y: i32) -> bool {
             break;
         }
         to = y + k;
+    }
+    // A cell that only sinks into a hole one cell deep (for example in a column whose bottom cell
+    // was pushed out) does not gain speed, so it does not land hard later.
+    if old <= 1 && to == y + 1 && (!passable(h, h.mat(x, y + 2)) || !h.inside(x, y + 2)) {
+        speed = 1;
     }
     // A one-cell gap to a falling cell below: close it, so a falling body stays in one piece.
     if to == y + dist && passable(h, h.mat(x, to + 1)) && h.inside(x, to + 1) {
@@ -244,12 +254,45 @@ fn liquid(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
         return false;
     }
     let top = h.mat(x, y - 1).is_air();
-    if !(fall(h, x, y) || spread(h, x, y, m)) {
+    // Only a hole one cell deep below: flow down to a side first if possible. So a column of
+    // liquid that stands in the air (for example the end of a falling stream on a pool)
+    // collapses sideways instead of sinking one cell per tick.
+    let moved = if shallow_hole(h, x, y) {
+        down_to_side(h, x, y) || fall(h, x, y)
+    } else {
+        fall(h, x, y) || spread(h, x, y, m)
+    };
+    if !moved {
         return false;
     }
     wake_row(h, x, y);
     opened(h, x, y, top);
     true
+}
+
+/// True if the cell has air (or gas) below, but only one cell deep, on top of a cell that is at
+/// rest (not falling).
+#[inline]
+fn shallow_hole(h: &Hood, x: i32, y: i32) -> bool {
+    if !passable(h, h.mat(x, y + 1)) || !h.inside(x, y + 1) {
+        return false;
+    }
+    let b = h.mat(x, y + 2);
+    !passable(h, b) && !(matches!(h.mats.phase[b.index()], Phase::Powder | Phase::Liquid) && h.motion(x, y + 2) & MOTION_SPEED != 0)
+}
+
+/// Flow down to a side (both cells on that side free), keeping the fall speed. First the side of
+/// the flow direction.
+#[inline]
+fn down_to_side(h: &mut Hood, x: i32, y: i32) -> bool {
+    let dir = if h.motion(x, y) & MOTION_RIGHT != 0 { 1 } else { -1 };
+    for dx in [dir, -dir] {
+        if passable(h, h.mat(x + dx, y + 1)) && passable(h, h.mat(x + dx, y)) && h.inside(x + dx, y + 1) {
+            h.swap(x, y, x + dx, y + 1);
+            return true;
+        }
+    }
+    false
 }
 
 /// How far a liquid cell looks to the side for a place to fall: 4 × flow, at most
@@ -306,10 +349,14 @@ fn impact(h: &mut Hood, x: i32, y: i32, m: MaterialId, speed: u8) -> bool {
         };
         h.set_motion(x, y, flow_bits(dir, energy));
         h.swap(x, y, tx, y);
-        if splash > 0.0 && h.mat(tx, y - 1).is_air() && h.rng.chance(splash) {
-            let vx = dir as f32 * v * (0.3 + 0.4 * h.rng.unit());
-            let vy = -v * (0.25 + 0.35 * h.rng.unit());
-            h.launch(tx, y, vx, vy);
+        // At the rim the cell flies off as a droplet: always if there is air below the rim (it
+        // would only hang in the air), else with the material's `splash` chance. A low, fast
+        // spray outward (a steep one would fly back into the falling liquid).
+        let hangs = passable(h, h.mat(tx, y + 1)) && h.inside(tx, y + 1);
+        if splash > 0.0 && h.mat(tx, y - 1).is_air() && (hangs || h.rng.chance(splash)) {
+            let vx = dir as f32 * v * (0.4 + 0.5 * h.rng.unit());
+            let vy = -v * (0.1 + 0.35 * h.rng.unit());
+            h.launch_from(tx, y, tx, y - 1, vx, vy);
         }
         moved = true;
         if k + 1 == arrivals {
@@ -457,7 +504,11 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
         } else if side.through {
             // The same liquid is next to this cell.
             if let Some(d) = side.rim {
-                if pressed {
+                // A free cell under liquid is a hole: the liquid above it fills it. Pressure does
+                // not push into holes (that only moves the hole around).
+                if pressed && is_liquid(h, x + dir * d, y - 1) {
+                    // Nothing to do this way.
+                } else if pressed {
                     // Pressure pushes to a free cell up to the look-ahead away; a far push happens
                     // only with the chance range / distance, so the speed is about `range`.
                     let range = push_range(liquid_depth(h, x, y), flow);
@@ -475,7 +526,9 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
             let reach = side.drop.map_or(side.free, |d| d.min(side.free));
             if pressed {
                 let d = reach.min(push_range(liquid_depth(h, x, y), flow));
-                go = Some(Move { to: x + dir * d, from_top: true, releases: true });
+                if !is_liquid(h, x + dir * d, y - 1) {
+                    go = Some(Move { to: x + dir * d, from_top: true, releases: true });
+                }
             } else if side.drop.is_some() || energy > 0 {
                 go = Some(Move { to: x + dir * reach, from_top: false, releases: side.drop.is_some() });
             }
@@ -498,8 +551,11 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
                 // Pressure: the top cell of this column goes to the free cell, and the column
                 // gets one cell shorter. (The same as this cell moving and the column sinking, but
                 // the column does not start to fall.)
+                // Deeper water pushes out faster: momentum 1 + depth / 10 (at most 3). A cell that
+                // only fills a hole inside the liquid gets no momentum.
                 let top = column_top(h, x, y, m);
-                h.set_motion(x, top, flow_bits(dir, e.max(1)));
+                let push = if keep > 0 && h.mat(mv.to, y - 1).is_air() { (1 + (y - top) / 10).min(3) as u8 } else { 0 };
+                h.set_motion(x, top, flow_bits(dir, push));
                 h.swap(x, top, mv.to, y);
                 if top != y {
                     wake_row(h, x, top);
@@ -518,115 +574,165 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
     h.set_motion(x, y, flow_bits(dir, 0));
     // A calm top cell near the end of a top row may still have a place to fall farther away than
     // the look-ahead: the level pass looks for it.
-    if levels && on_liquid && !pressed && h.mat(x, y - 1).is_air() && (saw_rim || open_start(h, x, y, 1) || open_start(h, x, y, -1)) {
+    if levels && !passable(h, h.mat(x, y + 1)) && !pressed && h.mat(x, y - 1).is_air() && (saw_rim || open_start(h, x, y, 1) || open_start(h, x, y, -1)) {
         let p = h.world_pos(x, y);
         h.levels.push(p);
     }
     false
 }
 
-/// True if the cell next to (x, y) in direction `dir` is air on top of liquid: the open surface
-/// of a liquid, where a top cell can walk.
+/// True if the cell next to (x, y) in direction `dir` is air on top of a floor, where a top cell
+/// can walk.
 #[inline(always)]
 fn open_start(h: &Hood, x: i32, y: i32, dir: i32) -> bool {
-    h.mat(x + dir, y).is_air() && is_liquid(h, x + dir, y + 1) && h.inside(x + dir, y)
+    h.mat(x + dir, y).is_air() && !passable(h, h.mat(x + dir, y + 1)) && h.inside(x + dir, y)
+}
+
+/// Cell access for the level pass (see `schedule`), in world positions. The job that uses it owns
+/// one row of chunks: it may read the cell rows of that chunk row and one row above and below,
+/// and write the cell rows of its chunk row.
+pub trait LevelCells {
+    fn mats(&self) -> &MaterialTable;
+    /// Material of any cell the job may read. Cells it may not read act as bedrock.
+    fn mat(&self, p: CellPos) -> MaterialId;
+    fn motion(&self, p: CellPos) -> u8;
+    fn set_motion(&mut self, p: CellPos, v: u8);
+    /// True if the job may write the cells of row `y`.
+    fn writes_row(&self, y: i32) -> bool;
+    /// Swap two cells (both in rows the job may write) and update them in the next tick.
+    /// Returns false (and does nothing) if a cell is in a chunk without cells in memory.
+    fn swap(&mut self, a: CellPos, b: CellPos) -> bool;
+    /// Update this far cell in the next tick.
+    fn wake(&mut self, p: CellPos);
+}
+
+/// A liquid that walks in the level pass: phase liquid and viscosity below 0.5.
+#[inline]
+fn levels(mats: &MaterialTable, m: MaterialId) -> bool {
+    mats.phase[m.index()] == Phase::Liquid && mats.viscosity[m.index()] < 0.5
+}
+
+/// A cell that a liquid can rest on: not air, gas or fire.
+#[inline]
+fn floor(mats: &MaterialTable, m: MaterialId) -> bool {
+    !m.is_air() && !matches!(mats.phase[m.index()], Phase::Gas | Phase::Fire)
+}
+
+/// A calm top cell of liquid `m` on a floor: no fall speed, no momentum, air above.
+#[inline]
+fn calm_top(v: &impl LevelCells, p: CellPos, m: MaterialId) -> bool {
+    v.mat(p) == m && v.motion(p) & (MOTION_SPEED | MOTION_MOMENTUM) == 0 && v.mat(p.offset(0, -1)).is_air() && floor(v.mats(), v.mat(p.offset(0, 1)))
+}
+
+/// Distance to the nearest place to fall from `p` in direction `dir` (air on top of air), looking
+/// first through at most `through` cells of liquid `m`, then along the open surface (air on top
+/// of a floor), at most `limit` cells.
+fn find_drop(v: &impl LevelCells, p: CellPos, m: MaterialId, dir: i32, through: i32, limit: i32) -> Option<i32> {
+    let mats = v.mats();
+    let mut in_row = true;
+    for d in 1..=limit {
+        let q = p.offset(dir * d, 0);
+        let t = v.mat(q);
+        if in_row {
+            if t == m && d <= through {
+                continue;
+            }
+            in_row = false;
+        }
+        if !t.is_air() {
+            return None;
+        }
+        if !floor(mats, v.mat(q.offset(0, 1))) {
+            return Some(d);
+        }
+    }
+    None
+}
+
+/// Move a cell from `p` into the place to fall at `q` (one row lower if the job may write it and
+/// it is air). Wakes the far ends of the top row above `p`. Returns true if it moved.
+fn level_move(v: &mut impl LevelCells, p: CellPos, q: CellPos, dir: i32) -> bool {
+    let below = q.offset(0, 1);
+    let to = if v.writes_row(below.y) && v.mat(below).is_air() { below } else { q };
+    let motion = v.motion(p);
+    v.set_motion(p, (motion & !(MOTION_RIGHT | MOTION_MOMENTUM)) | flow_bits(dir, 0));
+    if !v.swap(p, to) {
+        v.set_motion(p, motion);
+        return false;
+    }
+    wake_row_ends(v, p);
+    true
 }
 
 /// The level pass for one cell (see `schedule`): a calm liquid cell on top of liquid, near the end
 /// of a top row, looks along its row on both sides (first through its own row, at most
 /// `LOOK_AHEAD` cells, then along the open surface: air on top of liquid) for the nearest place
-/// to fall (air on top of air), however far away.
-/// - If the place is within the reach of the job, the cell goes there (one row lower if that row
-///   is still in this chunk row).
-/// - Else, if the cell is at the end of its row, it walks along the open surface as far as the
-///   reach allows.
+/// to fall (air on top of air), however far away (at most `MAX_LEVEL_SCAN` cells), and goes there.
+/// If the cell is the end of its row, the cells behind it follow in the same way, up to `flow`
+/// cells in one tick, so a wide low step drains fast. Returns true if a cell moved.
 ///
-/// `far(x, y)` gives the material of a world cell. Returns true if the cell moved.
-///
-/// Every move goes toward a real place to fall, so the liquid still comes to rest; and it rests
+/// Every move goes into a real place to fall, so the liquid still comes to rest; and it rests
 /// flat, because a top row rests only when no place to fall is left on its surface.
-/// The cell leaves a place to fall for the row above. The top cells at the ends of that row may
-/// be asleep and far away, so their world positions are added to `wake`.
-pub fn level(h: &mut Hood, x: i32, y: i32, far: &impl Fn(i32, i32) -> MaterialId, wake: &mut Vec<CellPos>) -> bool {
-    let m = h.mat(x, y);
-    let mi = m.index();
-    if h.mats.phase[mi] != Phase::Liquid || h.mats.viscosity[mi] >= 0.5 {
+pub fn level(v: &mut impl LevelCells, p: CellPos) -> bool {
+    let m = v.mat(p);
+    if !levels(v.mats(), m) || !calm_top(v, p, m) {
         return false;
     }
-    let motion = h.motion(x, y);
-    if motion & (MOTION_SPEED | MOTION_MOMENTUM) != 0 || !h.mat(x, y - 1).is_air() || !is_liquid(h, x, y + 1) {
-        return false;
-    }
-    let p = h.world_pos(x, y);
-    // (direction, distance to the place to fall, true if the first cell is free)
-    let mut best: Option<(i32, i32, bool)> = None;
+    let mut best: Option<(i32, i32)> = None;
     for dir in [1, -1] {
-        let open = open_start(h, x, y, dir);
-        let mut through = !open;
-        for d in 1..=MAX_LEVEL_SCAN {
-            if best.is_some_and(|(_, bd, _)| d >= bd) {
-                break;
-            }
-            let (wx, t) = (p.x + dir * d, far(p.x + dir * d, p.y));
-            if through {
-                if t == m && d < LOOK_AHEAD {
-                    continue;
-                }
-                through = false;
-            }
-            if !t.is_air() {
-                break;
-            }
-            let b = far(wx, p.y + 1);
-            if b.is_air() || matches!(h.mats.phase[b.index()], Phase::Gas | Phase::Fire) {
-                best = Some((dir, d, open));
-                break;
-            }
-            if h.mats.phase[b.index()] != Phase::Liquid {
-                break;
-            }
+        let limit = best.map_or(MAX_LEVEL_SCAN, |(_, d)| d - 1);
+        if let Some(d) = find_drop(v, p, m, dir, LOOK_AHEAD, limit) {
+            best = Some((dir, d));
         }
     }
-    let Some((dir, d, open)) = best else { return false };
-    // Farthest distance in this direction that stays within the reach of the job.
-    let reach = if dir > 0 { 64 + LOOK_AHEAD - x } else { x + LOOK_AHEAD + 1 };
-    let (tx, ty) = if d <= reach {
-        let tx = x + dir * d;
-        let lower = y + 1 < 64 && h.mat(tx, y + 1).is_air();
-        (tx, if lower { y + 1 } else { y })
-    } else if open {
-        (x + dir * reach, y)
-    } else {
+    let Some((dir, d)) = best else { return false };
+    let row_end = v.mat(p.offset(dir, 0)).is_air();
+    if !level_move(v, p, p.offset(dir * d, 0), dir) {
         return false;
-    };
-    h.set_motion(x, y, flow_bits(dir, 0));
-    h.swap(x, y, tx, ty);
-    wake_row(h, x, y);
-    wake_row(h, tx, ty);
-    wake_row_ends(h.mats, p, far, wake);
+    }
+    if row_end {
+        // The cells behind follow.
+        let flow = (v.mats().flow[m.index()] as i32).clamp(1, MAX_FLOW);
+        let mut cur = p;
+        for _ in 1..flow {
+            let next = cur.offset(-dir, 0);
+            if !calm_top(v, next, m) {
+                break;
+            }
+            let Some(d) = find_drop(v, next, m, dir, 0, MAX_LEVEL_SCAN) else { break };
+            if !level_move(v, next, next.offset(dir * d, 0), dir) {
+                break;
+            }
+            cur = next;
+        }
+    }
     true
 }
 
-/// A top liquid cell left `p` (world position): `p` is now air under air, a place to fall for the
-/// row above. The top cells at the ends of that row may be far away and asleep, so this looks
-/// along the open surface of the row above (air on top of liquid) on both sides and adds the
-/// first liquid cell on each side to `wake`.
-pub fn wake_row_ends(mats: &MaterialTable, p: CellPos, far: &impl Fn(i32, i32) -> MaterialId, wake: &mut Vec<CellPos>) {
-    if !far(p.x, p.y).is_air() || !far(p.x, p.y - 1).is_air() {
+/// A top liquid cell left `p` (world position). If the cell above `p` is air, `p` is a new place
+/// to fall for the row above. And cells on the same row can now walk past `p`. The top cells that
+/// can use this may be far away and asleep, so this looks along the open surface (air on top of
+/// liquid) of the row above and of the same row, on both sides, and wakes the first liquid cell on
+/// each side.
+pub fn wake_row_ends(v: &mut impl LevelCells, p: CellPos) {
+    if !v.mat(p).is_air() {
         return;
     }
-    for side in [1, -1] {
-        for d in 1..=MAX_LEVEL_SCAN {
-            let wx = p.x + side * d;
-            let t = far(wx, p.y - 1);
-            if !t.is_air() {
-                if mats.phase[t.index()] == Phase::Liquid {
-                    wake.push(CellPos::new(wx, p.y - 1));
+    let rows: &[i32] = if v.mat(p.offset(0, -1)).is_air() { &[-1, 0] } else { &[0] };
+    for &dy in rows {
+        for side in [1, -1] {
+            for d in 1..=MAX_LEVEL_SCAN {
+                let q = p.offset(side * d, dy);
+                let t = v.mat(q);
+                if !t.is_air() {
+                    if v.mats().phase[t.index()] == Phase::Liquid {
+                        v.wake(q);
+                    }
+                    break;
                 }
-                break;
-            }
-            if mats.phase[far(wx, p.y).index()] != Phase::Liquid {
-                break;
+                if !floor(v.mats(), v.mat(q.offset(0, 1))) {
+                    break;
+                }
             }
         }
     }

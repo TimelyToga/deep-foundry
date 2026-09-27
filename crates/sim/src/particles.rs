@@ -98,8 +98,9 @@ impl Particles {
             let mut vy = (self.vy[i] + g).clamp(-max_v, max_v);
             let (mut px, mut py) = (self.x[i], self.y[i]);
             let here = CellPos::new(px.floor() as i32, py.floor() as i32);
-            // The grid changed under a material particle: it lands where it is.
-            let mut landed = !visual && world.in_bounds(here) && !passable(world.mat(here), mats);
+            // The grid changed under a material particle, or it is outside every simulation area
+            // (it started next to one): it lands where it is.
+            let mut landed = !visual && world.in_bounds(here) && (!passable(world.mat(here), mats) || !world.areas().simulates(here.chunk()));
             let mut lost = false;
             if !landed {
                 let steps = vx.abs().max(vy.abs()).ceil().max(1.0) as i32;
@@ -117,7 +118,9 @@ impl Particles {
                         }
                         break;
                     }
-                    if !visual && !passable(world.mat(c), mats) {
+                    // A chunk outside every simulation area acts as a wall: a material particle
+                    // lands before it, so no material goes where nothing updates.
+                    if !visual && (!passable(world.mat(c), mats) || !world.areas().simulates(c.chunk())) {
                         landed = true;
                         break;
                     }
@@ -150,15 +153,8 @@ impl Particles {
                 }
             }
             // Keep this particle (compact the arrays in order).
-            self.x[keep] = px;
-            self.y[keep] = py;
-            self.vx[keep] = vx;
-            self.vy[keep] = vy;
-            self.mat[keep] = self.mat[i];
-            self.temp[keep] = self.temp[i];
-            self.shade[keep] = self.shade[i];
-            self.life[keep] = self.life[i];
-            self.flags[keep] = self.flags[i];
+            (self.x[i], self.y[i], self.vx[i], self.vy[i]) = (px, py, vx, vy);
+            self.keep(i, keep);
             keep += 1;
         }
         self.x.truncate(keep);
@@ -170,6 +166,20 @@ impl Particles {
         self.shade.truncate(keep);
         self.life.truncate(keep);
         self.flags.truncate(keep);
+    }
+
+    /// Move particle `i` to place `keep` (`keep <= i`), when the arrays are compacted.
+    #[inline]
+    fn keep(&mut self, i: usize, keep: usize) {
+        self.x[keep] = self.x[i];
+        self.y[keep] = self.y[i];
+        self.vx[keep] = self.vx[i];
+        self.vy[keep] = self.vy[i];
+        self.mat[keep] = self.mat[i];
+        self.temp[keep] = self.temp[i];
+        self.shade[keep] = self.shade[i];
+        self.life[keep] = self.life[i];
+        self.flags[keep] = self.flags[i];
     }
 
     /// Write all particles (for saves).

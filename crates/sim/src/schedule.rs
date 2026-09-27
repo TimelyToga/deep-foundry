@@ -25,12 +25,12 @@
 //!    than 31 cells from a place to fall (the reach of a normal job) would rest, and wide liquid
 //!    surfaces would stay in low steps.
 
-use crate::chunk::{Chunk, LocalRect};
+use crate::chunk::{Chunk, FLAG_PARITY, LocalRect};
 use crate::hood::Hood;
-use crate::movement::MAX_LEVEL_SCAN;
+use crate::movement::{self, LevelCells, MAX_LEVEL_SCAN};
 use crate::particles::Spawn;
 use crate::react::ReactTable;
-use crate::update::{fall_chunk, level_cells, update_chunk};
+use crate::update::{fall_chunk, update_chunk};
 use crate::world::{RawChunk, World};
 use crate::{SimEvent, SimSettings};
 use foundry_content::MaterialTable;
@@ -166,7 +166,7 @@ pub fn movement_tick(
 
     // Step 6: the level pass.
     if !levels.is_empty() || !opened.is_empty() {
-        level_pass(world, &work, &ptrs, input, levels, opened, tick, seed, stamp, pool);
+        level_pass(world, input.mats, levels, opened, tick, stamp, pool);
     }
     work.len() as u32
 }
@@ -283,28 +283,111 @@ impl RowChunks {
             _ => self.outside,
         }
     }
+
+    /// The live chunk and the cell index of a world cell, if the chunk has cells in memory.
+    #[inline]
+    fn cell(&self, p: CellPos) -> Option<(*mut Chunk, usize)> {
+        if p.y < 0 || p.y >= self.height_cells {
+            return None;
+        }
+        match self.map.get(&p.chunk()) {
+            Some(RawChunk::Live(c)) => Some((*c, p.local_index())),
+            _ => None,
+        }
+    }
+}
+
+/// The cells one level pass job may use: it reads the cell rows of chunk row `cy` and one row
+/// above and below, and writes the cell rows of chunk row `cy` (see the module documentation).
+struct LevelJob<'a> {
+    chunks: &'a RowChunks,
+    mats: &'a MaterialTable,
+    cy: i32,
+    parity: u8,
+    stamp: u64,
+    /// Cells to update in the next tick (the marks are added after the pass).
+    wake: Vec<CellPos>,
+}
+
+impl LevelCells for LevelJob<'_> {
+    fn mats(&self) -> &MaterialTable {
+        self.mats
+    }
+
+    fn mat(&self, p: CellPos) -> MaterialId {
+        if (p.y >> CHUNK_SHIFT) - self.cy > 1 || self.cy - (p.y >> CHUNK_SHIFT) > 1 {
+            return self.chunks.outside;
+        }
+        // SAFETY: rows the job may read (see `LevelJob`).
+        unsafe { self.chunks.mat(p.x, p.y) }
+    }
+
+    fn motion(&self, p: CellPos) -> u8 {
+        match self.chunks.cell(p) {
+            // SAFETY: as in `mat`; the row check is in `writes_row` for writes, and a motion byte
+            // is only read for cells the job also reads the material of.
+            Some((c, i)) if (p.y >> CHUNK_SHIFT) - self.cy <= 1 && self.cy - (p.y >> CHUNK_SHIFT) <= 1 => unsafe {
+                *std::ptr::addr_of!((*c).motion).cast::<u8>().add(i)
+            },
+            _ => 0,
+        }
+    }
+
+    fn set_motion(&mut self, p: CellPos, v: u8) {
+        if !self.writes_row(p.y) {
+            return;
+        }
+        if let Some((c, i)) = self.chunks.cell(p) {
+            // SAFETY: a cell row of this job's chunk row; no other job reads or writes it.
+            unsafe { *std::ptr::addr_of_mut!((*c).motion).cast::<u8>().add(i) = v }
+        }
+    }
+
+    fn writes_row(&self, y: i32) -> bool {
+        y >> CHUNK_SHIFT == self.cy
+    }
+
+    fn swap(&mut self, a: CellPos, b: CellPos) -> bool {
+        if !self.writes_row(a.y) || !self.writes_row(b.y) {
+            return false;
+        }
+        let (Some((ca, ia)), Some((cb, ib))) = (self.chunks.cell(a), self.chunks.cell(b)) else { return false };
+        // SAFETY: both cells are in this job's chunk row, which no other job reads or writes, and
+        // they are two different cells.
+        unsafe {
+            use std::ptr::{addr_of_mut, swap};
+            swap(addr_of_mut!((*ca).mat).cast::<u16>().add(ia), addr_of_mut!((*cb).mat).cast::<u16>().add(ib));
+            swap(addr_of_mut!((*ca).temp).cast::<i16>().add(ia), addr_of_mut!((*cb).temp).cast::<i16>().add(ib));
+            swap(addr_of_mut!((*ca).shade).cast::<u8>().add(ia), addr_of_mut!((*cb).shade).cast::<u8>().add(ib));
+            swap(addr_of_mut!((*ca).life).cast::<u8>().add(ia), addr_of_mut!((*cb).life).cast::<u8>().add(ib));
+            swap(addr_of_mut!((*ca).motion).cast::<u8>().add(ia), addr_of_mut!((*cb).motion).cast::<u8>().add(ib));
+            for (c, i) in [(ca, ia), (cb, ib)] {
+                let f = addr_of_mut!((*c).flags).cast::<u8>().add(i);
+                *f = (*f & !FLAG_PARITY) | self.parity;
+                (*c).version = self.stamp;
+                (*c).pristine = false;
+            }
+        }
+        self.wake.push(a);
+        self.wake.push(b);
+        true
+    }
+
+    fn wake(&mut self, p: CellPos) {
+        self.wake.push(p);
+    }
 }
 
 /// The level pass (step 6 in the module documentation). `levels`: cells that may walk.
 /// `opened`: places that top cells left in this tick; the far ends of the top row above them are
 /// woken, so they find the new place to fall.
 #[allow(clippy::too_many_arguments)]
-fn level_pass(
-    world: &mut World,
-    work: &[(ChunkPos, LocalRect)],
-    ptrs: &HoodPtrs,
-    input: PassInput,
-    levels: Vec<CellPos>,
-    opened: Vec<CellPos>,
-    tick: u64,
-    seed: u64,
-    stamp: u64,
-    pool: Option<&rayon::ThreadPool>,
-) {
+fn level_pass(world: &mut World, mats: &MaterialTable, levels: Vec<CellPos>, opened: Vec<CellPos>, tick: u64, stamp: u64, pool: Option<&rayon::ThreadPool>) {
     // By chunk row, then from left to right (or right to left on odd ticks).
     let left_to_right = tick & 1 == 0;
     let mut items: Vec<(CellPos, bool)> = levels.into_iter().map(|p| (p, false)).chain(opened.into_iter().map(|p| (p, true))).collect();
     items.sort_unstable_by_key(|&(p, o)| (p.y >> CHUNK_SHIFT, if left_to_right { p.x } else { -p.x }, p.y, o));
+    items.dedup();
     let mut rows: Vec<&[(CellPos, bool)]> = Vec::new();
     let mut rest = &items[..];
     while let Some(first) = rest.first() {
@@ -330,47 +413,29 @@ fn level_pass(
     let chunks = RowChunks { map, outside: world.outside, height_cells: world.height_cells() };
 
     let parity = (tick & 1) as u8;
-    let outside = world.outside;
     let mut wakes: Vec<CellPos> = Vec::new();
     for row_parity in 0..2 {
         let jobs: Vec<&[(CellPos, bool)]> = rows.iter().copied().filter(|r| (r[0].0.y >> CHUNK_SHIFT) & 1 == row_parity).collect();
         if jobs.is_empty() {
             continue;
         }
-        let run = |row: &&[(CellPos, bool)]| -> (Vec<JobOut>, Vec<CellPos>) {
-            // SAFETY: the level pass rule (module documentation): this job reads the cell rows of
-            // its own chunk row and one row above and below; no other job of this pass writes them.
-            let far = |x: i32, y: i32| unsafe { chunks.mat(x, y) };
-            let mut out = Vec::new();
-            let mut wake: Vec<CellPos> = Vec::new();
-            let mut start = 0;
-            while start < row.len() {
-                // The items of one chunk share one hood. Every item is in a chunk that worked in
-                // this tick (the passes recorded it), so the chunk is in the work list.
-                let pos = row[start].0.chunk();
-                let n = row[start..].iter().take_while(|(p, _)| p.chunk() == pos).count();
-                if let Ok(i) = work.binary_search_by_key(&(pos.y, pos.x), |w| (w.0.y, w.0.x)) {
-                    let rng = Rng::for_chunk(seed, tick, pos, 5);
-                    // SAFETY: as above; the hood moves cells only sideways inside this chunk row.
-                    let mut hood = unsafe { Hood::new(ptrs.get(i), input, rng, parity, outside, pos.origin()) };
-                    if level_cells(&mut hood, &row[start..start + n], &far, &mut wake) {
-                        out.push(JobOut::from_hood(i, hood));
-                    }
+        let run = |row: &&[(CellPos, bool)]| -> Vec<CellPos> {
+            let cy = row[0].0.y >> CHUNK_SHIFT;
+            let mut job = LevelJob { chunks: &chunks, mats, cy, parity, stamp, wake: Vec::new() };
+            for &(p, opened) in row.iter() {
+                if opened {
+                    movement::wake_row_ends(&mut job, p);
+                } else {
+                    movement::level(&mut job, p);
                 }
-                start += n;
             }
-            (out, wake)
+            job.wake
         };
-        let results: Vec<(Vec<JobOut>, Vec<CellPos>)> = match pool {
+        let results: Vec<Vec<CellPos>> = match pool {
             Some(p) => p.install(|| jobs.par_iter().map(run).collect()),
             None => jobs.par_iter().map(run).collect(),
         };
-        for (job, wake) in results {
-            for out in job {
-                merge(world, ptrs, work[out.i].0, out.i, &out.marks, out.changed, out.touched, stamp);
-            }
-            wakes.extend(wake);
-        }
+        wakes.extend(results.into_iter().flatten());
     }
     // After both halves: waking may load chunks, and the jobs hold pointers.
     for p in wakes {
