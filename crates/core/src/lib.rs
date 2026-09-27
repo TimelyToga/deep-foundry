@@ -13,7 +13,7 @@ pub mod snapshot;
 
 pub use command::{Command, PaintMode};
 pub use consts::*;
-pub use ids::{BuildingId, BuildingKindId, MaterialId, RecipeId};
+pub use ids::{BuildingId, BuildingKindId, MaterialId, PartId, RecipeId, TechId};
 pub use mailbox::SnapshotMailbox;
 pub use pos::{CellPos, CellRect, ChunkPos, TilePos, local_index, local_xy};
 pub use rng::Rng;

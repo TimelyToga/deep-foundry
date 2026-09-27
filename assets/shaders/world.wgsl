@@ -80,7 +80,9 @@ fn fs_world(in: WorldVsOut) -> @location(0) vec4<f32> {
     let shade = texel.b & 0xffu;
     let life = f32(texel.b >> 8u);
     let info = materials[material];
-    let cell = vec2<f32>(in.origin + local);
+    // The cell position, wrapped to 0..16384 so that f32 keeps whole cells far from x = 0.
+    // (The world has no limit to the left and right.) The waves below jump once every 16384 cells.
+    let cell = vec2<f32>((in.origin + local) & vec2<i32>(0x3fff));
 
     var color = textureLoad(palette, vec2<i32>(i32(shade % SHADES), i32(material)), 0);
 

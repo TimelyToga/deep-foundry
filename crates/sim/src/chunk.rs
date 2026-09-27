@@ -69,10 +69,20 @@ pub struct Chunk {
     pub motion: [u8; CHUNK_AREA],
     pub flags: [u8; CHUNK_AREA],
     /// Changes each time a cell in this chunk changes. The snapshot code uses it.
+    /// 0: all air since the chunk was made. `GENERATED_VERSION`: as the chunk source made it.
     pub version: u64,
     /// The cells to update in the next tick. Empty means the chunk sleeps.
     pub dirty: LocalRect,
+    /// True while every cell is exactly as the chunk source made it. The world can drop such a
+    /// chunk from memory and make it again later. Any write to a cell sets it to false.
+    pub pristine: bool,
+    /// The chunk is in the world's awake list or paused set. Only `World` changes this.
+    pub(crate) queued: bool,
 }
+
+/// The version of a chunk that the chunk source made and that did not change since.
+/// Stamps of real changes start above it.
+pub const GENERATED_VERSION: u64 = 1;
 
 impl Chunk {
     /// A chunk full of air at the default temperature.
@@ -86,6 +96,8 @@ impl Chunk {
             flags: [0; CHUNK_AREA],
             version: 0,
             dirty: LocalRect::EMPTY,
+            pristine: true,
+            queued: false,
         })
     }
 

@@ -30,7 +30,7 @@ The simulation has 16.6 ms per tick. The renderer runs on a different thread (se
 | Parts in the world | 20,000 |
 | Item packets in tubes | 2,000 |
 | Free-flying particles | 50,000 |
-| World | 8192 × 8192 cells |
+| World | No limit to the left and right; 1024 cells of sky and 8192 cells of depth |
 | Memory | less than 2 GB |
 
 ## 2. Language and libraries
@@ -117,10 +117,15 @@ Build preview: the main thread checks ghost validity against the tile occupancy 
 
 ## 5. World data
 
-### 5.1 Coordinates
+### 5.1 Coordinates and size
 
-- Cell coordinates are `i32`. **x goes right. y goes down.** y = 0 is the top of the world.
+- Cell coordinates are `i32`. **x goes right. y goes down.** y = 0 is the top of the sky.
 - Tile = cell / 8. Chunk = cell / 64 (use floor division for negative values).
+- **The world has no limit to the left and right.** `i32` cells reach about ±2,100 million cells (±33 million chunks). The tests use chunk x = ±1,000,000.
+- **The height is fixed.** From the top: the sky (`sky_chunks`, default 16 chunks = 1024 cells), then the surface level, then the depth (`depth_chunks`, default 128 chunks = 8192 cells) down to the bottom. The chunk source puts bedrock in the lowest rows.
+- Cells above the top and below the bottom act as bedrock. (Later: gas that reaches the top rows leaves the world and adds to air pollution.)
+- Tests and scenes can use a **finite box** (`SimConfig::finite`): x from 0 to a fixed width, with bedrock outside and a bedrock border.
+- Values with fractions must stay exact far from x = 0. The camera uses `f64`. An `f32` holds whole cells only up to about 16 million cells, so code must not keep world positions in `f32` (store a chunk position plus a small offset instead).
 
 ### 5.2 Chunks
 
@@ -132,23 +137,78 @@ A chunk is 64 × 64 cells. Each chunk stores its cells as separate arrays (struc
 | `temp` | `[i16; 4096]` | temperature in whole °C |
 | `shade` | `[u8; 4096]` | color shade, set when the cell is made |
 | `life` | `[u8; 4096]` | timer for fire, gas, and slow reactions |
-| `motion` | `[u8; 4096]` | fall speed (4 bits), last side direction (1 bit), free bits |
+| `motion` | `[u8; 4096]` | fall speed (5 bits), last side direction (1 bit), free bits |
 | `flags` | `[u8; 4096]` | updated-this-tick bit, building-body bit, other bits |
 
 This is 8 bytes per cell and 32 KB per chunk. Separate arrays let the heat pass read only `mat` and `temp`.
 
-Chunk states:
+Each chunk also has:
 
-| State | Meaning |
-|---|---|
-| Awake | Updated every tick. |
-| Asleep | In memory. Not updated. Any write into it wakes it. |
-| Packed | Compressed in memory (run-length encoding per array). Unpacked when needed. |
-| Not made | Not generated yet. Generated from the seed when needed. |
+- A **dirty rectangle**: the area where cells changed in the last tick, plus a border of one cell. The next tick updates only this area. A chunk with an empty rectangle sleeps.
+- A **version**: it changes when a cell changes. The snapshot code sends a chunk to the renderer when its version is new.
+- A **pristine** flag: true while every cell is still exactly as the chunk source made it. Any write to a cell sets it to false, also a write that cannot be seen (for example the updated bit).
 
-Each awake chunk has a **dirty rectangle**: the area where cells changed in the last tick, plus a border of one cell. The next tick updates only this area. If the rectangle stays empty for 30 ticks and the heat is stable, the chunk goes to sleep.
+### 5.3 Chunk storage
 
-### 5.3 Tile grid
+No array covers the whole world. The world keeps chunks in hash maps by chunk position (FxHash). A chunk position is in one of these states:
+
+| State | Stored as | Meaning |
+|---|---|---|
+| Live | `Box<Chunk>` in the live map | The cells are in memory. Only live chunks update. |
+| Air | a position in the air set | The source made the chunk all air at the default temperature, and nothing changed it. No cells are stored. The renderer draws it as air. |
+| Packed | lz4 bytes in the packed map | A changed chunk far from every anchor. It is unpacked when it is needed. |
+| Not in memory | nothing | Not made yet, or made and then dropped because it did not change. The source makes it again when it is needed. |
+
+**Work list.** The world keeps an **awake list**: the chunks that may have work in the next tick. Every live chunk with a non-empty dirty rectangle is in the awake list, or in the **paused set** (section 5.5). Each tick:
+
+1. Go through the awake list. A chunk with no work leaves the list. A chunk outside every simulation area goes to the paused set. The others work.
+2. Sort the working chunks by (y, x). The order of the list and of the hash maps never changes the result, so the result is the same for any number of threads.
+3. Make sure the 8 neighbors of each working chunk are live (make, unpack, or turn an air chunk into a live chunk). Missing chunks are made in one parallel batch.
+4. Look up the 3 × 3 chunk pointers of each working chunk once, and run the 4 passes (section 6.1).
+
+So the cost of a tick depends only on the chunks with work, never on the number of chunks in memory or in the world.
+
+### 5.4 Chunk sources
+
+A `ChunkSource` makes the cells of a chunk from the seed and the chunk position. The world asks it the first time it needs a chunk:
+
+- chunks inside an anchor area (for example the view),
+- neighbors of working chunks,
+- chunks that `paint` or `set_cell` writes,
+- chunks next to a changed cell (so that, for example, sand above a new hole can fall).
+
+Rules for a source (the full list is in `crates/sim/src/source.rs`):
+
+- The same seed and position always give the same cells, in any order and on any thread. The world calls the source in parallel batches, and again for a chunk that it dropped.
+- Features that cross chunk borders come from the world position (noise, or features made from the seed and a large region number).
+- A new chunk sleeps. The terrain must be stable, or the source marks the chunk as awake (for example a ball of water in the air).
+- Cells get their material's default temperature unless the source sets one.
+- The world sets shade and life from the seed and the position.
+
+Built-in sources: `AirSource` (all air, for test boxes) and `LayerSource` (air above the surface level, stone below, bedrock at the bottom). The game's demo world is a source too (`crates/game/src/demo.rs`). The real world generator will be a source.
+
+### 5.5 Anchors and simulation distance
+
+An **anchor** is an area that must update and stay in memory: the camera view (from `Command::SetView`), and later the player and factory buildings (`Simulation::add_anchor`, `move_anchor`, `remove_anchor`).
+
+- **Simulation area**: each anchor area plus `sim_margin_chunks` (default 4 chunks). Chunks inside it update.
+- A chunk with work outside every simulation area **pauses**: it keeps its dirty rectangle and waits in the paused set. When an anchor comes near, it continues. No material is lost, and the far world does not use time.
+- **Keep area**: each anchor area plus `keep_margin_chunks` (default 8 chunks). See section 5.6.
+- With no anchors at all, the whole world updates and nothing is packed or dropped. Tests and scenes use this.
+
+### 5.6 Memory
+
+Every 10 ticks (`unload_every_ticks`), the world looks at its live chunks outside every keep area:
+
+- A pristine chunk with no work is **dropped**. The source makes it again when needed, with the same cells.
+- A changed chunk, or a paused chunk, is **packed** with lz4 (in parallel). A packed chunk keeps its dirty rectangle and its version.
+- Air chunks far away are forgotten.
+
+So memory depends on the size of the anchor areas and on how much of the world the player changed, not on how far the player went. A changed chunk packs to about 3 KB (most of it is the random shade).
+
+**Disk streaming (later).** `ChunkStore` is the hook for region files. With a store, the world moves packed chunks into it when the packed chunks in memory use more than a limit (farthest first), and takes them back when needed. Not built yet: a region file format, writing on a worker thread, reading ahead of the camera, and saves that use the region files.
+
+### 5.7 Tile grid
 
 Each chunk also has an 8 × 8 tile grid:
 
@@ -156,7 +216,7 @@ Each chunk also has an 8 × 8 tile grid:
 - Back layer: pipe piece id, cable piece id, tube piece id, signal wire piece id.
 - Room id (`u16`, 0 = none) for tiles inside a room machine.
 
-### 5.4 Material table
+### 5.8 Material table
 
 The `content` crate turns the data files into flat arrays indexed by material id: `phase[id]`, `density[id]`, `flow[id]`, `conductivity[id]`, `melt_at[id]`, and so on. Hot code reads these arrays. It never reads the data file structs.
 
@@ -363,9 +423,12 @@ Reaction(
 
 ## 10. Saves
 
-- A save has: a header with a version, the id tables (string → number), the world seed, the tick, the chunks, buildings, networks, player, research and statistics.
-- Chunks that the player never changed are not saved. They are made again from the seed.
-- Chunks are compressed with lz4.
+- A save has: a header with a version, the world seed, the tick, the world height (and the width of a finite box), the name and settings of the chunk source, the material id table (string → number), the air temperature by row, the view and the anchors, the chunks, and later particles, buildings, networks, player, research and statistics.
+- **Only changed chunks are saved** (chunks that are not pristine), plus pristine chunks that have work (their dirty rectangle). All other chunks are made again from the seed by the chunk source. So a large explored world saves small.
+- Each chunk is saved as its lz4 block (the same bytes as a packed chunk), with its position and its dirty rectangle. Packed chunks are written with no new compression, so saves are fast.
+- Loading checks that the chunk source has the same name and settings as the one that made the world. Built-in sources are made again from their saved settings. Other sources must be given to `Simulation::load_with_source`.
+- A load puts the saved chunks into the world as packed chunks. They are unpacked when they are needed, so a large world loads fast.
+- Material names are matched to the current data files. Unknown materials become air, and the load reports them.
 - Autosave runs on a worker thread from a copy of the state, so the game stops only for a very short time.
 
 ## 11. Tests and tools

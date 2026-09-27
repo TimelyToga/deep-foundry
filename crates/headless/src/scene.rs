@@ -270,10 +270,8 @@ impl Scene {
     /// A new simulation with the scene's cells in it.
     pub fn build_sim(&self, content: Arc<Content>) -> Simulation {
         let config = SimConfig {
-            width_chunks: self.world_chunks.0,
-            height_chunks: self.world_chunks.1,
-            seed: self.def.seed,
             bedrock_border: self.def.bedrock_border,
+            ..SimConfig::finite(self.world_chunks.0, self.world_chunks.1, self.def.seed)
         };
         let mut sim = Simulation::new(content, config);
         for y in 0..self.height {

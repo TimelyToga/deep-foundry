@@ -19,7 +19,8 @@ pub struct CameraControl {
     /// Screen position that stays on the same cell while the zoom changes.
     zoom_anchor: DVec2,
     pub min_zoom: f32,
-    /// World size in cells. The camera center stays inside it.
+    /// World size in cells. The camera center stays inside it. A width of 0 means the world has no
+    /// limit to the left and right; then only the height limits the camera.
     pub world: DVec2,
 }
 
@@ -78,8 +79,11 @@ impl CameraControl {
     }
 
     fn clamp_center(&mut self) {
-        if self.world.x > 0.0 && self.world.y > 0.0 {
-            self.camera.center = self.camera.center.clamp(DVec2::ZERO, self.world);
+        if self.world.x > 0.0 {
+            self.camera.center.x = self.camera.center.x.clamp(0.0, self.world.x);
+        }
+        if self.world.y > 0.0 {
+            self.camera.center.y = self.camera.center.y.clamp(0.0, self.world.y);
         }
     }
 
@@ -183,6 +187,11 @@ mod tests {
         // The center stays in the world.
         c.drag(DVec2::new(1e7, 1e7));
         assert_eq!(c.camera.center, DVec2::new(0.0, 0.0));
+        // A world with no width limit: only y is limited.
+        c.world.x = 0.0;
+        c.drag(DVec2::new(-1e9, -1e7));
+        assert!(c.camera.center.x > 1e8);
+        assert_eq!(c.camera.center.y, c.world.y);
     }
 
     #[test]
