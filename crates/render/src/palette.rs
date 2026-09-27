@@ -56,13 +56,15 @@ pub(crate) fn build_palette(content: &Content) -> Vec<[u8; 4]> {
 
 pub(crate) fn build_material_info(content: &Content) -> Vec<MaterialInfo> {
     let mats = &content.materials;
-    (0..mats.len()).map(|m| MaterialInfo { phase: phase_code(mats.phase[m]), glow: mats.glow[m], _pad: [0; 2] }).collect()
+    (0..mats.len())
+        .map(|m| MaterialInfo { phase: phase_code(mats.phase[m]), glow: mats.glow[m], _pad: [0; 2] })
+        .collect()
 }
 
 /// Glow color (r, g, b) and strength (a) of a hot cell, from 0 to 1.
 ///
 /// Below 500 °C there is no glow. Then the color goes from dark red to orange, yellow and white.
-/// The strength grows to its full value at 1300 °C.
+/// The strength grows to its full value at 1150 °C.
 pub fn glow_color(temperature: f32) -> [f32; 4] {
     // (temperature °C, r, g, b)
     const STOPS: [(f32, f32, f32, f32); 8] = [
@@ -71,8 +73,8 @@ pub fn glow_color(temperature: f32) -> [f32; 4] {
         (800.0, 0.85, 0.16, 0.02),
         (1000.0, 1.00, 0.34, 0.05),
         (1200.0, 1.00, 0.52, 0.12),
-        (1400.0, 1.00, 0.76, 0.36),
-        (1600.0, 1.00, 0.94, 0.78),
+        (1350.0, 1.00, 0.74, 0.34),
+        (1500.0, 1.00, 0.93, 0.76),
         (2000.0, 1.00, 1.00, 1.00),
     ];
     if temperature <= STOPS[0].0 {
@@ -87,7 +89,7 @@ pub fn glow_color(temperature: f32) -> [f32; 4] {
             break;
         }
     }
-    let x = ((temperature - 500.0) / 800.0).clamp(0.0, 1.0);
+    let x = ((temperature - 500.0) / 650.0).clamp(0.0, 1.0);
     let strength = x * x * (3.0 - 2.0 * x);
     [rgb[0], rgb[1], rgb[2], strength]
 }

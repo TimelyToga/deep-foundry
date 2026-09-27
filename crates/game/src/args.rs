@@ -145,8 +145,19 @@ mod tests {
 
     #[test]
     fn screenshot_options() {
-        let a = run(&["--screenshot", "out/a.png", "--ticks", "60", "--size", "800x600", "--zoom", "3", "--center", "100.5,-20"])
-            .unwrap();
+        let a = run(&[
+            "--screenshot",
+            "out/a.png",
+            "--ticks",
+            "60",
+            "--size",
+            "800x600",
+            "--zoom",
+            "3",
+            "--center",
+            "100.5,-20",
+        ])
+        .unwrap();
         assert_eq!(a.screenshot, Some(PathBuf::from("out/a.png")));
         assert_eq!(a.ticks, 60);
         assert_eq!(a.size, Some((800, 600)));

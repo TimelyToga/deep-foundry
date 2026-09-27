@@ -13,3 +13,6 @@ bytemuck = { version = "1.25.2", features = ["derive"] }
 log.workspace = true
 glam = "0.33"
 pollster = "1"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

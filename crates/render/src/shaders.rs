@@ -69,7 +69,10 @@ pub(crate) fn create_pipeline<T>(
         let result = build(&module);
         match pollster::block_on(scope.pop()) {
             None => return result,
-            Some(err) => log::error!("shader {} from the assets folder has errors; using the built-in copy:\n{err}", file.file_name()),
+            Some(err) => log::error!(
+                "shader {} from the assets folder has errors; using the built-in copy:\n{err}",
+                file.file_name()
+            ),
         }
     }
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
