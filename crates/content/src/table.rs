@@ -35,6 +35,8 @@ pub struct MaterialTable {
     /// Chance (out of 65536) that a moving liquid cell keeps its momentum for one more tick.
     pub momentum: Vec<u16>,
     pub splash: Vec<f32>,
+    /// Chance (0 to 1) that a liquid cell that can flow sideways waits one tick instead.
+    pub viscosity: Vec<f32>,
     pub friction: Vec<f32>,
     pub grain: Vec<Grain>,
     pub hardness: Vec<u8>,

@@ -698,6 +698,14 @@ mod debug_awake {
 
 #[cfg(test)]
 pub(crate) fn dump_png(s: &Simulation, r: CellRect, scale: u32, path: &str) {
+    let img = render(s, r, scale);
+    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).ok();
+    img.save(path).unwrap();
+}
+
+/// A picture of the cells in `r` (each cell `scale` × `scale` pixels). Particles are light dots.
+#[cfg(test)]
+pub(crate) fn render(s: &Simulation, r: CellRect, scale: u32) -> image::RgbImage {
     let c = s.content();
     let (w, h) = (r.width() as u32, r.height() as u32);
     let mut img = image::RgbImage::new(w * scale, h * scale);
@@ -728,8 +736,7 @@ pub(crate) fn dump_png(s: &Simulation, r: CellRect, scale: u32, path: &str) {
             }
         }
     }
-    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).ok();
-    img.save(path).unwrap();
+    img
 }
 
 #[cfg(test)]
@@ -755,74 +762,7 @@ pub(crate) fn ascii(s: &Simulation, r: CellRect) -> String {
 }
 
 #[cfg(test)]
-mod liquid_tests {
-    use super::*;
-
-    /// A ball of water dropped into a box: returns (ticks until everything sleeps, surface heights).
-    fn drop_water(save_frames: bool) -> (u64, Vec<i32>, usize, usize) {
-        let content = Arc::new(Content::load_default().unwrap());
-        let mut s = Simulation::new(content, SimConfig { width_chunks: 6, height_chunks: 4, seed: 4, bedrock_border: true });
-        let water = s.content().expect_material("water");
-        s.paint(CellPos::new(192, 50), 30, water, PaintMode::Replace, None);
-        let all = CellRect::new(0, 0, 384, 256);
-        let total = s.count_material(all, water);
-        let mut settled_at = 0;
-        let mut max_particles = 0;
-        for t in 1..=6000u64 {
-            s.tick();
-            max_particles = max_particles.max(s.particles().len());
-            let count = s.count_material(all, water) + s.particles().count_material(water);
-            assert_eq!(count, total, "water is kept at tick {t}");
-            if save_frames && [30, 60, 90, 120, 200, 400, 800].contains(&t) {
-                dump_png(&s, CellRect::new(0, 100, 384, 256), 3, &format!("{}/../../out/water_{t:04}.png", env!("CARGO_MANIFEST_DIR")));
-            }
-            if s.stats().awake_chunks == 0 && s.particles().is_empty() {
-                settled_at = t;
-                break;
-            }
-        }
-        // Surface height of each column (first water cell from the top).
-        let heights = (2..382)
-            .map(|x| (0..256).find(|&y| s.cell(CellPos::new(x, y)).material == water).unwrap_or(256))
-            .collect();
-        (settled_at, heights, total, max_particles)
-    }
-
-    #[test]
-    fn dropped_water_splashes_levels_and_rests() {
-        let (settled_at, heights, total, max_particles) = drop_water(false);
-        assert!(max_particles > 20, "the landing splashes: {max_particles} particles");
-        assert!(settled_at > 0 && settled_at < 1500, "water comes to rest in under 25 s: tick {settled_at}");
-        let (lo, hi) = (*heights.iter().min().unwrap(), *heights.iter().max().unwrap());
-        assert!(hi - lo <= 1, "the surface is flat: rows {lo} to {hi} ({total} cells)");
-    }
-
-    #[test]
-    #[ignore]
-    fn water_frames() {
-        let (settled_at, heights, total, max_particles) = drop_water(true);
-        let (lo, hi) = (heights.iter().min().unwrap(), heights.iter().max().unwrap());
-        println!("settled at tick {settled_at}, surface rows {lo}..{hi}, {total} cells, max particles {max_particles}");
-        let content = Arc::new(Content::load_default().unwrap());
-        let mut s = Simulation::new(content, SimConfig { width_chunks: 6, height_chunks: 4, seed: 4, bedrock_border: true });
-        let water = s.content().expect_material("water");
-        s.paint(CellPos::new(192, 50), 30, water, PaintMode::Replace, None);
-        for _ in 0..3000 {
-            s.tick();
-        }
-        println!("after 3000: awake {} particles {}", s.stats().awake_chunks, s.particles().len());
-        for pos in s.world.loaded_chunks().collect::<Vec<_>>() {
-            let ch = s.world.chunk(pos).unwrap();
-            if ch.dirty.is_empty() { continue; }
-            let d = ch.dirty;
-            for y in d.y0..d.y1 { for x in d.x0..d.x1 {
-                let i = foundry_core::local_index(x, y);
-                if ch.mat[i] != 0 && ch.motion[i] != 0 { println!("{pos:?} ({x},{y}) mat {} motion {:08b}", ch.mat[i], ch.motion[i]); }
-            } }
-            println!("{pos:?} dirty {d:?}");
-        }
-    }
-}
+mod liquid_tests;
 
 #[cfg(test)]
 mod debug_view {
@@ -876,3 +816,4 @@ mod debug_view {
         }
     }
 }
+
