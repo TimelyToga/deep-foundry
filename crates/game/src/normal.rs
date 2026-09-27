@@ -341,11 +341,19 @@ fn building_view(content: &Content, b: &foundry_factory::BuildingView, milestone
         None => (b.inputs.iter().map(|x| slot(x.item, x.count, true)).collect(), vec![]),
     };
     let _ = content;
+    let status = machine_status(b.status);
+    // The reason repeats the status for simple states ("Idle"): show it only when it says more.
+    let mut status_detail = if b.reason.eq_ignore_ascii_case(status.label()) { String::new() } else { b.reason.clone() };
+    if let Some(m) = milestone
+        && status_detail.is_empty()
+    {
+        status_detail = format!("Needs repair stage {}", m.stage);
+    }
     BuildingView {
         id: b.id,
         kind: b.kind,
-        status: machine_status(b.status),
-        status_detail: b.reason.clone(),
+        status,
+        status_detail,
         recipe: b.recipe,
         inputs,
         outputs: b.outputs.iter().map(|x| slot(x.item, x.count, true)).collect(),

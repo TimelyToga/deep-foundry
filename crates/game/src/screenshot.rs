@@ -135,6 +135,12 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             n.take_frame(nv.frame.clone(), Instant::now());
             n.fill_model(&mut ui.model);
             ui.model.perf = None;
+            ui.model.settings.show_fps = false;
+            // The HUD shows the building or the cell at the image center (there is no mouse).
+            let pos = CellPos::new(center.x.floor() as i32, center.y.floor() as i32);
+            let cell = sim.cell(pos);
+            ui.model.hover =
+                n.hover(pos).or(Some(HoverView::Cell { pos, material: cell.material, temperature: cell.temperature as f32 }));
         }
         match state {
             UiState::Menu => {}
