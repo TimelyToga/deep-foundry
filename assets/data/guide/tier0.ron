@@ -39,7 +39,7 @@
         tier: 0,
         title: "Find copper ore",
         text: "Malachite is a green copper ore near the surface. Dig some and hold F over it to scan it. Each new material you scan gives a discovery point.",
-        condition: Discover("raw_malachite"),
+        condition: Discover("malachite"),
         reward_points: 1,
     ),
     Goal(
@@ -47,7 +47,7 @@
         tier: 0,
         title: "Find tin ore",
         text: "Cassiterite is a dark tin ore. Look for it in the gravel of river beds. Dig some and scan it with F.",
-        condition: Discover("raw_cassiterite"),
+        condition: Discover("cassiterite"),
         reward_points: 1,
     ),
     Goal(
