@@ -179,9 +179,13 @@ fn powder(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
     let below = h.mat(x, y + 1);
     if h.mats.phase[below.index()] == Phase::Liquid {
         let ld = h.mats.density[below.index()];
-        if md > ld && h.rng.chance(sink_chance(md, ld)) {
-            h.swap(x, y, x, y + 1);
-            return true;
+        if md > ld {
+            if h.rng.chance(sink_chance(md, ld)) {
+                h.swap(x, y, x, y + 1);
+                return true;
+            }
+            // It sinks in a later tick: stay awake.
+            h.keep_awake(x, y);
         }
     }
     let above = h.mat(x, y - 1);
@@ -391,6 +395,38 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
     // A viscous cell that can move waits with this chance (it stays awake).
     let viscosity = h.mats.viscosity[mi];
     let sticky = viscosity > 0.0 && h.rng.chance(viscosity);
+
+    // Under a lighter liquid: the border between the two liquids is the surface of this liquid,
+    // with the lighter liquid in place of air. Look along it for a place where the border is at
+    // least one row lower (a lighter cell on top of a lighter cell) and move there; the lighter
+    // cell takes this place. So the border becomes flat.
+    if is_liquid(h, x, y - 1) && h.mats.density[h.mat(x, y - 1).index()] < md {
+        let flow = (h.mats.flow[mi] as i32).clamp(1, MAX_FLOW);
+        let look = look_ahead(h, flow);
+        let lighter = |h: &Hood, t: MaterialId| h.mats.phase[t.index()] == Phase::Liquid && h.mats.density[t.index()] < md;
+        for side in [dir, -dir] {
+            for d in 1..=look {
+                let tx = x + side * d;
+                let t = h.mat(tx, y);
+                if !lighter(h, t) {
+                    break;
+                }
+                let b = h.mat(tx, y + 1);
+                if lighter(h, b) || (passable(h, b) && h.inside(tx, y + 1)) {
+                    if sticky {
+                        h.keep_awake(x, y);
+                        return false;
+                    }
+                    h.set_motion(x, y, flow_bits(side, 0));
+                    h.swap(x, y, tx, y);
+                    return true;
+                }
+                if !is_liquid(h, tx, y + 1) {
+                    break;
+                }
+            }
+        }
+    }
 
     // Down to a side.
     for dx in [dir, -dir] {
@@ -634,12 +670,22 @@ fn look_side(h: &mut Hood, x: i32, y: i32, m: MaterialId, dir: i32, look: i32, o
     if first == m {
         side.through = true;
     } else if !passable(h, first) || !h.inside(x + dir, y) {
-        // A heavier liquid with more of itself on top pushes under a lighter one next to it.
-        // (Without the weight on top, the swap gains nothing and the two mix forever.)
-        side.heavier_under = h.mats.phase[first.index()] == Phase::Liquid
-            && h.mats.density[first.index()] < h.mats.density[mi]
-            && h.mat(x, y - 1) == m
-            && h.rng.chance(0.3);
+        // A heavier liquid next to a lighter one pushes under it when the liquid above it weighs
+        // more than the liquid above the lighter cell (by more than the density difference of
+        // the two). So the border between two liquids becomes flat. (Without this weight rule, the
+        // swap gains nothing and the two mix forever.)
+        let fd = h.mats.density[first.index()];
+        if h.mats.phase[first.index()] == Phase::Liquid
+            && fd < h.mats.density[mi]
+            && is_liquid(h, x, y - 1)
+            && liquid_weight(h, x, y) > liquid_weight(h, x + dir, y) + (h.mats.density[mi] - fd)
+        {
+            side.heavier_under = h.rng.chance(0.5);
+            if !side.heavier_under {
+                // It can push under in a later tick: stay awake.
+                h.keep_awake(x, y);
+            }
+        }
         side.open = false;
         return side;
     }
@@ -670,6 +716,21 @@ fn look_side(h: &mut Hood, x: i32, y: i32, m: MaterialId, dir: i32, look: i32, o
         side.open = false;
     }
     side
+}
+
+/// The weight of the liquid straight above (x, y): the sum of the densities of the liquid cells
+/// up to the first cell that is not liquid, at most `LOOK_AHEAD` cells.
+#[inline]
+fn liquid_weight(h: &Hood, x: i32, y: i32) -> f32 {
+    let mut w = 0.0;
+    for k in 1..=LOOK_AHEAD {
+        let m = h.mat(x, y - k);
+        if h.mats.phase[m.index()] != Phase::Liquid {
+            break;
+        }
+        w += h.mats.density[m.index()];
+    }
+    w
 }
 
 /// Number of liquid cells straight above (x, y), at most `LOOK_AHEAD`. The pressure on the cell.
