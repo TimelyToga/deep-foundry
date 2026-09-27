@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+foundry_core = { path = "crates/core" }
+foundry_content = { path = "crates/content" }
+foundry_sim = { path = "crates/sim" }
+foundry_worldgen = { path = "crates/worldgen" }
+foundry_factory = { path = "crates/factory" }
+foundry_render = { path = "crates/render" }
+foundry_ui = { path = "crates/ui" }
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.12"
+thiserror = "2.0"
+anyhow = "1.0"
+log = "0.4"
+rayon = "1.12"
+
+# The simulation must be fast in debug builds too, or the game is not playable while we develop.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.foundry_sim]
+opt-level = 3
+
+[profile.dev.package.foundry_core]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+debug = "line-tables-only"

@@ -1,0 +1,5 @@
+// Starter reactions for Milestone 0. See docs/design/02-content.md section 3 for the full list.
+[
+    Reaction(a: "water", b: "lava", chance: 0.5, into_a: Some("steam"), into_b: Some("stone"), note: Some("Lava meets water.")),
+    Reaction(a: "fire", b: "water", chance: 0.8, into_a: Some("steam")),
+]

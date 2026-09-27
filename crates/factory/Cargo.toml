@@ -1,0 +1,10 @@
+[package]
+name = "foundry_factory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+foundry_core.workspace = true
+foundry_content.workspace = true
