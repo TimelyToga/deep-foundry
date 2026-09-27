@@ -16,6 +16,7 @@ pub mod hood;
 pub mod movement;
 pub mod particles;
 pub mod react;
+pub mod save;
 mod schedule;
 mod update;
 pub mod world;
