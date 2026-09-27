@@ -61,6 +61,8 @@ pub(crate) fn show_all(cx: &mut Cx, st: &mut UiState) {
                     WindowKind::Building => building::show(cx, st),
                     WindowKind::PowerNetwork => power::show(cx, st),
                     WindowKind::Production => production::show(cx, st),
+                    // Drawn by the research and guide screens (not written yet).
+                    WindowKind::Research | WindowKind::Guide => {}
                 }
             }
             raise_on_click(cx.ctx, st);
