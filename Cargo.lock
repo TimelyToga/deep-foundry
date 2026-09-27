@@ -912,6 +912,7 @@ dependencies = [
  "foundry_content",
  "foundry_core",
  "foundry_sim",
+ "ron",
  "serde",
 ]
 
