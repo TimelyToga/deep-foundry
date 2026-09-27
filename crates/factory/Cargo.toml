@@ -10,6 +10,5 @@ foundry_core.workspace = true
 foundry_content.workspace = true
 foundry_sim.workspace = true
 serde.workspace = true
-
-[dev-dependencies]
+# Reads the guide files (assets/data/guide/*.ron). Owner: task "progression".
 ron.workspace = true
