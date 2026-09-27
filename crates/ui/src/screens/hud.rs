@@ -1,13 +1,13 @@
 //! The HUD: quickbar with hull and heat bars, tank summary, crafting queue, research box,
-//! entity info panel and alerts.
+//! guide tracker, entity info panel and alerts.
 
 use super::Cx;
-use crate::action::UiAction;
+use crate::action::{UiAction, WindowKind};
 use crate::crafting::cancel_count;
 use crate::format;
 use crate::item;
 use foundry_content::ItemRef;
-use crate::model::{AlertKind, HoverView, UiModel};
+use crate::model::{AlertKind, GuideGoal, HoverView, UiModel};
 use crate::theme::{self, color, font, font_bold, font_regular, rgba, size, text};
 use crate::tooltip::Tip;
 use crate::widgets::{self, SlotContent, SlotLook};
@@ -18,12 +18,13 @@ const MARGIN: f32 = 8.0;
 const PANEL_PAD: f32 = 6.0;
 const BARS_H: f32 = 18.0;
 
-pub(crate) fn show(cx: &mut Cx, _st: &mut UiState) {
+pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
     let screen = cx.ctx.content_rect();
     let qb = quickbar(cx, screen);
     tank_summary(cx, qb);
     crafting_queue(cx, screen);
-    research(cx, screen);
+    let left_top = research(cx, st, screen);
+    guide_tracker(cx, st, screen, left_top);
     let top = perf_box(cx, screen);
     entity_info(cx, screen, top);
     alerts(cx, screen);
@@ -266,21 +267,22 @@ fn crafting_queue(cx: &mut Cx, screen: Rect) {
     });
 }
 
-fn research(cx: &mut Cx, screen: Rect) {
+/// The research box at the top left. A click opens the research window. Returns the y below it.
+fn research(cx: &mut Cx, st: &mut UiState, screen: Rect) -> f32 {
     let model = cx.model;
-    let Some(res) = &model.research else { return };
-    let Some(tech) = model.content.factory.techs.get(res.tech.0 as usize) else { return };
-    // The icon is the first thing the technology unlocks, or its first kit.
-    let icon_item = tech
-        .unlocks
-        .iter()
-        .filter_map(|r| item::recipe(&model.content, *r))
-        .find_map(item::recipe_item)
-        .or_else(|| tech.kits.first().map(|k| k.item));
+    let top = screen.top() + MARGIN;
+    let Some(res) = &model.research else { return top };
+    let Some(tech) = item::tech(&model.content, res.tech) else { return top };
+    let icon_item = item::tech_icon(&model.content, tech);
     let outer = vec2(330.0, 84.0);
     let rect = Rect::from_min_size(screen.min + vec2(MARGIN, MARGIN), outer);
     panel_area(cx.ctx, "research", rect, |ui| {
         let p = ui.painter().clone();
+        let resp = ui.interact(rect, Id::new("hud-research"), egui::Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Open research"));
+        if resp.hovered() {
+            p.rect_filled(rect.shrink(1.0), CornerRadius::same(1), Color32::from_white_alpha(8));
+        }
         let icon = Rect::from_min_size(rect.min + vec2(PANEL_PAD + 2.0, PANEL_PAD + 2.0), Vec2::splat(64.0));
         widgets::deep(&p, icon.expand(2.0));
         if let Some(it) = icon_item {
@@ -298,14 +300,86 @@ fn research(cx: &mut Cx, screen: Rect) {
             cx.atlas.paint(&p, kit.item, r, Color32::WHITE);
             kx -= 24.0;
         }
-        let resp = ui.interact(rect, Id::new("hud-research"), egui::Sense::hover());
         if resp.hovered() {
             let kits: Vec<String> = tech.kits.iter().map(|k| format!("{} × {}", k.count, item::name(&model.content, k.item))).collect();
             let mut body = format!("{}\nProgress: {}.", tech.description, format::percent(res.progress));
             if !kits.is_empty() {
                 body.push_str(&format!("\nEach of the {} units needs: {}.", tech.units, kits.join(", ")));
             }
+            body.push_str("\nClick to open the research window (T).");
             cx.tip(Tip::Text { title: tech.name.clone(), body });
+        }
+        if resp.clicked() {
+            st.toggle(WindowKind::Research, cx.actions);
+        }
+    });
+    rect.bottom() + 8.0
+}
+
+const GUIDE_W: f32 = 330.0;
+const GUIDE_PAD: f32 = 10.0;
+/// Goals that the guide tracker shows.
+const GUIDE_GOALS: usize = 2;
+
+/// The height of the guide tracker: the heading, and a title line and the text for each goal.
+fn tracker_height(ctx: &egui::Context, goals: &[&GuideGoal]) -> f32 {
+    let text_w = GUIDE_W - 2.0 * GUIDE_PAD;
+    let mut h = GUIDE_PAD + 20.0;
+    for g in goals {
+        h += 22.0;
+        if !g.text.is_empty() {
+            h += widgets::text_height(ctx, &g.text, font_regular(text::SMALL), text_w);
+        }
+        h += 6.0;
+    }
+    h + GUIDE_PAD - 4.0
+}
+
+/// The guide tracker on the left side: the first goals that are not done. A click opens the guide.
+fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
+    let model = cx.model;
+    if model.sandbox.is_some() {
+        return;
+    }
+    let goals: Vec<&GuideGoal> = model.guide.iter().filter(|g| !g.done).take(GUIDE_GOALS).collect();
+    if goals.is_empty() {
+        return;
+    }
+    let h = tracker_height(cx.ctx, &goals);
+    let rect = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(GUIDE_W, h));
+    panel_area(cx.ctx, "guide", rect, |ui| {
+        let p = ui.painter().clone();
+        let resp = ui.interact(rect, Id::new("hud-guide"), egui::Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Open guide"));
+        if resp.hovered() {
+            p.rect_filled(rect.shrink(1.0), CornerRadius::same(1), Color32::from_white_alpha(8));
+        }
+        let x = rect.left() + GUIDE_PAD;
+        let right = rect.right() - GUIDE_PAD;
+        let text_w = right - x;
+        let mut y = rect.top() + GUIDE_PAD;
+        p.text(pos2(x, y + 8.0), Align2::LEFT_CENTER, "Guide", font_bold(text::SMALL), color::HEADING);
+        p.text(pos2(right, y + 8.0), Align2::RIGHT_CENTER, "G: all goals", font_regular(text::SMALL), color::TEXT_FAINT);
+        y += 20.0;
+        for g in &goals {
+            let cy = y + 10.0;
+            let count = g.count.map(|(have, need)| format!("{have} / {need}"));
+            let count_rect = count.as_ref().map(|c| p.text(pos2(right, cy), Align2::RIGHT_CENTER, c, font_bold(text::BODY), color::TEXT));
+            let title_right = count_rect.map(|r| r.left() - 8.0).unwrap_or(right);
+            let title = p.layout_no_wrap(g.title.clone(), font_bold(text::BODY), color::TEXT);
+            let clip = Rect::from_min_max(pos2(x, y), pos2(title_right, y + 22.0));
+            p.with_clip_rect(clip).galley(pos2(x, cy - title.size().y * 0.5), title, color::TEXT);
+            y += 22.0;
+            if !g.text.is_empty() {
+                y = widgets::wrapped(&p, pos2(x, y), &g.text, font_regular(text::SMALL), color::TEXT_DIM, text_w).bottom();
+            }
+            y += 6.0;
+        }
+        if resp.hovered() {
+            cx.tip(Tip::Text { title: "Guide".into(), body: "Goals for each tier, with hints. Click to see all goals (G).".into() });
+        }
+        if resp.clicked() {
+            st.toggle(WindowKind::Guide, cx.actions);
         }
     });
 }

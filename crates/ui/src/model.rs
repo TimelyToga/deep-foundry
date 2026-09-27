@@ -647,6 +647,8 @@ pub fn default_key_bindings() -> Vec<(String, String)> {
         ("Spray material", "Right mouse"),
         ("Character screen", "E"),
         ("Production statistics", "P"),
+        ("Research", "T"),
+        ("Guide", "G"),
         ("Close window / menu", "Esc"),
         ("Quickbar slot 1-10", "1 - 0"),
         ("Quickbar slot 11-20", "Shift + 1 - 0"),
