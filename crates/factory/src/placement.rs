@@ -212,6 +212,7 @@ impl Buildings {
         if is_workbench {
             self.workbenches.insert(index);
         }
+        *self.kind_counts.entry(kind).or_insert(0) += 1;
         self.wake_index(index);
         Ok(id)
     }
@@ -235,6 +236,12 @@ impl Buildings {
             self.timers.remove(&(t, i));
         }
         self.workbenches.remove(&i);
+        if let Some(n) = self.kind_counts.get_mut(&b.kind) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                self.kind_counts.remove(&b.kind);
+            }
+        }
         Some(b)
     }
 

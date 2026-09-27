@@ -9,7 +9,7 @@
 //! - lab: `kit_buffer` kits of each type it holds (default 10); `speed` is the lab speed
 //! - workbench: `reach` in tiles (default 6); `speed` is the hand crafting speed near it
 
-use crate::progress_link::KitBuffer;
+use crate::progress_link::{KitBuffer, LabStatus};
 use foundry_core::{MaterialId, TICKS_PER_SECOND};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -71,14 +71,14 @@ pub struct Lab {
     pub kits: KitBuffer,
     /// Kits of each type the lab takes.
     pub kit_limit: u32,
-    /// The reason text of the last lab tick.
+    /// What the last lab tick did. `None` before the first tick and without power. Not saved.
     #[serde(skip)]
-    pub reason: Option<&'static str>,
+    pub last: Option<LabStatus>,
 }
 
 impl Lab {
     pub fn new(kit_limit: u32) -> Self {
-        Self { kits: KitBuffer::default(), kit_limit: kit_limit.max(1), reason: None }
+        Self { kits: KitBuffer::default(), kit_limit: kit_limit.max(1), last: None }
     }
 }
 

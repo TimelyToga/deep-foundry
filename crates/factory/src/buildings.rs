@@ -216,6 +216,11 @@ pub struct Buildings {
     /// Sleeping buildings with a wake tick: (tick, index).
     pub(crate) timers: BTreeSet<(u64, u32)>,
     pub(crate) workbenches: BTreeSet<u32>,
+    /// Placed buildings of each type.
+    pub(crate) kind_counts: HashMap<BuildingKindId, u32>,
+    /// The last Hub repair stage that is done (0: none), from the progression at the start of
+    /// each tick. The Hub takes only items that a later stage asks for. Not saved.
+    pub(crate) hub_stage: u8,
     /// Ticks run.
     pub(crate) now: u64,
     /// Seed for random numbers (byproduct chances).
@@ -223,7 +228,8 @@ pub struct Buildings {
     pub(crate) events: Vec<FactoryEvent>,
 }
 
-/// The saved form of `Buildings`. The tile maps and the workbench list are made again on load.
+/// The saved form of `Buildings`. The tile maps, the workbench list and the counts of each
+/// building type are made again on load.
 #[derive(Serialize, Deserialize)]
 struct BuildingsSave {
     slots: Vec<Slot>,
@@ -250,6 +256,8 @@ impl From<BuildingsSave> for Buildings {
             active: s.active,
             timers: s.timers,
             workbenches: BTreeSet::new(),
+            kind_counts: HashMap::new(),
+            hub_stage: 0,
             now: s.now,
             seed: s.seed,
             events: vec![],
@@ -263,6 +271,7 @@ impl From<BuildingsSave> for Buildings {
             if matches!(bd.logic, Logic::Workbench) {
                 b.workbenches.insert(i as u32);
             }
+            *b.kind_counts.entry(bd.kind).or_insert(0) += 1;
             let map = if layer == Layer::Front { &mut b.front } else { &mut b.back };
             for t in tiles {
                 map.insert(t, id);
@@ -282,6 +291,8 @@ impl Default for Buildings {
             active: BTreeSet::new(),
             timers: BTreeSet::new(),
             workbenches: BTreeSet::new(),
+            kind_counts: HashMap::new(),
+            hub_stage: 0,
             now: 0,
             seed: 0x6275_696c_6469_6e67,
             events: vec![],
@@ -323,20 +334,21 @@ pub fn is_kit(content: &Content, part: PartId) -> bool {
         || content.factory.techs.iter().any(|t| t.kits.iter().any(|s| s.item == ItemRef::Part(part)))
 }
 
-/// True if a Hub milestone asks for the item.
-pub fn is_deliverable(content: &Content, item: ItemRef) -> bool {
-    content.factory.milestones.iter().any(|m| m.deliver.iter().any(|s| s.item == item))
+/// True if a Hub milestone after stage `done_stage` asks for the item. (`done_stage` is the last
+/// Hub repair stage that is done; 0 if none.)
+pub fn is_deliverable(content: &Content, item: ItemRef, done_stage: u8) -> bool {
+    content.factory.milestones.iter().any(|m| m.stage > done_stage && m.deliver.iter().any(|s| s.item == item))
 }
 
-/// How many of an item a building can take now.
-fn accept_room(logic: &Logic, content: &Content, item: ItemRef) -> u32 {
+/// How many of an item a building can take now. `hub_stage`: see `Buildings::hub_stage`.
+fn accept_room(logic: &Logic, content: &Content, item: ItemRef, hub_stage: u8) -> u32 {
     match logic {
         Logic::Machine(m) => match m.recipe {
             Some(r) => m.input_room(content.factory.recipe_def(r), item),
             None => 0,
         },
         Logic::Storage(inv) => inv.room_for(content, item, u32::MAX),
-        Logic::Hub(inv) if is_deliverable(content, item) => inv.room_for(content, item, u32::MAX),
+        Logic::Hub(inv) if is_deliverable(content, item, hub_stage) => inv.room_for(content, item, u32::MAX),
         Logic::Lab(lab) => match item {
             ItemRef::Part(p) if is_kit(content, p) => lab.kit_limit.saturating_sub(lab.kits.count(p)),
             _ => 0,
@@ -352,8 +364,8 @@ fn accept_room(logic: &Logic, content: &Content, item: ItemRef) -> u32 {
 }
 
 /// Give up to `n` of an item to a building. Returns the count taken.
-fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32) -> u32 {
-    let n = n.min(accept_room(logic, content, item));
+fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub_stage: u8) -> u32 {
+    let n = n.min(accept_room(logic, content, item, hub_stage));
     if n == 0 {
         return 0;
     }
@@ -479,6 +491,21 @@ impl Buildings {
     /// Ticks run so far.
     pub fn now(&self) -> u64 {
         self.now
+    }
+
+    /// How many buildings of a type are placed.
+    pub fn count_of(&self, kind: BuildingKindId) -> u32 {
+        self.kind_counts.get(&kind).copied().unwrap_or(0)
+    }
+
+    /// Wake all labs (for example when the current research changes).
+    pub fn wake_labs(&mut self) {
+        let labs: Vec<u32> = (0..self.slots.len() as u32)
+            .filter(|&i| matches!(self.at_index(i).map(|b| &b.logic), Some(Logic::Lab(_))))
+            .collect();
+        for i in labs {
+            self.wake_index(i);
+        }
     }
 
     /// The building with this id, if it still exists.
@@ -626,8 +653,9 @@ impl Buildings {
     /// Put up to `count` of an item into a building (machine input, storage, hub, lab kits,
     /// hopper). Returns the count taken.
     pub fn insert(&mut self, content: &Content, id: BuildingId, item: ItemRef, count: u32) -> u32 {
+        let hub_stage = self.hub_stage;
         let Some(b) = self.get_mut(id) else { return 0 };
-        let n = accept(&mut b.logic, content, item, count);
+        let n = accept(&mut b.logic, content, item, count, hub_stage);
         if n > 0 {
             self.wake(id);
         }
@@ -636,7 +664,7 @@ impl Buildings {
 
     /// How many of an item a building can take now.
     pub fn room_for(&self, content: &Content, id: BuildingId, item: ItemRef) -> u32 {
-        self.get(id).map_or(0, |b| accept_room(&b.logic, content, item))
+        self.get(id).map_or(0, |b| accept_room(&b.logic, content, item, self.hub_stage))
     }
 
     /// The finished products in a machine (outputs and byproducts that are not empty).
@@ -733,6 +761,7 @@ impl Buildings {
     /// Run all building logic for one tick.
     pub fn tick<P: ProgressLink>(&mut self, content: &Content, sim: &mut Simulation, progress: &mut P) {
         self.now += 1;
+        self.hub_stage = progress.hub_stage();
         let now = self.now;
         while let Some(&(t, i)) = self.timers.first() {
             if t > now {
@@ -771,7 +800,7 @@ impl Buildings {
 
     /// Ports take cells from the world, and part inputs take parts from a storage next to them.
     fn take_inputs(&mut self, i: u32, content: &Content, sim: &mut Simulation) {
-        let now = self.now;
+        let (now, hub_stage) = (self.now, self.hub_stage);
         let Some(b) = self.at_index_mut(i) else { return };
         let def = content.factory.building_def(b.kind);
         let mut pull_ports: Vec<PlacedPort> = vec![];
@@ -822,7 +851,9 @@ impl Buildings {
                 Logic::Hub(inv) => {
                     cells::take_from_side(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, phases, |mat| {
                         let item = ItemRef::Material(mat);
-                        port_allows(def, &port, item) && is_deliverable(content, item) && inv.insert(content, item, 1) == 0
+                        port_allows(def, &port, item)
+                            && is_deliverable(content, item, hub_stage)
+                            && inv.insert(content, item, 1) == 0
                     })
                 }
                 _ => 0,
@@ -843,6 +874,7 @@ impl Buildings {
 
     /// A part input takes one part from a storage building on the other side of the port.
     fn pull_part(&mut self, i: u32, port: PlacedPort, content: &Content) -> bool {
+        let hub_stage = self.hub_stage;
         let Some(&nid) = self.front.get(&neighbor_tile(port.tile, port.side)) else { return false };
         let Some((me, src)) = two_mut(&mut self.slots, i as usize, nid.index as usize) else { return false };
         let Logic::Storage(inv) = &mut src.logic else { return false };
@@ -850,7 +882,7 @@ impl Buildings {
         for s in 0..inv.slots.len() {
             let Some(st) = inv.slots[s] else { continue };
             let item = ItemRef::Part(st.part);
-            if !port_allows(def, &port, item) || accept(&mut me.logic, content, item, 1) == 0 {
+            if !port_allows(def, &port, item) || accept(&mut me.logic, content, item, 1, hub_stage) == 0 {
                 continue;
             }
             let left = st.count - 1;
@@ -863,6 +895,7 @@ impl Buildings {
     /// A part output gives one part to the building on the other side of the port, if that
     /// building is a storage or has a part input facing this port.
     fn push_part(&mut self, i: u32, port: PlacedPort, content: &Content) -> Option<u32> {
+        let hub_stage = self.hub_stage;
         let n_tile = neighbor_tile(port.tile, port.side);
         let &nid = self.front.get(&n_tile)?;
         let (me, dst) = two_mut(&mut self.slots, i as usize, nid.index as usize)?;
@@ -884,7 +917,7 @@ impl Buildings {
                     if m.outputs[j] == 0 || !matches!(item, ItemRef::Part(_)) || !passes(item) {
                         continue;
                     }
-                    if accept(&mut dst.logic, content, item, 1) == 1 {
+                    if accept(&mut dst.logic, content, item, 1, hub_stage) == 1 {
                         m.outputs[j] -= 1;
                         return Some(nid.index);
                     }
@@ -894,7 +927,7 @@ impl Buildings {
                 for s in 0..inv.slots.len() {
                     let Some(st) = inv.slots[s] else { continue };
                     let item = ItemRef::Part(st.part);
-                    if passes(item) && accept(&mut dst.logic, content, item, 1) == 1 {
+                    if passes(item) && accept(&mut dst.logic, content, item, 1, hub_stage) == 1 {
                         inv.remove(item, 1);
                         return Some(nid.index);
                     }
@@ -959,14 +992,14 @@ impl Buildings {
             Logic::Lab(lab) => {
                 if !has_power {
                     b.status = Status::NoPower;
-                    lab.reason = None;
+                    lab.last = None;
                     return;
                 }
                 let speed = def.speed * if electric { b.power_factor } else { 1.0 };
                 let st = progress.lab_tick(content, speed, &mut lab.kits);
-                let (status, reason) = progress_link::lab_status(st);
+                let status = progress_link::lab_status(&st);
                 b.status = status;
-                lab.reason = Some(reason);
+                lab.last = Some(st);
                 if status == Status::Working {
                     b.busy = true;
                     b.power_w = power.map_or(0.0, |p| p.use_w);
@@ -1316,8 +1349,8 @@ impl Buildings {
                     .iter()
                     .map(|(p, n)| BufferView::new(content, ItemRef::Part(p), n, lab.kit_limit, 1))
                     .collect();
-                if let Some(r) = lab.reason {
-                    v.reason = r.to_string();
+                if let Some(st) = &lab.last {
+                    v.reason = progress_link::lab_reason(content, st);
                 }
             }
             Logic::Belt(_) | Logic::Workbench | Logic::Passive => {}
