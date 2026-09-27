@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cargo run --release -p foundry_sim --example infinite -- loaded     # (a) tick time with 100,000 extra chunks
-//! cargo run --release -p foundry_sim --example infinite -- walk [N]   # (b) move the view N chunks (default 10,000)
+//! cargo run --release -p foundry_sim --example infinite -- walk [N] [threads]  # (b) move the view N chunks (default 10,000)
 //! cargo run --release -p foundry_sim --example infinite -- generate   # how many chunks per second the source makes
 //! ```
 //!
@@ -19,7 +19,11 @@ fn main() {
     let content = Arc::new(Content::load_default().unwrap());
     match args.first().map(String::as_str) {
         Some("loaded") => loaded(&content),
-        Some("walk") => walk(&content, args.get(1).and_then(|a| a.parse().ok()).unwrap_or(10_000)),
+        Some("walk") => walk(
+            &content,
+            args.get(1).and_then(|a| a.parse().ok()).unwrap_or(10_000),
+            args.get(2).and_then(|a| a.parse().ok()).unwrap_or(0),
+        ),
         Some("generate") => generate(&content),
         _ => eprintln!("usage: infinite (loaded | walk [chunks] | generate)"),
     }
@@ -30,15 +34,26 @@ fn world(content: &Arc<Content>) -> Simulation {
     Simulation::new(content.clone(), SimConfig { depth_chunks: 24, ..SimConfig::infinite(5, None) })
 }
 
-/// The work area: 40 × 25 chunks with falling sand and water in the top half (like the stress
-/// example), so about 1,000 chunks are awake.
+/// A world with 32 chunks of sky over 8 chunks of stone, for the work area.
+fn tall_sky_world(content: &Arc<Content>) -> Simulation {
+    Simulation::new(content.clone(), SimConfig { sky_chunks: 32, depth_chunks: 8, ..SimConfig::infinite(5, None) })
+}
+
+/// The work area: 40 × 25 chunks of sky with falling sand and water (every 2nd column, every 3rd
+/// row, like the stress example), so about 1,000 chunks are awake at the start.
 const WORK: CellRect = CellRect::new(0, 0, 40 * CHUNK_SIZE, 25 * CHUNK_SIZE);
+
+/// Tick number at which the work starts in each world, so all worlds run the same ticks.
+const WORK_TICK: u64 = 1100;
 
 fn add_work(s: &mut Simulation) {
     let c = s.content().clone();
     let (sand, water) = (c.expect_material("sand"), c.expect_material("water"));
     s.apply(Command::SetView { area: WORK });
-    for y in (40..WORK.y1 / 2).step_by(3) {
+    while s.tick_count() < WORK_TICK {
+        s.tick();
+    }
+    for y in (40..WORK.y1 - 40).step_by(3) {
         for x in (4..WORK.x1 - 4).step_by(2) {
             s.set_cell(CellPos::new(x, y), if (x / 64 + y / 64) % 2 == 0 { sand } else { water }, None);
         }
@@ -63,21 +78,20 @@ fn loaded(content: &Arc<Content>) {
     // Three worlds: only the work area; plus 100,000 live chunks (never unloaded); plus 100,000
     // packed chunks (an explored world that the player changed in many places).
     let small = || {
-        let mut s = world(content);
+        let mut s = tall_sky_world(content);
         add_work(&mut s);
         s
     };
     let with_live = || {
-        let mut s = world(content);
+        let mut s = tall_sky_world(content);
         s.settings_mut().unload_every_ticks = 0;
-        // 100,000 stone chunks to the right of the work area: 2,500 columns × 40 rows (the 16 sky
-        // rows are all air and are not stored as cells, so the stone rows are made wider).
+        // 100,000 stone chunks to the right of the work area: 12,500 columns × 8 rows.
         let start = Instant::now();
-        let (x0, rows) = (100 * CHUNK_SIZE, 24);
-        let columns = 100_000 / rows + 1;
-        for i in 0..(columns / 200 + 1) {
-            let x = x0 + i * 200 * CHUNK_SIZE;
-            s.apply(Command::SetView { area: CellRect::new(x, 16 * CHUNK_SIZE, x + 200 * CHUNK_SIZE, (16 + rows) * CHUNK_SIZE) });
+        let (x0, rows) = (100 * CHUNK_SIZE, 8);
+        let columns = 100_000 / rows;
+        for i in 0..columns / 500 {
+            let x = x0 + i * 500 * CHUNK_SIZE;
+            s.apply(Command::SetView { area: CellRect::new(x, 32 * CHUNK_SIZE, x + 500 * CHUNK_SIZE, (32 + rows) * CHUNK_SIZE) });
             s.tick();
         }
         println!("  made {} live chunks in {:.2} s", s.memory().live_chunks, start.elapsed().as_secs_f64());
@@ -85,7 +99,7 @@ fn loaded(content: &Arc<Content>) {
         s
     };
     let with_packed = || {
-        let mut s = world(content);
+        let mut s = tall_sky_world(content);
         let stone = content.expect_material("stone");
         let start = Instant::now();
         // One stone cell in each of 100,000 sky chunks (a changed chunk each). In batches of 1,000
@@ -102,10 +116,12 @@ fn loaded(content: &Arc<Content>) {
                 s.tick();
             }
         }
-        add_work(&mut s);
+        // Move the view to the work area, so the last batch is packed too.
+        s.apply(Command::SetView { area: WORK });
         for _ in 0..10 {
             s.tick();
         }
+        add_work(&mut s);
         let m = s.memory();
         println!(
             "  made {} packed chunks ({:.1} MB) in {:.2} s",
@@ -144,14 +160,17 @@ fn loaded(content: &Arc<Content>) {
 /// (b) Move a view of 28 × 16 chunks to the right, one chunk per tick (about the fastest camera
 /// pan at zoom 1). Every 32 ticks, dig a hole and drop sand and water into it, so changed
 /// chunks are left behind. Prints tick times, chunks made per second and memory.
-fn walk(content: &Arc<Content>, chunks: i32) {
+fn walk(content: &Arc<Content>, chunks: i32, threads: usize) {
     let mut s = world(content);
+    if threads > 0 {
+        s.set_threads(threads);
+    }
     let c = s.content().clone();
     let (sand, water) = (c.expect_material("sand"), c.expect_material("water"));
     let (w, h) = (28 * CHUNK_SIZE, 16 * CHUNK_SIZE);
     let y0 = 8 * CHUNK_SIZE;
     let mut times = Vec::with_capacity(chunks as usize);
-    let mut generated_time = 0.0;
+    let mut sections: Vec<(&'static str, f64)> = Vec::new();
     let start = Instant::now();
     for t in 0..chunks {
         let x = t * CHUNK_SIZE;
@@ -166,7 +185,12 @@ fn walk(content: &Arc<Content>, chunks: i32) {
         s.tick();
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         times.push(ms);
-        generated_time += s.stats().sections[0].1 as f64;
+        for (i, (name, ms)) in s.stats().sections.iter().enumerate() {
+            if sections.len() <= i {
+                sections.push((name, 0.0));
+            }
+            sections[i].1 += *ms as f64;
+        }
         s.take_snapshot();
         if t % 2000 == 0 || t == chunks - 1 {
             let m = s.memory();
@@ -193,12 +217,10 @@ fn walk(content: &Arc<Content>, chunks: i32) {
         times[times.len() * 95 / 100],
         times[times.len() - 1]
     );
-    println!(
-        "    chunks made: {} ({:.0} per second of walking; {:.1} ms of tick time was spent making the view's chunks)",
-        m.generated_total,
-        m.generated_total as f64 / total,
-        generated_time
-    );
+    println!("    chunks made: {} ({:.0} per second of walking)", m.generated_total, m.generated_total as f64 / total);
+    let parts: Vec<String> =
+        sections.iter().map(|(name, ms)| format!("{name} {:.3}", ms / chunks as f64)).collect();
+    println!("    mean ms per tick by part: {}", parts.join(", "));
     let mut bytes = vec![];
     let save = Instant::now();
     s.save(&mut bytes).unwrap();

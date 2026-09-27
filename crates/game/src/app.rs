@@ -452,6 +452,7 @@ impl Game {
             self.stats.tick_ms = snapshot.stats.tick_ms;
             self.stats.awake_chunks = snapshot.stats.awake_chunks;
             self.stats.loaded_chunks = snapshot.stats.loaded_chunks;
+            self.stats.packed_chunks = snapshot.stats.packed_chunks;
             let (w, h) = snapshot.world_cells;
             self.controls.world = DVec2::new(w as f64, h as f64);
         }

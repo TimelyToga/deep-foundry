@@ -61,19 +61,12 @@ pub fn movement_tick(
     // Pointers to the neighbors. Neighbors that are not live yet are loaded first.
     let mut missing = Vec::new();
     let mut hoods = Vec::with_capacity(work.len());
-    for &(c, _) in &work {
-        hoods.push(world.hood_ptrs(c, &mut missing).0);
-    }
-    if !missing.is_empty() {
+    if !world.hood_ptrs(&work, &mut hoods, &mut missing) {
         world.load(&missing, true, pool);
         // Loading changes the maps, so look up all pointers again.
         missing.clear();
-        hoods.clear();
-        for &(c, _) in &work {
-            let (h, complete) = world.hood_ptrs(c, &mut missing);
-            debug_assert!(complete, "neighbors of {c:?} are live");
-            hoods.push(h);
-        }
+        let complete = world.hood_ptrs(&work, &mut hoods, &mut missing);
+        debug_assert!(complete, "neighbors of working chunks are live: {missing:?}");
     }
     let ptrs = HoodPtrs(hoods);
 
