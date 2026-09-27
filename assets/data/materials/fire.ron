@@ -1,0 +1,18 @@
+// Fire is in basic.ron. This file adds ember.
+// See docs/design/02-content.md section 2.7.
+[
+    Material(
+        id: "ember",
+        name: "Ember",
+        phase: Fire,
+        colors: ["#ff5a1a", "#e0430f", "#ff7a30", "#c93a0c"],
+        density: 0.5,
+        heat_capacity: 0.3,
+        conductivity: 0.2,
+        temperature: Some(700),
+        life: Some((90, 200)),
+        decay_into: Some("ash"),
+        glow: 1.0,
+        note: Some("A burning powder cell, such as charcoal or coal. Glows and lives longer than fire."),
+    ),
+]

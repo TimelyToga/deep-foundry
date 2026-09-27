@@ -1,0 +1,10 @@
+// Acids and reactive gases. See docs/design/02-content.md section 3, rule 49.
+// Rules 46-48 (acid on metal, acid on limestone, acid on sodium hydroxide) and rules 51-57
+// (mercury, chlorine chemistry, liquid nitrogen) need materials that are not in Tier 0-1
+// (metal sulfate solutions, gypsum, sodium hydroxide, hydrogen chloride, mercury). They are
+// left out until those materials exist. See requests/content-data.md.
+[
+    // Rule 49: sulfur dioxide plus water makes a weak acid. We do not yet have a separate
+    // "acid water" material, so this uses sulfuric acid as a stand-in. See requests/content-data.md.
+    Reaction(a: "sulfur_dioxide", b: "water", chance: 0.05, into_a: Some("air"), into_b: Some("sulfuric_acid"), note: Some("Rule 49, simplified.")),
+]

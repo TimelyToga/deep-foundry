@@ -1,0 +1,25 @@
+// Water, ice, steam, lava and dissolving. See docs/design/02-content.md section 3, rules 1-14.
+// Most single-material phase changes (water <-> steam <-> ice, snow -> water) are on the
+// materials themselves (melt/freeze/boil/condense), not here. This file is for reactions
+// that need two different materials touching.
+[
+    Reaction(a: "water", b: "lava", chance: 0.5, into_a: Some("steam"), into_b: Some("obsidian"), note: Some("Rule 5. Lava meets water.")),
+    Reaction(a: "fire", b: "water", chance: 0.8, into_a: Some("air"), into_b: Some("steam"), note: Some("Rule 8. The fire goes out.")),
+
+    // Rule 7: molten metal touching water makes a small steam explosion and freezes the metal.
+    // The schema needs one material id per result, so this is one reaction per metal instead
+    // of a single "tag: molten metal" rule. See requests/content-data.md.
+    Reaction(a: "molten_tin", b: "water", chance: 0.6, into_a: Some("tin_block"), into_b: Some("steam"), event: Some("explosion_small")),
+    Reaction(a: "molten_lead", b: "water", chance: 0.6, into_a: Some("lead_block"), into_b: Some("steam"), event: Some("explosion_small")),
+    Reaction(a: "molten_zinc", b: "water", chance: 0.6, into_a: Some("zinc_block"), into_b: Some("steam"), event: Some("explosion_small")),
+    Reaction(a: "molten_bronze", b: "water", chance: 0.6, into_a: Some("bronze_block"), into_b: Some("steam"), event: Some("explosion_small")),
+    Reaction(a: "molten_copper", b: "water", chance: 0.6, into_a: Some("copper_block"), into_b: Some("steam"), event: Some("explosion_small")),
+    Reaction(a: "molten_pig_iron", b: "water", chance: 0.6, into_a: Some("pig_iron_block"), into_b: Some("steam"), event: Some("explosion_small")),
+    Reaction(a: "molten_steel", b: "water", chance: 0.6, into_a: Some("steel_block"), into_b: Some("steam"), event: Some("explosion_small")),
+    Reaction(a: "molten_gold", b: "water", chance: 0.6, into_a: Some("gold_block"), into_b: Some("steam"), event: Some("explosion_small")),
+    Reaction(a: "molten_silver", b: "water", chance: 0.6, into_a: Some("silver_block"), into_b: Some("steam"), event: Some("explosion_small")),
+
+    Reaction(a: "salt", b: "water", chance: 0.3, into_a: Some("air"), into_b: Some("brine"), note: Some("Rule 10. The salt dissolves.")),
+    Reaction(a: "salt", b: "ice", chance: 0.3, into_a: Some("air"), into_b: Some("brine"), note: Some("Rule 11. The ice melts.")),
+    Reaction(a: "dirt", b: "water", chance: 0.05, into_a: Some("mud"), into_b: Some("air"), note: Some("Rule 13.")),
+]
