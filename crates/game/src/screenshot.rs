@@ -347,7 +347,7 @@ impl OffscreenUi {
                 if let Some((camera, nv)) = overlay_data {
                     let painter = root.ctx().layer_painter(egui::LayerId::background());
                     let mouse = nv.ghost.as_ref().map(|g| g.request.at.origin());
-                    overlay::draw(&painter, camera, root.ctx().pixels_per_point(), &nv.frame, nv.ghost.as_ref(), mouse);
+                    overlay::draw(&painter, camera, root.ctx().pixels_per_point(), &nv.frame, None, nv.ghost.as_ref(), mouse);
                 }
             });
             for (id, deltas) in out.textures_delta.set.drain() {
