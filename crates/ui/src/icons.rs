@@ -1,18 +1,256 @@
 //! Item icons.
 //!
-//! There is no art yet, so this module draws small pixel-art icons (32 x 32 art pixels) from
-//! the [`IconSpec`] of each item. It builds them once into egui textures.
+//! There is no art yet, so this module draws small pixel-art icons (32 x 32 art pixels) and
+//! builds them once into egui textures.
 //!
-//! This is the one place that maps an [`ItemId`] to its picture: [`IconAtlas::paint`].
-//! When real art exists, change [`IconAtlas::build`] to load the art (by `ItemInfo::key`)
-//! instead of calling [`draw_icon`].
+//! [`spec_for`] is the one place that maps an item ([`ItemRef`]) to its picture. Parts use the
+//! `icon` shape name from the data files ("gear", "plate", "kit", "machine", ...). Materials use
+//! a shape for their phase (a pile for powders, a drop for liquids) in their own colors.
+//! When real art exists, change [`IconAtlas::build`] to load the art (by the string id of the
+//! item) instead of calling [`draw_icon`].
 //!
 //! Each icon is stored twice: at 32 px (for small slots) and at 64 px (each art pixel is
 //! 2 x 2). `paint` picks the size that is closest to the size on the screen.
 
-use crate::item::{Catalog, IconShape, IconSpec, ItemId, MachineGlyph};
 use egui::{Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureId, TextureOptions};
+use foundry_content::{Content, ItemRef, Phase};
 use std::collections::HashMap;
+use std::sync::Arc;
+
+/// The shape that the icon generator draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IconShape {
+    // Bulk materials
+    Pile,
+    Drop,
+    Gas,
+    Block,
+    Flame,
+    // Parts
+    Gear,
+    Plate,
+    Ingot,
+    Rod,
+    WireCoil,
+    Pipe,
+    Brick,
+    Circuit,
+    Kit,
+    Vial,
+    Pane,
+    Sheet,
+    Bolt,
+    VacuumTube,
+    // Buildings
+    Machine(MachineGlyph),
+    Belt,
+    Crate,
+    Barrel,
+    Wall,
+    Ladder,
+    Campfire,
+    Workbench,
+    Hopper,
+    Mold,
+    Crucible,
+    Tank,
+    Cable,
+    SolarPanel,
+    Battery,
+}
+
+/// The small symbol on a machine icon. It shows the machine family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MachineGlyph {
+    None,
+    Gear,
+    Flame,
+    Hammer,
+    Crusher,
+    Drop,
+    Flask,
+    Arrow,
+    Lightning,
+    Fan,
+    Magnet,
+    Drill,
+    Wire,
+    Plus,
+}
+
+/// How to draw the icon of one item.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IconSpec {
+    pub shape: IconShape,
+    /// The main colors, as RGBA. At least one color.
+    pub colors: Vec<[u8; 4]>,
+    /// Tier (0 to 5). Machines use it for the colored band.
+    pub tier: u8,
+}
+
+impl IconSpec {
+    pub fn new(shape: IconShape, color: [u8; 4]) -> Self {
+        Self { shape, colors: vec![color], tier: 0 }
+    }
+}
+
+/// A shape by its name in the data files. `None` for unknown names.
+pub fn shape_by_name(name: &str) -> Option<IconShape> {
+    use IconShape::*;
+    Some(match name {
+        "pile" | "powder" => Pile,
+        "drop" | "liquid" => Drop,
+        "gas" => Gas,
+        "block" => Block,
+        "flame" | "fire" => Flame,
+        "gear" => Gear,
+        "plate" => Plate,
+        "ingot" => Ingot,
+        "rod" => Rod,
+        "wire" | "coil" => WireCoil,
+        "pipe" => Pipe,
+        "brick" => Brick,
+        "circuit" => Circuit,
+        "kit" => Kit,
+        "vial" => Vial,
+        "tube" | "vacuum_tube" => VacuumTube,
+        "pane" | "glass" => Pane,
+        "sheet" => Sheet,
+        "bolt" => Bolt,
+        "machine" => Machine(MachineGlyph::None),
+        "belt" => Belt,
+        "crate" | "chest" | "storage" => Crate,
+        "barrel" => Barrel,
+        "wall" => Wall,
+        "ladder" => Ladder,
+        "campfire" => Campfire,
+        "workbench" => Workbench,
+        "hopper" | "chute" => Hopper,
+        "mold" => Mold,
+        "crucible" => Crucible,
+        "tank" | "boiler" => Tank,
+        "cable" => Cable,
+        "solar" | "solar_panel" => SolarPanel,
+        "battery" => Battery,
+        _ => return None,
+    })
+}
+
+/// The glyph of a machine, from its building kind and crafting categories.
+fn machine_glyph(kind: &str, crafts: &[String], id: &str) -> MachineGlyph {
+    use MachineGlyph as G;
+    let has = |c: &str| crafts.iter().any(|x| x.contains(c));
+    match kind {
+        "furnace" | "room_controller" => G::Flame,
+        "lab" => G::Flask,
+        "pump" | "outlet" | "drain" | "arm" | "splitter" | "sorter" | "room_port" => G::Arrow,
+        "drill" => G::Drill,
+        "fan" | "bellows" => G::Fan,
+        "magnet" => G::Magnet,
+        "sluice" | "valve" => G::Drop,
+        "stamp_mill" => G::Hammer,
+        "generator" if id.contains("water") => G::Drop,
+        "generator" if id.contains("turbine") => G::Fan,
+        "generator" => G::Lightning,
+        "hub" => G::Plus,
+        _ if has("crush") || has("macerat") => G::Crusher,
+        _ if has("hammer") || has("press") => G::Hammer,
+        _ if has("wire") => G::Wire,
+        _ if has("alloy") => G::Plus,
+        _ if has("smelt") || has("kiln") => G::Flame,
+        _ if has("wash") || has("extract") => G::Drop,
+        _ => G::Gear,
+    }
+}
+
+/// The shape of a building icon when the data says only "machine".
+fn building_shape(kind: &str, crafts: &[String], id: &str) -> IconShape {
+    use IconShape::*;
+    match kind {
+        "workbench" => Workbench,
+        "crucible" => Crucible,
+        "mold" => Mold,
+        "hopper" | "chute" => Hopper,
+        "belt" => Belt,
+        "storage" if id.contains("barrel") => Barrel,
+        "storage" => Crate,
+        "tank" | "boiler" => Tank,
+        "pipe" => Pipe,
+        "cable" => Cable,
+        "battery" => Battery,
+        "generator" if id.contains("solar") => SolarPanel,
+        "wall" | "room_wall" => Wall,
+        _ if id.contains("ladder") => Ladder,
+        _ if id.contains("campfire") => Campfire,
+        _ => Machine(machine_glyph(kind, crafts, id)),
+    }
+}
+
+fn material_colors(content: &Content, m: foundry_core::MaterialId) -> Vec<[u8; 4]> {
+    content
+        .materials
+        .colors
+        .get(m.index())
+        .map(|cs| cs.iter().map(|c| [c[0], c[1], c[2], 255]).collect::<Vec<_>>())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| vec![[140, 140, 140, 255]])
+}
+
+/// The color of a research kit, by the words in its id.
+fn kit_color(id: &str) -> [u8; 4] {
+    let table: [(&str, [u8; 4]); 6] = [
+        ("bronze", [226, 150, 60, 255]),
+        ("steam", [110, 170, 230, 255]),
+        ("electric", [240, 210, 70, 255]),
+        ("chemical", [110, 210, 100, 255]),
+        ("heavy", [170, 110, 220, 255]),
+        ("deep", [90, 220, 220, 255]),
+    ];
+    table.iter().find(|(k, _)| id.contains(k)).map(|(_, c)| *c).unwrap_or([220, 90, 90, 255])
+}
+
+/// How to draw the icon of an item. This is the one place that maps items to pictures.
+pub fn spec_for(content: &Content, item: ItemRef) -> IconSpec {
+    match item {
+        ItemRef::Material(m) => {
+            let shape = match content.materials.phase.get(m.index()).copied().unwrap_or(Phase::Solid) {
+                Phase::Powder => IconShape::Pile,
+                Phase::Liquid => IconShape::Drop,
+                Phase::Gas => IconShape::Gas,
+                Phase::Fire => IconShape::Flame,
+                Phase::Solid | Phase::Empty => IconShape::Block,
+            };
+            IconSpec { shape, colors: material_colors(content, m), tier: 0 }
+        }
+        ItemRef::Part(p) => {
+            let Some(part) = content.factory.parts.get(p.0 as usize) else {
+                return IconSpec::new(IconShape::Machine(MachineGlyph::None), [120, 120, 120, 255]);
+            };
+            let building = part.building.and_then(|b| content.factory.buildings.get(b.0 as usize));
+            let named = part.icon.as_deref().and_then(shape_by_name);
+            let shape = match (named, building) {
+                // "machine" is the default for buildings: pick a clearer shape from the building kind.
+                (Some(IconShape::Machine(MachineGlyph::None)) | None, Some(b)) => building_shape(&b.kind, &b.crafts, &b.id),
+                (Some(s), _) => s,
+                (None, None) => IconShape::Plate,
+            };
+            let mut colors = match (building, part.material) {
+                (Some(b), _) => material_colors(content, b.body),
+                (None, Some(m)) => material_colors(content, m),
+                (None, None) => vec![[150, 150, 150, 255]],
+            };
+            match shape {
+                IconShape::Kit => colors = vec![kit_color(&part.id)],
+                IconShape::Circuit => colors = vec![[62, 120, 64, 255]],
+                IconShape::Pane | IconShape::Vial | IconShape::VacuumTube if part.material.is_none() => {
+                    colors = vec![[178, 222, 236, 255]]
+                }
+                _ => {}
+            }
+            IconSpec { shape, colors, tier: building.map(|b| b.tier).unwrap_or(0) }
+        }
+    }
+}
 
 /// Size of an icon in art pixels.
 pub const ART: usize = 32;
@@ -944,19 +1182,23 @@ fn tank(c: &mut Canvas, p: &Pal, tier: u8) {
 }
 
 fn cable(c: &mut Canvas, p: &Pal) {
-    c.fill_where(
-        |x, y| {
-            let r = ((x - 15.0).powi(2) + (y - 15.0).powi(2)).sqrt();
-            (6.0..11.5).contains(&r)
-        },
-        |x, y| {
-            let a = ((y as f32 - 15.0).atan2(x as f32 - 15.0) * 4.0).sin();
-            lit(p.base, 1.0 + 0.2 * a)
-        },
-    );
-    c.line((22.0, 22.0), (29.0, 29.0), 3.0, p.base);
-    c.set(29, 29, [230, 150, 80, 255]);
-    c.bevel(1.3, 0.65);
+    // A cable in an S curve, made of short thick segments.
+    let pts: Vec<(f32, f32)> = (0..=16)
+        .map(|i| {
+            let t = i as f32 / 16.0;
+            (5.0 + 22.0 * t, 16.0 + 9.0 * (t * std::f32::consts::TAU).sin())
+        })
+        .collect();
+    for w in pts.windows(2) {
+        c.line(w[0], w[1], 4.6, lit(p.base, 0.9));
+    }
+    for w in pts.windows(2) {
+        c.line((w[0].0 - 0.7, w[0].1 - 0.9), (w[1].0 - 0.7, w[1].1 - 0.9), 1.2, lit(p.base, 1.35));
+    }
+    // Copper ends.
+    let copper = [226, 140, 80, 255];
+    c.line((2.0, 16.0), (5.0, 16.0), 2.0, copper);
+    c.line((27.0, 16.0), (30.0, 16.0), 2.0, copper);
     c.outline(0.3);
 }
 
@@ -992,10 +1234,11 @@ const CELL_S: usize = SMALL + 2 * PAD_S;
 const CELL_L: usize = LARGE + 2 * PAD_L;
 const COLS: usize = 16;
 
-/// The icons of all catalog items in egui textures.
+/// The icons of all items of the content in egui textures.
 pub struct IconAtlas {
-    revision: u64,
-    index: HashMap<ItemId, usize>,
+    /// The content this atlas was built for. Holding it keeps its address unique.
+    content: Arc<Content>,
+    index: HashMap<ItemRef, usize>,
     rows: usize,
     small: TextureHandle,
     large: TextureHandle,
@@ -1003,45 +1246,45 @@ pub struct IconAtlas {
 }
 
 impl IconAtlas {
-    /// Draw all icons of the catalog and upload them. Slot 0 is the "unknown" icon.
-    pub fn build(ctx: &egui::Context, catalog: &Catalog) -> Self {
+    /// Draw the icons of all materials and parts and upload them. Slot 0 is the "unknown" icon.
+    pub fn build(ctx: &egui::Context, content: &Arc<Content>) -> Self {
         let mut canvases = vec![unknown_icon()];
         let mut index = HashMap::new();
         // Items with the same spec share one picture.
         let mut by_spec: Vec<(IconSpec, usize)> = vec![];
-        for info in catalog.items() {
-            let slot = match by_spec.iter().find(|(s, _)| *s == info.icon) {
+        let parts = (0..content.factory.parts.len()).map(|i| ItemRef::Part(foundry_core::PartId(i as u16)));
+        for item in content.materials.all().skip(1).map(ItemRef::Material).chain(parts) {
+            let spec = spec_for(content, item);
+            let slot = match by_spec.iter().find(|(s, _)| *s == spec) {
                 Some((_, i)) => *i,
                 None => {
-                    canvases.push(draw_icon(&info.icon));
-                    by_spec.push((info.icon.clone(), canvases.len() - 1));
+                    canvases.push(draw_icon(&spec));
+                    by_spec.push((spec, canvases.len() - 1));
                     canvases.len() - 1
                 }
             };
-            index.insert(info.id, slot);
+            index.insert(item, slot);
         }
         let rows = canvases.len().div_ceil(COLS);
         let small = pack(&canvases, 1, CELL_S, PAD_S, rows);
         let large = pack(&canvases, 2, CELL_L, PAD_L, rows);
-        let linear = TextureOptions::LINEAR;
-        let sharp = TextureOptions::NEAREST;
         Self {
-            revision: catalog.revision,
+            content: content.clone(),
             index,
             rows,
-            small: ctx.load_texture("foundry-icons-32", small.clone(), linear),
-            large: ctx.load_texture("foundry-icons-64", large.clone(), linear),
-            large_sharp: ctx.load_texture("foundry-icons-64-sharp", large, sharp),
+            small: ctx.load_texture("foundry-icons-32", small, TextureOptions::LINEAR),
+            large: ctx.load_texture("foundry-icons-64", large.clone(), TextureOptions::LINEAR),
+            large_sharp: ctx.load_texture("foundry-icons-64-sharp", large, TextureOptions::NEAREST),
         }
     }
 
-    /// The catalog revision this atlas was built for.
-    pub fn revision(&self) -> u64 {
-        self.revision
+    /// True if this atlas was built for this content (the same `Arc`).
+    pub fn is_for(&self, content: &Arc<Content>) -> bool {
+        Arc::ptr_eq(&self.content, content)
     }
 
     /// The texture and the UV rectangle of an item icon, for a size on the screen in pixels.
-    pub fn texture_uv(&self, item: ItemId, pixels: f32) -> (TextureId, Rect) {
+    pub fn texture_uv(&self, item: ItemRef, pixels: f32) -> (TextureId, Rect) {
         let slot = self.index.get(&item).copied().unwrap_or(0);
         let (col, row) = (slot % COLS, slot / COLS);
         let (tex, cell, pad, size) = if pixels <= 40.0 {
@@ -1060,7 +1303,7 @@ impl IconAtlas {
     }
 
     /// Paint the icon of an item into `rect`. `tint` is multiplied (use white for no change).
-    pub fn paint(&self, painter: &Painter, item: ItemId, rect: Rect, tint: Color32) {
+    pub fn paint(&self, painter: &Painter, item: ItemRef, rect: Rect, tint: Color32) {
         let (tex, uv) = self.texture_uv(item, rect.width() * painter.pixels_per_point());
         painter.image(tex, rect, uv, tint);
     }

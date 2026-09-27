@@ -7,14 +7,14 @@
 //!
 //! A click never asks for more than the player can make. The simulation checks again.
 
-use crate::item::{ItemId, RecipeView};
 use crate::model::PlayerView;
+use foundry_content::{ItemRef, Recipe};
 use std::collections::HashMap;
 
 /// How many of each item the player has (part slots and material tank together).
 #[derive(Debug, Clone, Default)]
 pub struct Stock {
-    counts: HashMap<ItemId, u64>,
+    counts: HashMap<ItemRef, u64>,
 }
 
 impl Stock {
@@ -32,28 +32,28 @@ impl Stock {
         }
         for slot in &player.tank {
             if let Some(m) = slot.material {
-                *self.counts.entry(ItemId::Material(m)).or_default() += slot.units as u64;
+                *self.counts.entry(ItemRef::Material(m)).or_default() += slot.units as u64;
             }
         }
     }
 
-    pub fn set(&mut self, item: ItemId, count: u64) {
+    pub fn set(&mut self, item: ItemRef, count: u64) {
         self.counts.insert(item, count);
     }
 
-    pub fn get(&self, item: ItemId) -> u64 {
+    pub fn get(&self, item: ItemRef) -> u64 {
         self.counts.get(&item).copied().unwrap_or(0)
     }
 }
 
-/// How many times the recipe can run with the items in `stock`. 0 if it has no ingredients.
-pub fn craftable_count(recipe: &RecipeView, stock: &Stock) -> u32 {
+/// How many times the recipe can run with the items in `stock`. 0 if it has no inputs.
+pub fn craftable_count(recipe: &Recipe, stock: &Stock) -> u32 {
     let mut best: Option<u64> = None;
-    for ing in &recipe.ingredients {
-        if ing.amount == 0 {
+    for input in &recipe.inputs {
+        if input.count == 0 {
             continue;
         }
-        let times = stock.get(ing.item) / ing.amount as u64;
+        let times = stock.get(input.item) / input.count as u64;
         best = Some(best.map_or(times, |b| b.min(times)));
     }
     best.unwrap_or(0).min(u32::MAX as u64) as u32
@@ -86,37 +86,35 @@ pub fn cancel_count(right_button: bool, shift: bool, job_count: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::{CraftGroup, ItemAmount, ItemStack, Maker, PartId};
     use crate::model::TankSlot;
-    use foundry_core::{MaterialId, RecipeId};
+    use foundry_content::Stack;
+    use foundry_core::{MaterialId, PartId};
 
-    const PLATE: ItemId = ItemId::Part(PartId(1));
-    const GEAR: ItemId = ItemId::Part(PartId(2));
-    const CLAY: ItemId = ItemId::Material(MaterialId(3));
+    const PLATE: ItemRef = ItemRef::Part(PartId(1));
+    const GEAR: ItemRef = ItemRef::Part(PartId(2));
+    const CLAY: ItemRef = ItemRef::Material(MaterialId(3));
 
-    fn recipe(ings: &[(ItemId, u32)]) -> RecipeView {
-        RecipeView {
-            id: RecipeId(1),
+    fn recipe(inputs: &[(ItemRef, u32)]) -> Recipe {
+        Recipe {
+            id: "test".into(),
             name: "Test".into(),
-            group: CraftGroup::Intermediate,
-            row: 0,
-            ingredients: ings.iter().map(|&(i, a)| ItemAmount::new(i, a)).collect(),
-            results: vec![ItemAmount::new(GEAR, 1)],
+            category: "hand".into(),
+            hand: true,
+            inputs: inputs.iter().map(|&(item, count)| Stack { item, count }).collect(),
+            outputs: vec![Stack { item: GEAR, count: 1 }],
+            byproducts: vec![],
             time: 1.0,
-            made_in: vec![Maker::Hand],
-            unlocked: true,
-            min_temperature: None,
+            tier: 0,
+            min_temp: None,
+            group: "intermediate".into(),
+            unlocked_by: None,
         }
     }
 
     fn player() -> PlayerView {
+        let s = |item, count| Some(Stack { item, count });
         PlayerView {
-            inventory: vec![
-                Some(ItemStack::new(PLATE, 5)),
-                None,
-                Some(ItemStack::new(PLATE, 2)),
-                Some(ItemStack::new(GEAR, 5)),
-            ],
+            inventory: vec![s(PLATE, 5), None, s(PLATE, 2), s(GEAR, 5)],
             tank: vec![TankSlot { material: Some(MaterialId(3)), units: 100, capacity: 2000 }, TankSlot::default()],
             ..Default::default()
         }
@@ -128,7 +126,7 @@ mod tests {
         assert_eq!(s.get(PLATE), 7);
         assert_eq!(s.get(GEAR), 5);
         assert_eq!(s.get(CLAY), 100);
-        assert_eq!(s.get(ItemId::Part(PartId(99))), 0);
+        assert_eq!(s.get(ItemRef::Part(PartId(99))), 0);
     }
 
     #[test]

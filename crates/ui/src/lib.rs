@@ -27,7 +27,8 @@ pub mod widgets;
 mod screens;
 
 pub use action::{ClickButton, SettingChange, SlotClick, SlotRef, UiAction, WindowKind, WorldSize};
-pub use item::{Catalog, CraftGroup, IconShape, IconSpec, ItemAmount, ItemId, ItemInfo, ItemKind, ItemStack, MachineGlyph, Maker, PartId, RecipeView};
+pub use foundry_content::{ItemRef, Stack};
+pub use item::{CraftGroup, ItemKind, Maker};
 pub use model::*;
 
 use crafting::Stock;
@@ -85,9 +86,12 @@ pub(crate) struct UiState {
     pub power_range: TimeRange,
     pub stats_range: TimeRange,
     pub menu: MenuState,
-    pub last_state: GameState,
+    /// `None` before the first frame.
+    pub last_state: Option<GameState>,
     pub last_building: Option<BuildingId>,
     pub last_power: Option<u32>,
+    /// The main menu background, built once for each screen size.
+    pub menu_background: Option<(egui::Rect, std::sync::Arc<egui::Mesh>)>,
 }
 
 impl Default for UiState {
@@ -103,9 +107,10 @@ impl Default for UiState {
             power_range: TimeRange::Minutes1,
             stats_range: TimeRange::Minutes10,
             menu: MenuState::default(),
-            last_state: GameState::MainMenu,
+            last_state: None,
             last_building: None,
             last_power: None,
+            menu_background: None,
         }
     }
 }
@@ -184,8 +189,14 @@ impl FoundryUi {
 
     /// Draw the UI for one frame and return what the player asked for.
     pub fn show(&mut self, ctx: &egui::Context, model: &UiModel) -> Vec<UiAction> {
-        if self.atlas.as_ref().is_none_or(|a| a.revision() != model.catalog.revision) {
-            self.atlas = Some(IconAtlas::build(ctx, &model.catalog));
+        // New fonts become active at the start of the next frame. Draw nothing until then.
+        if !ctx.fonts(|f| f.definitions().families.contains_key(&theme::bold())) {
+            theme::install(ctx);
+            ctx.request_repaint();
+            return vec![];
+        }
+        if self.atlas.as_ref().is_none_or(|a| !a.is_for(&model.content)) {
+            self.atlas = Some(IconAtlas::build(ctx, &model.content));
         }
         let scale = model.settings.ui_scale.clamp(0.75, 2.0);
         if (ctx.zoom_factor() - scale).abs() > 0.001 {
@@ -267,16 +278,21 @@ impl FoundryUi {
     /// Open and close windows when the game changes the model.
     fn sync_with_model(&mut self, model: &UiModel) {
         let st = &mut self.state;
-        if model.state != st.last_state {
-            if model.state == GameState::MainMenu {
-                st.stack.clear();
-                st.character_open = false;
-                st.production_open = false;
-                st.picker_open = false;
+        match st.last_state {
+            None => st.last_state = Some(model.state),
+            Some(last) if last != model.state => {
+                if model.state == GameState::MainMenu {
+                    st.stack.clear();
+                    st.character_open = false;
+                    st.production_open = false;
+                    st.picker_open = false;
+                }
+                // A new menu (or the game) starts at its first page.
+                st.menu.page = MenuPage::Root;
+                st.menu.confirm = None;
+                st.last_state = Some(model.state);
             }
-            st.menu.page = MenuPage::Root;
-            st.menu.confirm = None;
-            st.last_state = model.state;
+            Some(_) => {}
         }
         let building = model.building.as_ref().map(|b| b.id);
         if building != st.last_building {

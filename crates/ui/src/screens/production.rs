@@ -4,6 +4,7 @@ use super::power::{draw_graph, series_color};
 use super::{Cx, window_id};
 use crate::action::WindowKind;
 use crate::format;
+use crate::item;
 use crate::graph::TimeRange;
 use crate::model::ProductionRow;
 use crate::theme::{color, font, font_bold, font_regular, text};
@@ -109,7 +110,7 @@ fn item_list(ui: &mut Ui, cx: &mut Cx, p: &Painter, r: Rect, rows: &[&Production
                 if i < GRAPH_ITEMS {
                     p.rect_filled(Rect::from_min_size(pos2(slot.right() + 6.0, rr.center().y - 5.0), Vec2::splat(10.0)), CornerRadius::same(1), series_color(i));
                 }
-                let name = cx.model.catalog.name(row.item);
+                let name = item::name(&cx.model.content, row.item);
                 p.text(pos2(slot.right() + 22.0, rr.top() + 9.0), Align2::LEFT_CENTER, name, font(text::BODY), color::TEXT);
                 let v = value(row);
                 let bar = Rect::from_min_max(pos2(slot.right() + 22.0, rr.bottom() - 12.0), pos2(rr.right() - 100.0, rr.bottom() - 6.0));

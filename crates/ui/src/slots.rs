@@ -16,27 +16,27 @@
 //! Items move into stacks of the same item first, then into empty slots, in slot order.
 
 use crate::action::{ClickButton, SlotClick};
-use crate::item::{ItemId, ItemStack};
+use foundry_content::{ItemRef, Stack};
 
 /// One list of slots (an inventory, the tank, the inputs of a building) and its limits.
 pub struct SlotList<'a> {
-    pub slots: &'a mut [Option<ItemStack>],
+    pub slots: &'a mut [Option<Stack>],
     /// The most of `item` that slot `index` can hold. 0 means the slot does not take this item
     /// (for example a part in a tank slot, or anything in an output slot).
-    pub limit: &'a dyn Fn(usize, ItemId) -> u32,
+    pub limit: &'a dyn Fn(usize, ItemRef) -> u32,
 }
 
 impl<'a> SlotList<'a> {
-    pub fn new(slots: &'a mut [Option<ItemStack>], limit: &'a dyn Fn(usize, ItemId) -> u32) -> Self {
+    pub fn new(slots: &'a mut [Option<Stack>], limit: &'a dyn Fn(usize, ItemRef) -> u32) -> Self {
         Self { slots, limit }
     }
 
-    fn limit_of(&self, index: usize, item: ItemId) -> u32 {
+    fn limit_of(&self, index: usize, item: ItemRef) -> u32 {
         (self.limit)(index, item)
     }
 
     /// The number of `item` in all slots.
-    pub fn count_of(&self, item: ItemId) -> u64 {
+    pub fn count_of(&self, item: ItemRef) -> u64 {
         self.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u64).sum()
     }
 }
@@ -46,7 +46,7 @@ impl<'a> SlotList<'a> {
 /// `others` are the inventories that shift-click and ctrl-click move items into, in the order
 /// to try (for example: the fuel slots, then the input slots of the open building).
 /// Pass an empty list if no other inventory is open; then shift-click and ctrl-click do nothing.
-pub fn apply(hand: &mut Option<ItemStack>, this: &mut SlotList, index: usize, others: &mut [SlotList], click: SlotClick) {
+pub fn apply(hand: &mut Option<Stack>, this: &mut SlotList, index: usize, others: &mut [SlotList], click: SlotClick) {
     if index >= this.slots.len() {
         return;
     }
@@ -68,7 +68,7 @@ pub fn apply(hand: &mut Option<ItemStack>, this: &mut SlotList, index: usize, ot
 }
 
 /// Left click: pick up, put down, add, or swap.
-pub fn left_click(hand: &mut Option<ItemStack>, list: &mut SlotList, index: usize) {
+pub fn left_click(hand: &mut Option<Stack>, list: &mut SlotList, index: usize) {
     match (*hand, list.slots[index]) {
         (None, None) => {}
         (None, Some(stack)) => {
@@ -78,7 +78,7 @@ pub fn left_click(hand: &mut Option<ItemStack>, list: &mut SlotList, index: usiz
         (Some(h), None) => {
             let n = h.count.min(list.limit_of(index, h.item));
             if n > 0 {
-                list.slots[index] = Some(ItemStack::new(h.item, n));
+                list.slots[index] = Some(mk(h.item, n));
                 *hand = take(h, n);
             }
         }
@@ -86,7 +86,7 @@ pub fn left_click(hand: &mut Option<ItemStack>, list: &mut SlotList, index: usiz
             let limit = list.limit_of(index, h.item);
             if s.count < limit {
                 let n = h.count.min(limit - s.count);
-                list.slots[index] = Some(ItemStack::new(s.item, s.count + n));
+                list.slots[index] = Some(mk(s.item, s.count + n));
                 *hand = take(h, n);
             } else if limit > 0 && h.count <= limit {
                 // The slot is full: swap, as in Factorio.
@@ -104,23 +104,23 @@ pub fn left_click(hand: &mut Option<ItemStack>, list: &mut SlotList, index: usiz
 }
 
 /// Right click: take half (rounded up), or put one item down.
-pub fn right_click(hand: &mut Option<ItemStack>, list: &mut SlotList, index: usize) {
+pub fn right_click(hand: &mut Option<Stack>, list: &mut SlotList, index: usize) {
     match (*hand, list.slots[index]) {
         (None, None) => {}
         (None, Some(s)) => {
             let n = s.count.div_ceil(2);
-            *hand = Some(ItemStack::new(s.item, n));
+            *hand = Some(mk(s.item, n));
             list.slots[index] = take(s, n);
         }
         (Some(h), None) => {
             if list.limit_of(index, h.item) >= 1 {
-                list.slots[index] = Some(ItemStack::new(h.item, 1));
+                list.slots[index] = Some(mk(h.item, 1));
                 *hand = take(h, 1);
             }
         }
         (Some(h), Some(s)) if h.item == s.item => {
             if s.count < list.limit_of(index, s.item) {
-                list.slots[index] = Some(ItemStack::new(s.item, s.count + 1));
+                list.slots[index] = Some(mk(s.item, s.count + 1));
                 *hand = take(h, 1);
             }
         }
@@ -130,7 +130,7 @@ pub fn right_click(hand: &mut Option<ItemStack>, list: &mut SlotList, index: usi
 
 /// Put up to `count` of `item` into the list. Stacks of the same item first, then empty slots.
 /// Returns how many went in.
-pub fn insert(list: &mut SlotList, item: ItemId, count: u32) -> u32 {
+pub fn insert(list: &mut SlotList, item: ItemRef, count: u32) -> u32 {
     let mut left = count;
     // Pass 1: add to stacks of the same item.
     for i in 0..list.slots.len() {
@@ -143,7 +143,7 @@ pub fn insert(list: &mut SlotList, item: ItemId, count: u32) -> u32 {
             let room = list.limit_of(i, item).saturating_sub(s.count);
             let n = room.min(left);
             if n > 0 {
-                list.slots[i] = Some(ItemStack::new(item, s.count + n));
+                list.slots[i] = Some(mk(item, s.count + n));
                 left -= n;
             }
         }
@@ -156,7 +156,7 @@ pub fn insert(list: &mut SlotList, item: ItemId, count: u32) -> u32 {
         if list.slots[i].is_none() {
             let n = list.limit_of(i, item).min(left);
             if n > 0 {
-                list.slots[i] = Some(ItemStack::new(item, n));
+                list.slots[i] = Some(mk(item, n));
                 left -= n;
             }
         }
@@ -181,7 +181,7 @@ pub fn move_from_slot(from: &mut SlotList, index: usize, to: &mut [SlotList], am
 
 /// Move all items of one type (or half of them, rounded up) from `from` into `to`.
 /// Returns how many moved.
-pub fn move_all_of(from: &mut SlotList, item: ItemId, to: &mut [SlotList], half: bool) -> u32 {
+pub fn move_all_of(from: &mut SlotList, item: ItemRef, to: &mut [SlotList], half: bool) -> u32 {
     let total = from.count_of(item).min(u32::MAX as u64) as u32;
     let mut want = if half { total.div_ceil(2) } else { total };
     let mut moved = 0;
@@ -201,25 +201,29 @@ pub fn move_all_of(from: &mut SlotList, item: ItemId, to: &mut [SlotList], half:
     moved
 }
 
+fn mk(item: ItemRef, count: u32) -> Stack {
+    Stack { item, count }
+}
+
 /// A stack with `n` fewer items, or `None` if nothing is left.
-fn take(stack: ItemStack, n: u32) -> Option<ItemStack> {
+fn take(stack: Stack, n: u32) -> Option<Stack> {
     let left = stack.count.saturating_sub(n);
-    (left > 0).then_some(ItemStack::new(stack.item, left))
+    (left > 0).then_some(mk(stack.item, left))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::PartId;
+    use foundry_core::PartId;
 
-    const GEAR: ItemId = ItemId::Part(PartId(1));
-    const PLATE: ItemId = ItemId::Part(PartId(2));
+    const GEAR: ItemRef = ItemRef::Part(PartId(1));
+    const PLATE: ItemRef = ItemRef::Part(PartId(2));
 
-    fn st(item: ItemId, n: u32) -> Option<ItemStack> {
-        Some(ItemStack::new(item, n))
+    fn st(item: ItemRef, n: u32) -> Option<Stack> {
+        Some(mk(item, n))
     }
 
-    fn limit50(_: usize, _: ItemId) -> u32 {
+    fn limit50(_: usize, _: ItemRef) -> u32 {
         50
     }
 
@@ -270,7 +274,7 @@ mod tests {
 
     #[test]
     fn left_click_does_nothing_if_slot_does_not_take_the_item() {
-        let only_plates = |_: usize, item: ItemId| if item == PLATE { 50 } else { 0 };
+        let only_plates = |_: usize, item: ItemRef| if item == PLATE { 50 } else { 0 };
         let mut slots = [None];
         let mut hand = st(GEAR, 3);
         left_click(&mut hand, &mut SlotList::new(&mut slots, &only_plates), 0);
@@ -352,7 +356,7 @@ mod tests {
 
     #[test]
     fn shift_click_tries_other_inventories_in_order() {
-        let fuel_only_plates = |_: usize, item: ItemId| if item == PLATE { 10 } else { 0 };
+        let fuel_only_plates = |_: usize, item: ItemRef| if item == PLATE { 10 } else { 0 };
         let mut inv = [st(PLATE, 15)];
         let mut fuel = [None];
         let mut input = [None];
@@ -424,8 +428,8 @@ mod tests {
     #[test]
     fn tank_slots_hold_materials_in_units() {
         use foundry_core::MaterialId;
-        let clay = ItemId::Material(MaterialId(5));
-        let tank_limit = |_: usize, item: ItemId| if item.is_bulk() { 2000 } else { 0 };
+        let clay = ItemRef::Material(MaterialId(5));
+        let tank_limit = |_: usize, item: ItemRef| if matches!(item, ItemRef::Material(_)) { 2000 } else { 0 };
         let mut tank = [st(clay, 1500), None];
         let mut hand = st(clay, 800);
         let mut list = SlotList::new(&mut tank, &tank_limit);

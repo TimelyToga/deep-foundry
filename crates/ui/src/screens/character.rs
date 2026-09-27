@@ -4,12 +4,15 @@ use super::inventory::{self, GRID_W, HEAD};
 use super::{Cx, window_id};
 use crate::action::{UiAction, WindowKind};
 use crate::crafting::{click_count, craftable_count};
-use crate::item::{CraftGroup, ItemId, RecipeView};
+use crate::item::{self, CraftGroup};
 use crate::theme::{color, font_regular, size, text};
 use crate::tooltip::Tip;
 use crate::widgets::{self, SlotContent, SlotLook};
 use crate::UiState;
+use crate::model::UiModel;
 use egui::{Align2, Id, Order, Rect, Ui, Vec2, pos2, vec2};
+use foundry_content::{Content, ItemRef, Recipe};
+use foundry_core::RecipeId;
 
 /// Rows of the recipe grid that show without scrolling.
 const RECIPE_ROWS: usize = 7;
@@ -17,14 +20,14 @@ const TAB_H: f32 = 64.0;
 const CRAFT_W: f32 = GRID_W + 12.0;
 
 pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
+    let ctx = cx.ctx;
     let inv = inventory::panel_size(cx);
     let craft_h = HEAD + TAB_H + 12.0 + RECIPE_ROWS as f32 * size::SLOT + 4.0;
     let content = vec2(inv.x + 16.0 + CRAFT_W, inv.y.max(craft_h));
     let outer = widgets::window_outer(content);
-    let screen = cx.ctx.content_rect();
-    let rect = widgets::place(screen, outer, st.offset(WindowKind::Character) - vec2(0.0, 40.0));
+    let rect = widgets::place(ctx.content_rect(), outer, st.offset(WindowKind::Character) - vec2(0.0, 40.0));
     let id = window_id(WindowKind::Character);
-    widgets::area(cx.ctx, id, Order::Middle, rect, |ui| {
+    widgets::area(ctx, id, Order::Middle, rect, |ui| {
         let f = widgets::window(ui, id, rect, "Character", true);
         st.move_window(WindowKind::Character, f.drag);
         if f.close_clicked {
@@ -38,41 +41,63 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
     });
 }
 
-fn group_icon(cx: &Cx, group: CraftGroup) -> Option<ItemId> {
-    // The icon of a tab is the first recipe result of that group.
-    cx.model.catalog.recipes().iter().filter(|r| r.group == group).find_map(|r| r.main_item())
+/// Recipes that show in the hand crafting menu: known and hand-craftable.
+fn hand_recipes(model: &UiModel) -> impl Iterator<Item = (RecipeId, &Recipe)> + '_ {
+    model
+        .content
+        .factory
+        .recipes
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.hand && item::recipe_known(r, &model.finished_techs))
+        .map(|(i, r)| (RecipeId(i as u16), r))
 }
 
-fn short_label(group: CraftGroup) -> &'static str {
-    match group {
-        CraftGroup::Logistics => "Logistics",
-        CraftGroup::Production => "Production",
-        CraftGroup::Intermediate => "Intermediate",
-        CraftGroup::Power => "Power",
-        CraftGroup::Research => "Research",
+/// Recipes with the same key stay together in the grid (plates with plates, gears with gears).
+fn row_key<'a>(content: &'a Content, r: &Recipe) -> &'a str {
+    match item::recipe_item(r) {
+        Some(ItemRef::Part(p)) => match content.factory.parts.get(p.0 as usize) {
+            Some(part) => match part.building.and_then(|b| content.factory.buildings.get(b.0 as usize)) {
+                Some(b) => b.kind.as_str(),
+                None => part.icon.as_deref().unwrap_or("part"),
+            },
+            None => "part",
+        },
+        Some(ItemRef::Material(_)) => "material",
+        None => "none",
     }
 }
 
-fn matches(r: &RecipeView, search: &str) -> bool {
+fn matches(r: &Recipe, search: &str) -> bool {
     search.is_empty() || r.name.to_lowercase().contains(search)
-}
-
-fn visible(r: &RecipeView) -> bool {
-    r.unlocked && r.hand_craftable()
 }
 
 fn crafting_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect) {
     let painter = ui.painter().clone();
+    let model = cx.model;
+    let content = model.content.clone();
     widgets::heading(&painter, r.min + vec2(0.0, 4.0), "Crafting");
+    if cx.model.player.craft_speed > 1.0 {
+        painter.text(
+            pos2(r.left() + 78.0, r.top() + 14.0),
+            Align2::LEFT_CENTER,
+            format!("Speed × {} (workbench)", cx.model.player.craft_speed),
+            font_regular(text::SMALL),
+            color::GREEN,
+        );
+    }
     // Search field.
     let field = Rect::from_min_size(pos2(r.right() - 200.0, r.top() + 1.0), vec2(200.0, 24.0));
     widgets::text_field(ui, Id::new("craft-search"), field, &mut st.search, "Search recipes");
     let search = st.search.trim().to_lowercase();
 
     // Count matching recipes per group. Switch tabs if the current one has none.
-    let count_in = |g: CraftGroup| cx.model.catalog.recipes().iter().filter(|r| r.group == g && visible(r) && matches(r, &search)).count();
-    if count_in(st.craft_tab) == 0
-        && let Some(g) = CraftGroup::ALL.into_iter().find(|g| count_in(*g) > 0)
+    let mut counts = [0usize; 5];
+    for (_, rec) in hand_recipes(model).filter(|(_, rec)| matches(rec, &search)) {
+        counts[CraftGroup::parse(&rec.group) as usize] += 1;
+    }
+    if counts[st.craft_tab as usize] == 0
+        && let Some(g) = CraftGroup::ALL.into_iter().find(|g| counts[*g as usize] > 0)
     {
         st.craft_tab = g;
     }
@@ -82,14 +107,13 @@ fn crafting_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect) {
     let tab_w = (CRAFT_W - 4.0 * 4.0) / 5.0;
     for (i, g) in CraftGroup::ALL.into_iter().enumerate() {
         let tr = Rect::from_min_size(pos2(r.left() + i as f32 * (tab_w + 4.0), tabs_top), vec2(tab_w, TAB_H));
-        let icon = group_icon(cx, g);
-        let n = count_in(g);
-        let resp = match icon {
-            Some(item) => widgets::icon_tab(ui, Id::new(("craft-tab", i)), tr, item, short_label(g), st.craft_tab == g, n == 0, cx.atlas),
-            None => continue,
-        };
+        // The icon of a tab is the first recipe result of that group.
+        let icon = content.factory.recipes.iter().filter(|x| CraftGroup::parse(&x.group) == g).find_map(item::recipe_item);
+        let n = counts[g as usize];
+        let Some(icon) = icon else { continue };
+        let resp = widgets::icon_tab(ui, Id::new(("craft-tab", i)), tr, icon, g.short_label(), st.craft_tab == g, n == 0, cx.atlas);
         if resp.hovered() {
-            cx.tip(Tip::Text { title: g.label().into(), body: format!("{n} recipes") });
+            cx.tip(Tip::Text { title: g.label().into(), body: format!("{n} recipes you can make by hand.") });
         }
         if resp.clicked() {
             st.craft_tab = g;
@@ -102,45 +126,41 @@ fn crafting_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect) {
     let grid = Rect::from_min_size(panel.min + vec2(6.0, 6.0), vec2(GRID_W, RECIPE_ROWS as f32 * size::SLOT + 4.0));
     widgets::deep(&painter, grid);
 
-    // Recipes of the tab, in rows. A new data row starts a new grid row.
-    let mut list: Vec<&RecipeView> =
-        cx.model.catalog.recipes().iter().filter(|r| r.group == st.craft_tab && visible(r) && matches(r, &search)).collect();
-    list.sort_by_key(|r| r.row);
-    let mut cells: Vec<(usize, &RecipeView)> = vec![];
-    let (mut col, mut row) = (0usize, 0usize);
-    let mut last_row = list.first().map(|r| r.row);
-    for rec in list {
-        if Some(rec.row) != last_row || col == inventory::COLS {
-            if col > 0 {
-                row += 1;
-            }
-            col = 0;
-            last_row = Some(rec.row);
-        }
-        cells.push((row * inventory::COLS + col, rec));
-        col += 1;
+    // Recipes of the tab, grouped by kind, in data order.
+    let mut keys: Vec<&str> = vec![];
+    let mut list: Vec<(usize, RecipeId, &Recipe)> = vec![];
+    for (id, rec) in hand_recipes(model).filter(|(_, rec)| CraftGroup::parse(&rec.group) == st.craft_tab && matches(rec, &search)) {
+        let k = row_key(&content, rec);
+        let ki = keys.iter().position(|x| *x == k).unwrap_or_else(|| {
+            keys.push(k);
+            keys.len() - 1
+        });
+        list.push((ki, id, rec));
     }
-    let total_rows = cells.last().map(|(i, _)| i / inventory::COLS + 1).unwrap_or(1);
+    // Recipes of the same kind stay next to each other; the rows are full, so the grid stays small.
+    list.sort_by_key(|x| x.0);
+    let cells: Vec<(usize, RecipeId, &Recipe)> = list.into_iter().enumerate().map(|(i, (_, id, rec))| (i, id, rec)).collect();
+    let total_rows = cells.last().map(|(i, _, _)| i / inventory::COLS + 1).unwrap_or(1);
     let inner = grid.shrink(2.0);
     let content_h = total_rows.max(RECIPE_ROWS) as f32 * size::SLOT;
+    let (shift, _) = cx.modifiers();
     ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
         egui::ScrollArea::vertical().id_salt("recipe-scroll").max_height(inner.height()).auto_shrink([false, false]).show(ui, |ui| {
             let (area, _) = ui.allocate_exact_size(vec2(inner.width(), content_h), egui::Sense::hover());
-            let (shift, _) = cx.modifiers();
-            for (i, rec) in &cells {
+            for (i, id, rec) in &cells {
                 let sr = Rect::from_min_size(
                     area.min + vec2((i % inventory::COLS) as f32 * size::SLOT, (i / inventory::COLS) as f32 * size::SLOT),
                     Vec2::splat(size::SLOT),
                 );
                 let can = craftable_count(rec, cx.stock);
                 let look = if can > 0 { SlotLook::Normal } else { SlotLook::Red };
-                let amount = rec.results.first().map(|x| x.amount).unwrap_or(1);
+                let amount = rec.outputs.first().map(|x| x.count).unwrap_or(1);
                 let count = (amount > 1).then(|| amount.to_string());
-                let content = SlotContent { item: rec.main_item(), count: count.as_deref(), ..Default::default() };
-                let resp = widgets::slot(ui, Id::new(("recipe", rec.id.0)), sr, look, &content, cx.atlas);
-                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &rec.name));
+                let slot_content = SlotContent { item: item::recipe_item(rec), count: count.as_deref(), ..Default::default() };
+                let resp = widgets::slot(ui, Id::new(("recipe", id.0)), sr, look, &slot_content, cx.atlas);
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Craft {}", rec.name)));
                 if resp.hovered() {
-                    cx.tip(Tip::Recipe { recipe: rec.id, hand: true });
+                    cx.tip(Tip::Recipe { recipe: *id, hand: true });
                 }
                 let n = if resp.clicked() {
                     click_count(false, shift, can)
@@ -150,7 +170,7 @@ fn crafting_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect) {
                     0
                 };
                 if n > 0 {
-                    cx.act(UiAction::Craft { recipe: rec.id, count: n });
+                    cx.act(UiAction::Craft { recipe: *id, count: n });
                 }
             }
         });

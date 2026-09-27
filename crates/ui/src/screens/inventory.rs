@@ -4,7 +4,8 @@
 use super::Cx;
 use crate::action::{ClickButton, SlotClick, SlotRef, UiAction};
 use crate::format;
-use crate::item::ItemId;
+use crate::item;
+use foundry_content::ItemRef;
 use crate::theme::{color, rgba, size, text, font_regular};
 use crate::tooltip::Tip;
 use crate::widgets::{self, SlotContent, SlotLook};
@@ -58,6 +59,9 @@ pub fn panel(ui: &mut Ui, cx: &mut Cx, r: Rect, hint: &str) {
         let count = stack.filter(|s| s.count > 1).map(|s| format::count(s.count as u64));
         let content = SlotContent { item: stack.map(|s| s.item), count: count.as_deref(), ..Default::default() };
         let resp = widgets::slot(ui, Id::new(("inv", i)), sr, SlotLook::Normal, &content, cx.atlas);
+        if let Some(s) = stack {
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, item::name(&cx.model.content, s.item)));
+        }
         if let Some(s) = stack
             && resp.hovered()
         {
@@ -84,20 +88,20 @@ pub fn panel(ui: &mut Ui, cx: &mut Cx, r: Rect, hint: &str) {
     widgets::deep(&painter, tgrid);
     for (i, t) in p.tank.iter().enumerate() {
         let sr = cell(tgrid, i);
-        let item = t.material.map(ItemId::Material);
-        let fill_color = item.and_then(|it| cx.model.catalog.item(it)).map(|info| rgba(info.color())).unwrap_or(color::GRAY);
+        let it = t.material.map(ItemRef::Material);
+        let fill_color = it.map(|x| rgba(item::color(&cx.model.content, x))).unwrap_or(color::GRAY);
         let frac = if t.capacity > 0 { t.units as f32 / t.capacity as f32 } else { 0.0 };
-        let count = item.map(|_| format::count(t.units as u64));
+        let count = it.map(|_| format::count(t.units as u64));
         let content = SlotContent {
-            item,
+            item: it,
             count: count.as_deref(),
-            fill: item.map(|_| (frac, fill_color)),
+            fill: it.map(|_| (frac, fill_color)),
             ..Default::default()
         };
         let resp = widgets::slot(ui, Id::new(("tank", i)), sr, SlotLook::Dark, &content, cx.atlas);
         if resp.hovered() {
-            match item {
-                Some(it) => cx.tip(Tip::Item { item: it, amount: Some(format!("{} / {} units", t.units, t.capacity)) }),
+            match it {
+                Some(x) => cx.tip(Tip::Item { item: x, amount: Some(format!("{} / {} units", t.units, t.capacity)) }),
                 None => cx.tip(Tip::Text {
                     title: "Empty tank slot".into(),
                     body: format!("Holds up to {} units of one material. Dig to fill it.", t.capacity),

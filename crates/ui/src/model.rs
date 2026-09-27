@@ -1,15 +1,19 @@
 //! `UiModel`: everything the UI shows, as plain data.
 //!
+//! Items, recipes, buildings and technologies are the ids of `foundry_content`
+//! ([`ItemRef`], [`Stack`], `RecipeId`, `TechId`, `BuildingKindId`), so the game fills the
+//! model from its state without a translation layer. Names, icons and recipes come from
+//! `UiModel::content`.
+//!
 //! The game owns one `UiModel`. Each frame it updates the model from the newest snapshot
 //! and gives it to [`crate::FoundryUi::show`]. The UI never changes the model. It returns
-//! [`crate::UiAction`] values instead.
-//!
-//! Update the model in place (clear and refill the `Vec`s) so that no new memory is needed
-//! each frame.
+//! [`crate::UiAction`] values instead. Update the model in place (clear and refill the `Vec`s)
+//! so that no new memory is needed each frame.
 
 use crate::graph::TimeSeries;
-use crate::item::{Catalog, ItemId, ItemStack};
-use foundry_core::{BuildingId, CellPos, MaterialId, RecipeId};
+use foundry_content::{Content, ItemRef, Stack};
+use foundry_core::{BuildingId, BuildingKindId, CellPos, MaterialId, RecipeId, TechId};
+use std::sync::Arc;
 
 /// Where the game is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -24,12 +28,15 @@ pub enum GameState {
 }
 
 /// The whole model.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct UiModel {
+    /// All materials, parts, buildings, recipes and technologies. When the game reloads the data,
+    /// it puts a new `Arc` here; the UI then builds its icons again.
+    pub content: Arc<Content>,
     pub state: GameState,
-    /// All items and recipes.
-    pub catalog: Catalog,
     pub player: PlayerView,
+    /// Finished technologies. A recipe that a technology unlocks shows only when it is here.
+    pub finished_techs: Vec<TechId>,
     /// The cell or building under the mouse, for the entity info panel.
     pub hover: Option<HoverView>,
     /// The research that runs now.
@@ -51,6 +58,33 @@ pub struct UiModel {
     pub message: String,
 }
 
+impl UiModel {
+    /// An empty model in the main menu.
+    pub fn new(content: Arc<Content>) -> Self {
+        Self {
+            content,
+            state: GameState::MainMenu,
+            player: PlayerView::default(),
+            finished_techs: vec![],
+            hover: None,
+            research: None,
+            alerts: vec![],
+            building: None,
+            power: None,
+            stats: ProductionStatsView::default(),
+            saves: vec![],
+            settings: Settings::default(),
+            fps: 0.0,
+            message: String::new(),
+        }
+    }
+
+    /// True if the player knows the recipe.
+    pub fn recipe_known(&self, id: RecipeId) -> bool {
+        crate::item::recipe(&self.content, id).is_some_and(|r| crate::item::recipe_known(r, &self.finished_techs))
+    }
+}
+
 /// The player robot and its inventory.
 #[derive(Debug, Clone, Default)]
 pub struct PlayerView {
@@ -61,20 +95,27 @@ pub struct PlayerView {
     /// The robot takes damage above this temperature (°C).
     pub heat_limit: f32,
     /// Part slots. `None` is an empty slot. The character screen shows 10 slots per row.
-    pub inventory: Vec<Option<ItemStack>>,
+    pub inventory: Vec<Option<Stack>>,
     /// Material tank slots.
     pub tank: Vec<TankSlot>,
-    /// The item that the mouse holds (the "hand" or cursor stack), as in Factorio.
-    pub hand: Option<ItemStack>,
+    /// The stack that the mouse holds (the "hand" or cursor stack), as in Factorio.
+    pub hand: Option<Stack>,
     /// Quickbar slots: 20 slots (2 rows of 10). A slot holds an item type, not items.
     /// The count shown is the number of that item in the inventory.
-    pub hotbar: Vec<Option<ItemId>>,
+    pub hotbar: Vec<Option<ItemRef>>,
     /// The selected quickbar slot (0 to 19), if any.
     pub selected_hotbar: Option<usize>,
     /// The hand crafting queue. The first job is the one in progress.
     pub crafting: Vec<CraftJobView>,
     /// Hand crafting speed. 1 normally, 2 near a workbench.
     pub craft_speed: f32,
+}
+
+impl PlayerView {
+    /// The capacity of the first tank slot (the stack size of bulk materials in the hand).
+    pub fn tank_capacity(&self) -> u32 {
+        self.tank.first().map(|t| t.capacity).unwrap_or(2000)
+    }
 }
 
 /// One slot of the material tank.
@@ -107,31 +148,26 @@ pub enum HoverView {
     },
     Building {
         id: BuildingId,
-        /// The building type as an item (for the name and the icon).
-        item: ItemId,
+        kind: BuildingKindId,
         status: MachineStatus,
         recipe: Option<RecipeId>,
         progress: f32,
-        /// °C, and the maximum temperature of the building.
-        temperature: Option<(f32, f32)>,
-        /// Power use in watts, if the building uses power.
+        /// °C now. The maximum comes from the building type.
+        temperature: Option<f32>,
+        /// Power use in watts, if the building uses electric power.
         power_w: Option<f64>,
     },
 }
 
-/// The research that runs now.
+/// The research that runs now. The name, the kits and the unlocks come from the content.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResearchView {
-    pub name: String,
-    /// An item that shows the research (usually the main unlock).
-    pub icon: ItemId,
+    pub tech: TechId,
     /// 0 to 1.
     pub progress: f32,
-    /// Kits for each research unit.
-    pub kits: Vec<ItemStack>,
 }
 
-/// The kind of an alert. It sets the icon and the color.
+/// The kind of an alert. It sets the symbol and the color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertKind {
     Fire,
@@ -159,13 +195,13 @@ impl AlertKind {
     }
 }
 
-/// One alert. Alerts of the same kind are grouped by the game (see `count`).
+/// One alert. The game groups alerts of the same kind (see `count`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlertView {
     /// A number the game picks. The UI sends it back in `UiAction::ShowAlert`.
     pub id: u32,
     pub kind: AlertKind,
-    /// One short sentence, for example "Steam crusher stopped: no input".
+    /// One short sentence, for example "Steam crusher stopped: output full".
     pub text: String,
     /// How many alerts of this kind there are.
     pub count: u32,
@@ -173,7 +209,7 @@ pub struct AlertView {
     pub pos: Option<CellPos>,
 }
 
-/// The status of a machine, as in the design (game design section 12.1).
+/// The status of a machine (game design section 12.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MachineStatus {
     Working,
@@ -222,10 +258,9 @@ impl MachineStatus {
             MachineStatus::NoInput | MachineStatus::OutputFull | MachineStatus::LowPower | MachineStatus::NoFuel => {
                 StatusColor::Yellow
             }
-            MachineStatus::NoPower
-            | MachineStatus::TooHot
-            | MachineStatus::WrongVoltage
-            | MachineStatus::RoomNotValid => StatusColor::Red,
+            MachineStatus::NoPower | MachineStatus::TooHot | MachineStatus::WrongVoltage | MachineStatus::RoomNotValid => {
+                StatusColor::Red
+            }
             MachineStatus::NoRecipe | MachineStatus::Disabled => StatusColor::Gray,
         }
     }
@@ -243,14 +278,14 @@ pub enum BuildingSlots {
 /// when the slot is empty).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BuildingSlot {
-    pub stack: Option<ItemStack>,
-    pub filter: Option<ItemId>,
+    pub stack: Option<Stack>,
+    pub filter: Option<ItemRef>,
 }
 
 /// A material buffer (tank) inside a building, for example the water of a boiler.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterialBuffer {
-    /// Short name, for example "Water in" or "Steam out".
+    /// Short name, for example "Water in" or the port name ("Tap").
     pub label: String,
     pub material: Option<MaterialId>,
     pub units: u32,
@@ -269,6 +304,17 @@ pub enum Voltage {
 }
 
 impl Voltage {
+    /// From `PowerDef::tier` of the content: 1 = LV, 2 = MV, 3 = HV, 4 = EV. 0 (no electric power) gives `None`.
+    pub fn from_tier(tier: u8) -> Option<Voltage> {
+        match tier {
+            1 => Some(Voltage::Lv),
+            2 => Some(Voltage::Mv),
+            3 => Some(Voltage::Hv),
+            4 => Some(Voltage::Ev),
+            _ => None,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Voltage::Lv => "LV",
@@ -284,6 +330,16 @@ impl Voltage {
             Voltage::Mv => 128,
             Voltage::Hv => 512,
             Voltage::Ev => 2048,
+        }
+    }
+
+    /// The technology tier (game design section 14) that brings this voltage.
+    pub fn game_tier(self) -> u8 {
+        match self {
+            Voltage::Lv => 2,
+            Voltage::Mv => 3,
+            Voltage::Hv => 4,
+            Voltage::Ev => 5,
         }
     }
 }
@@ -307,29 +363,25 @@ pub struct PowerUse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildingView {
     pub id: BuildingId,
-    /// The building type as an item. The UI takes the name and the icon from the catalog.
-    pub item: ItemId,
+    /// The building type. The name, the icon, the maximum temperature and the recipes it can
+    /// make come from the content.
+    pub kind: BuildingKindId,
     pub status: MachineStatus,
     /// Extra words for the status line, for example "needs 1100 °C". Empty for none.
     pub status_detail: String,
     /// The recipe it makes now.
     pub recipe: Option<RecipeId>,
-    /// Recipes that this building can make. The recipe selector shows these.
-    /// Empty if the building has a fixed job (a boiler, a chest).
-    pub recipes: Vec<RecipeId>,
     pub inputs: Vec<BuildingSlot>,
     pub outputs: Vec<BuildingSlot>,
     pub fuel: Vec<BuildingSlot>,
     pub buffers: Vec<MaterialBuffer>,
     /// Progress of the current recipe run, 0 to 1.
     pub progress: f32,
-    /// Crafting speed (1 = normal).
+    /// Crafting speed now (1 = the recipe time). It includes overclocking.
     pub speed: f32,
     pub power: Option<PowerUse>,
     /// °C
     pub temperature: Option<f32>,
-    /// Maximum temperature of the building in °C. Above it, the building stops.
-    pub max_temperature: Option<f32>,
 }
 
 impl BuildingView {
@@ -345,8 +397,7 @@ impl BuildingView {
 /// One line in the power network window: all buildings of one type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PowerEntry {
-    /// The building type as an item.
-    pub item: ItemId,
+    pub kind: BuildingKindId,
     pub count: u32,
     /// Watts now (production or consumption).
     pub watts: f64,
@@ -358,9 +409,9 @@ pub struct PowerEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PowerWarning {
     /// A cable carries more current than its limit. The cable gets hot.
-    CableOverloaded { amps: f32, limit_amps: f32, cable: String },
+    CableOverloaded { amps: f32, limit_amps: f32, cable: BuildingKindId },
     /// A building has a lower voltage tier than the network. It will explode.
-    WrongVoltage { building: ItemId, building_voltage: Voltage },
+    WrongVoltage { building: BuildingKindId, building_voltage: Voltage },
     /// Demand is higher than supply.
     NotEnoughPower,
     /// The network has no generators.
@@ -375,7 +426,7 @@ pub struct PowerNetworkView {
     pub voltage: Voltage,
     /// Satisfaction, 0 to 1.
     pub satisfaction: f32,
-    /// What the generators can make now, in watts.
+    /// What the generators make now, in watts.
     pub production_w: f64,
     /// Most the generators can make, in watts.
     pub capacity_w: f64,
@@ -398,7 +449,7 @@ pub struct PowerNetworkView {
 /// One item in the production statistics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductionRow {
-    pub item: ItemId,
+    pub item: ItemRef,
     /// Amount made per minute over time.
     pub made: TimeSeries,
     /// Amount used per minute over time.
@@ -422,7 +473,7 @@ pub struct SaveInfo {
     pub date: String,
     /// Play time in seconds.
     pub play_time_s: u64,
-    /// Short text about the world, for example "Seed 1234, 8192 x 8192".
+    /// Short text about the world, for example "Seed 1234, 8192 × 8192".
     pub world: String,
 }
 
@@ -470,4 +521,9 @@ pub fn default_key_bindings() -> Vec<(String, String)> {
     .iter()
     .map(|(a, k)| (a.to_string(), k.to_string()))
     .collect()
+}
+
+/// Make a stack.
+pub fn stack(item: ItemRef, count: u32) -> Stack {
+    Stack { item, count }
 }
