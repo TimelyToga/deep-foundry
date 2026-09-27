@@ -204,7 +204,7 @@ impl ProgressLink for TestProgress {
                 self.kits_used += kits.take(p, 1);
                 LabStatus::Working
             }
-            None => LabStatus::MissingKits,
+            None => LabStatus::MissingKits(vec![]),
         }
     }
 
