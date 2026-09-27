@@ -87,11 +87,17 @@ impl<'a> Hood<'a> {
     /// Take the cell out of the grid and make it a flying particle with this velocity
     /// (cells per tick). The cell becomes air. The particle is added after the pass.
     pub fn launch(&mut self, x: i32, y: i32, vx: f32, vy: f32) {
+        self.launch_from(x, y, x, y, vx, vy);
+    }
+
+    /// Like `launch`, but the particle starts in the middle of cell (sx, sy) (for example the
+    /// air cell above, so that a cell that moves into (x, y) later in the pass does not stop it).
+    pub fn launch_from(&mut self, x: i32, y: i32, sx: i32, sy: i32, vx: f32, vy: f32) {
         let m = self.mat(x, y);
         if m.is_air() {
             return;
         }
-        let p = self.world_pos(x, y);
+        let p = self.world_pos(sx, sy);
         let (temp, shade, life) = (self.temp(x, y), self.read_u8(x, y, |p| unsafe { addr_of!((*p).shade).cast::<u8>() }), self.life(x, y));
         self.spawns.push(Spawn {
             x: p.x as f32 + 0.5,
