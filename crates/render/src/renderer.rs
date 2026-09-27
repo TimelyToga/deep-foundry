@@ -349,10 +349,13 @@ impl Renderer {
         let used = (end - origin).as_uvec2();
         let tex_size = self.ensure_world_target(used);
 
-        // Chunks to draw.
+        // Chunks to draw: those on the screen and inside the world. A world width of 0 means no
+        // limit to the left and right.
         let mut area = CellRect::new(origin.x, origin.y, end.x, end.y);
-        if self.world_cells.0 > 0 {
-            area = area.intersect(&CellRect::new(0, 0, self.world_cells.0, self.world_cells.1));
+        let (w, h) = self.world_cells;
+        if h > 0 {
+            let (x0, x1) = if w > 0 { (0, w) } else { (area.x0, area.x1) };
+            area = area.intersect(&CellRect::new(x0, 0, x1, h));
         }
         self.instances.clear();
         for pos in area.chunks() {

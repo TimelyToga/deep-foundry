@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result, anyhow};
 use foundry_content::Content;
-use foundry_core::{CHUNK_SIZE, CellPos, MaterialId, Rng};
+use foundry_core::{CHUNK_SIZE, CellPos, CellRect, Command, MaterialId, PaintMode, Rng};
 use foundry_sim::{SimConfig, Simulation};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -71,6 +71,24 @@ pub const BENCHES: &[Bench] = &[
         ticks: 300,
         make: mixed,
     },
+    Bench {
+        name: "infinite_work",
+        about: "Infinite world. The view shows 40 x 25 chunks of falling sand and water (about 1,000 awake chunks at the start).",
+        ticks: 150,
+        make: infinite_work,
+    },
+    Bench {
+        name: "infinite_explored",
+        about: "As infinite_work, plus 100,000 changed chunks far away (packed). The tick time must be the same as infinite_work.",
+        ticks: 150,
+        make: infinite_explored,
+    },
+    Bench {
+        name: "infinite_walk",
+        about: "Infinite world. A view of 28 x 16 chunks moves one chunk to the right each tick; every 32 ticks a hole is dug and sand and water fall in. New chunks are made each tick.",
+        ticks: 600,
+        make: infinite_walk,
+    },
 ];
 
 /// Find a benchmark by name.
@@ -135,9 +153,13 @@ fn round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }
 
-/// Chunks with at least one cell that is not air (bedrock counts).
+/// Chunks with at least one cell that is not air (bedrock counts). For a world with no side
+/// limit: the chunks with cells in memory.
 pub fn chunks_with_material(sim: &Simulation) -> u32 {
     let (w, h) = sim.size_cells();
+    if w == 0 {
+        return sim.world().live_count() as u32;
+    }
     let mut n = 0;
     for cy in 0..h / CHUNK_SIZE {
         for cx in 0..w / CHUNK_SIZE {
@@ -233,7 +255,7 @@ pub fn compare(results: &[(&str, BenchResult)], baseline: &Baseline) -> Vec<Comp
 // ---- Benchmark worlds ----
 
 fn new_sim(content: &Arc<Content>, width_chunks: i32, height_chunks: i32) -> Simulation {
-    Simulation::new(content.clone(), SimConfig { width_chunks, height_chunks, seed: 1, bedrock_border: true })
+    Simulation::new(content.clone(), SimConfig::finite(width_chunks, height_chunks, 1))
 }
 
 /// Fill the cells with x in `x0..x1` and y in `y0..y1`.
@@ -338,6 +360,77 @@ fn mixed(content: &Arc<Content>) -> BenchWorld {
     BenchWorld { sim, before_tick: Box::new(move |sim, _| scatter(sim, &mut rng, sand, (64, 4, 960, 12), 128)) }
 }
 
+/// An infinite world 40 chunks tall: 32 chunks of sky over stone.
+fn infinite_sim(content: &Arc<Content>) -> Simulation {
+    Simulation::new(content.clone(), SimConfig { sky_chunks: 32, depth_chunks: 8, ..SimConfig::infinite(1, None) })
+}
+
+/// The view shows 40 x 25 chunks of sky with falling sand and water (every 2nd column, every
+/// 3rd row), so about 1,000 chunks are awake at the start. The work starts at tick 1100 in every
+/// world (ticks with no work run first), so the worlds of different benchmarks run the same ticks.
+fn add_falling_work(sim: &mut Simulation, content: &Content) {
+    let (sand, water) = (content.expect_material("sand"), content.expect_material("water"));
+    let area = CellRect::new(0, 0, 40 * CHUNK_SIZE, 25 * CHUNK_SIZE);
+    sim.apply(Command::SetView { area });
+    while sim.tick_count() < 1100 {
+        sim.tick();
+    }
+    for y in (40..area.y1 - 40).step_by(3) {
+        for x in (4..area.x1 - 4).step_by(2) {
+            sim.set_cell(CellPos::new(x, y), if (x / 64 + y / 64) % 2 == 0 { sand } else { water }, None);
+        }
+    }
+}
+
+fn infinite_work(content: &Arc<Content>) -> BenchWorld {
+    let mut sim = infinite_sim(content);
+    add_falling_work(&mut sim, content);
+    BenchWorld { sim, before_tick: no_action() }
+}
+
+fn infinite_explored(content: &Arc<Content>) -> BenchWorld {
+    let mut sim = infinite_sim(content);
+    let stone = content.expect_material("stone");
+    // One stone cell in each of 100,000 sky chunks, in batches of 1,000: the view shows a batch,
+    // the chunks update once and sleep, and when the view moves on they are packed.
+    for batch in 0..100 {
+        let x0 = 100 + batch * 100;
+        let area = CellRect::new(x0 * CHUNK_SIZE, 2 * CHUNK_SIZE, (x0 + 100) * CHUNK_SIZE, 12 * CHUNK_SIZE);
+        sim.apply(Command::SetView { area });
+        for i in 0..1000 {
+            let (cx, cy) = (x0 + i / 10, 2 + i % 10);
+            sim.set_cell(CellPos::new(cx * CHUNK_SIZE + 5, cy * CHUNK_SIZE + 5), stone, None);
+        }
+        for _ in 0..10 {
+            sim.tick();
+        }
+    }
+    // Move the view to the work area, so the last batch is packed too.
+    sim.apply(Command::SetView { area: CellRect::new(0, 0, 40 * CHUNK_SIZE, 25 * CHUNK_SIZE) });
+    for _ in 0..10 {
+        sim.tick();
+    }
+    add_falling_work(&mut sim, content);
+    BenchWorld { sim, before_tick: no_action() }
+}
+
+fn infinite_walk(content: &Arc<Content>) -> BenchWorld {
+    let sim = Simulation::new(content.clone(), SimConfig { depth_chunks: 24, ..SimConfig::infinite(1, None) });
+    let (sand, water) = (content.expect_material("sand"), content.expect_material("water"));
+    let (w, h, y0) = (28 * CHUNK_SIZE, 16 * CHUNK_SIZE, 8 * CHUNK_SIZE);
+    let before_tick = Box::new(move |sim: &mut Simulation, t: u32| {
+        let x = t as i32 * CHUNK_SIZE;
+        sim.apply(Command::SetView { area: CellRect::new(x, y0, x + w, y0 + h) });
+        if t.is_multiple_of(32) {
+            let p = CellPos::new(x + w - 200, 1060);
+            sim.paint(p, 30, MaterialId::AIR, PaintMode::Replace, None);
+            sim.paint(p.offset(-20, -120), 12, sand, PaintMode::Replace, None);
+            sim.paint(p.offset(20, -100), 14, water, PaintMode::Replace, None);
+        }
+    });
+    BenchWorld { sim, before_tick }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,7 +477,8 @@ mod tests {
         let content = Arc::new(Content::load_default().unwrap());
         for b in BENCHES {
             let (r, sim) = b.run(&content, 1);
-            assert_eq!(sim.tick_count(), 1);
+            // Some worlds run ticks while they are made (infinite_explored packs its far chunks).
+            assert!(sim.tick_count() >= 1);
             assert_eq!(r.ticks, 1);
             assert!(r.chunks_with_material > 0, "{}", b.name);
         }

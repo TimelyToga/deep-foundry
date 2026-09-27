@@ -116,6 +116,7 @@ pub fn list(dir: &Path) -> Vec<SaveInfo> {
             let meta = read_meta(&path);
             let world = match meta {
                 Some(m) if m.chunks.0 > 0 => format!("Seed {}, {} × {} cells", m.seed, m.chunks.0 * 64, m.chunks.1 * 64),
+                Some(m) if m.chunks.1 > 0 => format!("Seed {}, endless world, {} cells deep", m.seed, m.chunks.1 * 64),
                 _ => "Sandbox world".to_string(),
             };
             let info = SaveInfo {

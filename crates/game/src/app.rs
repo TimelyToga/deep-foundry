@@ -25,7 +25,7 @@ use foundry_core::{CellPos, CellRect, CellTexel, ChunkPos, Command, DebugChunk, 
 use foundry_render::headless::device_descriptor;
 use foundry_render::{Renderer, wgpu};
 use foundry_sim::Simulation;
-use foundry_ui::{GameState, HoverView, MenuPage, PerfView, SettingChange, UiAction, WindowKind};
+use foundry_ui::{GameState, HoverView, MenuPage, PerfView, SettingChange, UiAction, WindowKind, WorldSize};
 use glam::{DVec2, UVec2, Vec2};
 use std::collections::HashMap;
 use std::path::Path;
@@ -216,6 +216,8 @@ struct Game {
     world: Option<World>,
     /// Default camera position for new worlds (`--center`).
     start_center: Option<DVec2>,
+    /// The world shape from the command line (`--world`, `--depth`).
+    start_shape: demo::Shape,
     start_zoom: Option<f32>,
     controls: CameraControl,
     held: Held,
@@ -312,6 +314,7 @@ impl Game {
             ui,
             world: None,
             start_center: args.center.map(DVec2::from),
+            start_shape: args.shape(),
             start_zoom: args.zoom,
             controls,
             held: Held::default(),
@@ -329,14 +332,14 @@ impl Game {
             needs_configure: false,
             smoke: args.smoke_test.then(Smoke::new),
         };
-        game.enter(args.start_state(), args.seed, args.world);
+        game.enter(args.start_state(), args.seed, args.shape());
         Ok(game)
     }
 
     /// Go to a start screen (`--ui-state`).
-    fn enter(&mut self, state: UiState, seed: u64, world: (i32, i32)) {
+    fn enter(&mut self, state: UiState, seed: u64, shape: demo::Shape) {
         if state.has_world() {
-            self.start_new_world(seed, world);
+            self.start_new_world(seed, shape);
         }
         match state {
             UiState::Menu | UiState::Playing => {}
@@ -480,10 +483,26 @@ impl Game {
         self.controls.min_zoom = self.renderer.min_zoom(viewport, VIEW_MARGIN).max(1.0);
     }
 
-    fn start_new_world(&mut self, seed: u64, chunks: (i32, i32)) {
+    /// The world for a new game of this size: a box from `--world`, else an endless world whose
+    /// depth depends on the size.
+    fn shape_for(&self, size: WorldSize) -> demo::Shape {
+        match self.start_shape {
+            demo::Shape::Box { .. } => self.start_shape,
+            demo::Shape::Infinite { .. } => demo::Shape::Infinite {
+                depth_chunks: match size {
+                    WorldSize::Small => 64,
+                    WorldSize::Normal => 128,
+                    WorldSize::Large => 256,
+                },
+            },
+        }
+    }
+
+    fn start_new_world(&mut self, seed: u64, shape: demo::Shape) {
         self.world = None; // Stops the old simulation thread.
-        let demo = demo::build(self.content.clone(), chunks, seed);
+        let demo = demo::build(self.content.clone(), shape, seed);
         let (w, h) = demo.sim.size_cells();
+        let chunks = (w / foundry_core::CHUNK_SIZE, h / foundry_core::CHUNK_SIZE);
         let center = self.start_center.unwrap_or(DVec2::from(demo.start_center));
         self.reset_view(center, DVec2::new(w as f64, h as f64));
         self.world = Some(World { sim: SimThread::start(demo.sim), seed, chunks, user_paused: false, overlay: false });
@@ -493,12 +512,16 @@ impl Game {
     /// Load a save when no world runs (from the main menu). The file is read here, then the
     /// simulation thread starts with it.
     fn load_from_menu(&mut self, path: &Path, now: Instant) {
-        match Simulation::load_file(self.content.clone(), path) {
+        match Simulation::load_file_with_resolver(self.content.clone(), &demo::resolve_source, path) {
             Ok((sim, report)) => {
                 let (w, h) = sim.size_cells();
                 let meta = saves::read_meta(path).unwrap_or_default();
                 self.world = None;
-                self.reset_view(DVec2::new(w as f64 * 0.48, h as f64 * 0.55), DVec2::new(w as f64, h as f64));
+                let center = match sim.view() {
+                    Some(v) => DVec2::new((v.x0 + v.x1) as f64 / 2.0, (v.y0 + v.y1) as f64 / 2.0),
+                    None => DVec2::new(w as f64 * 0.48, h as f64 * 0.55),
+                };
+                self.reset_view(center, DVec2::new(w as f64, h as f64));
                 let chunks = (w / foundry_core::CHUNK_SIZE, h / foundry_core::CHUNK_SIZE);
                 self.world = Some(World { sim: SimThread::start(sim), seed: meta.seed, chunks, user_paused: false, overlay: false });
                 self.ui.model.state = GameState::Playing;
@@ -574,7 +597,7 @@ impl Game {
         }
         match action {
             UiAction::NewGame { seed, size } => {
-                self.start_new_world(seed, size.chunks());
+                self.start_new_world(seed, self.shape_for(size));
                 self.ui.message(format!("New world: seed {seed}"), now);
             }
             UiAction::Continue => match self.ui.model.saves.first().map(|s| s.id.clone()) {
@@ -680,6 +703,7 @@ impl Game {
         self.stats.tick_ms = snapshot.stats.tick_ms;
         self.stats.awake_chunks = snapshot.stats.awake_chunks;
         self.stats.loaded_chunks = snapshot.stats.loaded_chunks;
+        self.stats.packed_chunks = snapshot.stats.packed_chunks;
         let (w, h) = snapshot.world_cells;
         self.controls.world = DVec2::new(w as f64, h as f64);
         if world.overlay {
