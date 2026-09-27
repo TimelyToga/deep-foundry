@@ -10,10 +10,15 @@ mod args;
 mod controls;
 mod debug_panel;
 mod demo;
+mod factory_host;
+mod normal;
+mod overlay;
+mod player;
 mod saves;
 mod screenshot;
 mod sim_thread;
 mod smoke;
+mod tools;
 mod ui;
 
 use anyhow::Result;
