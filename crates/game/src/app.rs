@@ -209,7 +209,7 @@ struct Game {
 
 impl Game {
     fn new(event_loop: &ActiveEventLoop, args: &Args, content: Arc<Content>) -> Result<Self> {
-        let demo = demo::build(content.clone(), args.world, args.seed);
+        let demo = demo::build(content.clone(), args.shape(), args.seed);
         let world = DVec2::new(demo.sim.size_cells().0 as f64, demo.sim.size_cells().1 as f64);
 
         let mut attrs =

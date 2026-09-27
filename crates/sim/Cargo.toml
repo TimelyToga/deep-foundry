@@ -11,6 +11,7 @@ foundry_content.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 lz4_flex = "0.14"
+rustc-hash = "2.1"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

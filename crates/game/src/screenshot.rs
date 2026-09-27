@@ -17,7 +17,7 @@ use std::time::Instant;
 
 pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     let start = Instant::now();
-    let demo = demo::build(content.clone(), args.world, args.seed);
+    let demo = demo::build(content.clone(), args.shape(), args.seed);
     let mut sim = demo.sim;
     let built = start.elapsed();
 
@@ -25,14 +25,14 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     let center = args.center.map_or(DVec2::from(demo.start_center), DVec2::from);
     let camera = Camera::new(center, args.zoom.unwrap_or(2.0), UVec2::new(size.0, size.1));
 
+    // Ask for the chunks on the screen, like the game does. The view is also the anchor: only
+    // chunks near it are made and updated.
+    sim.apply(Command::SetView { area: camera.visible_rect().expand(1) });
     let tick_start = Instant::now();
     for _ in 0..args.ticks {
         sim.tick();
     }
     let ticks_time = tick_start.elapsed();
-
-    // Ask for the chunks on the screen, like the game does.
-    sim.apply(Command::SetView { area: camera.visible_rect().expand(1) });
     let snapshot = sim.take_snapshot();
 
     let (device, queue) = create_device().context("no GPU adapter found")?;
