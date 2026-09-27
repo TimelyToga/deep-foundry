@@ -178,7 +178,7 @@ mod tests {
 
     fn setup() -> (Factory, Simulation, Robot) {
         let content = Arc::new(Content::load_default().unwrap());
-        let mut sim = Simulation::new(content.clone(), SimConfig { width_chunks: 4, height_chunks: 4, seed: 1, bedrock_border: true });
+        let mut sim = Simulation::new(content.clone(), SimConfig::finite(4, 4, 1));
         let (clay, stone) = (content.expect_material("clay"), content.expect_material("stone"));
         for y in 200..240 {
             for x in 2..254 {

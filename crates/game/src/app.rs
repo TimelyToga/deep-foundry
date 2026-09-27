@@ -1,8 +1,12 @@
 //! The window: winit events, the wgpu surface, egui, input and the frame loop.
 //!
 //! The game starts in the main menu with no world. "New game" builds a demo world and starts the
-//! simulation thread; "Load" and "Continue" load a save. The UI is `foundry_ui` in the sandbox
-//! mode (see `ui.rs`).
+//! simulation thread; "Load" and "Continue" load a save. The UI is `foundry_ui` (see `ui.rs`).
+//!
+//! Two game modes: the sandbox mode (paint any material, free camera) and the normal mode (the
+//! robot, the factory, research and the Hub; the camera follows the robot). In the normal mode
+//! the factory runs on the simulation thread (`factory_host.rs`), and `normal.rs` connects it to
+//! the UI and the input.
 //!
 //! Each frame:
 //! 1. Take the newest snapshot. Upload it (`Renderer::apply_snapshot`), keep its chunk images for
@@ -15,17 +19,21 @@ use crate::args::{Args, UiState};
 use crate::controls::{CameraControl, MAX_ZOOM, Stroke};
 use crate::debug_panel::{self, DebugAction, StatsView};
 use crate::demo;
+use crate::factory_host::{FactoryHost, GameCommand};
+use crate::normal::NormalMode;
+use crate::overlay;
 use crate::saves::{self, SaveMeta};
 use crate::sim_thread::SimThread;
 use crate::smoke::{Smoke, Step};
 use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
 use foundry_content::Content;
+use foundry_factory::Guide;
 use foundry_core::{CellPos, CellRect, CellTexel, ChunkPos, Command, DebugChunk, MaterialId, PaintMode};
 use foundry_render::headless::device_descriptor;
 use foundry_render::{Renderer, wgpu};
 use foundry_sim::Simulation;
-use foundry_ui::{GameState, HoverView, MenuPage, PerfView, SettingChange, UiAction, WindowKind, WorldSize};
+use foundry_ui::{GameMode, GameState, HoverView, MenuPage, PerfView, SettingChange, UiAction, WindowKind, WorldSize};
 use glam::{DVec2, UVec2, Vec2};
 use std::collections::HashMap;
 use std::path::Path;
@@ -194,6 +202,14 @@ struct World {
     user_paused: bool,
     /// The chunk overlay of the debug panel is on.
     overlay: bool,
+    /// The normal mode (robot and factory). `None` in the sandbox mode.
+    normal: Option<NormalMode>,
+}
+
+impl World {
+    fn new(sim: SimThread, seed: u64, chunks: (i32, i32), normal: bool) -> Self {
+        Self { sim, seed, chunks, user_paused: false, overlay: false, normal: normal.then(NormalMode::new) }
+    }
 }
 
 struct Game {
@@ -212,8 +228,12 @@ struct Game {
     egui_free: Vec<egui::TextureId>,
 
     content: Arc<Content>,
+    /// The guide goals (data, loaded once).
+    guide: Arc<Guide>,
     ui: SandboxUi,
     world: Option<World>,
+    /// The mode of `--ui-state` start worlds (`--mode`).
+    start_mode: GameMode,
     /// Default camera position for new worlds (`--center`).
     start_center: Option<DVec2>,
     /// The world shape from the command line (`--world`, `--depth`).
@@ -298,6 +318,10 @@ impl Game {
         let viewport = UVec2::new(config.width, config.height);
         let controls = CameraControl::new(DVec2::ZERO, 2.0, viewport, DVec2::ZERO);
 
+        let guide = Arc::new(Guide::load_default().unwrap_or_else(|e| {
+            log::warn!("cannot load the guide: {e}");
+            Guide::default()
+        }));
         let mut game = Self {
             window,
             surface,
@@ -311,8 +335,10 @@ impl Game {
             egui_renderer,
             egui_free: Vec::new(),
             content,
+            guide,
             ui,
             world: None,
+            start_mode: args.start_mode(),
             start_center: args.center.map(DVec2::from),
             start_shape: args.shape(),
             start_zoom: args.zoom,
@@ -339,7 +365,7 @@ impl Game {
     /// Go to a start screen (`--ui-state`).
     fn enter(&mut self, state: UiState, seed: u64, shape: demo::Shape) {
         if state.has_world() {
-            self.start_new_world(seed, shape);
+            self.start_new_world(seed, shape, self.start_mode);
         }
         match state {
             UiState::Menu | UiState::Playing => {}
@@ -348,6 +374,10 @@ impl Game {
             UiState::Settings => self.ui.ui.open_menu(MenuPage::Settings),
             UiState::Inventory => self.ui.ui.open_window(WindowKind::Character),
             UiState::Debug => self.ui.model.settings.show_debug = true,
+            UiState::Research => self.ui.ui.open_window(WindowKind::Research),
+            UiState::Guide => self.ui.ui.open_window(WindowKind::Guide),
+            // Screens for `--screenshot`. In the window they start the normal game.
+            UiState::Building | UiState::Ghost | UiState::Hub => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {
@@ -379,8 +409,7 @@ impl Game {
             WindowEvent::ModifiersChanged(m) => self.held.shift = m.state().shift_key(),
             WindowEvent::Focused(false) => {
                 // Key and button releases are not sent to a window without focus.
-                self.held = Held::default();
-                self.stroke.end();
+                self.release_all();
             }
             WindowEvent::CursorLeft { .. } => self.mouse_inside = false,
             WindowEvent::PinchGesture { delta, .. } => {
@@ -402,6 +431,20 @@ impl Game {
                 let down = state == ElementState::Pressed;
                 // Start an action only in the world, not over the UI. Always end it.
                 if down && (!self.playing() || response.consumed || self.egui_ctx.is_pointer_over_egui()) {
+                    return;
+                }
+                if self.is_normal() && matches!(button, MouseButton::Left | MouseButton::Right) {
+                    let left = button == MouseButton::Left;
+                    let (content, mouse) = (self.content.clone(), self.mouse_cell());
+                    let Some(n) = self.normal_mut() else { return };
+                    if down {
+                        let cmds = n.press(&content, left, mouse);
+                        self.send_all(cmds);
+                    } else if left {
+                        n.held.dig = false;
+                    } else {
+                        n.held.spray = false;
+                    }
                     return;
                 }
                 match button {
@@ -430,6 +473,10 @@ impl Game {
 
     /// Game keys. The UI reads E, P, Esc, 1-0 and Shift + 1-0 itself; the game does not use them.
     fn key(&mut self, code: KeyCode, down: bool, repeat: bool) {
+        if self.is_normal() {
+            self.normal_key(code, down, repeat);
+            return;
+        }
         match code {
             KeyCode::KeyA | KeyCode::ArrowLeft => self.held.left = down,
             KeyCode::KeyD | KeyCode::ArrowRight => self.held.right = down,
@@ -451,6 +498,36 @@ impl Game {
             }
             KeyCode::KeyQ if !repeat => {
                 self.ui.sandbox_action(&UiAction::ClearHand);
+            }
+            _ => {}
+        }
+    }
+
+    /// Keys of the normal mode. The UI reads E, T, G, P, Esc and the quickbar keys itself.
+    fn normal_key(&mut self, code: KeyCode, down: bool, repeat: bool) {
+        let playing = self.playing();
+        let content = self.content.clone();
+        let Some(n) = self.normal_mut() else { return };
+        match code {
+            KeyCode::KeyA | KeyCode::ArrowLeft => n.held.left = down && playing,
+            KeyCode::KeyD | KeyCode::ArrowRight => n.held.right = down && playing,
+            KeyCode::KeyW | KeyCode::ArrowUp | KeyCode::Space => n.held.jump = down && playing,
+            KeyCode::KeyF => n.held.scan = down && playing,
+            _ => {}
+        }
+        if !down || repeat || !playing {
+            return;
+        }
+        match code {
+            KeyCode::KeyR if n.building_in_hand(&content).is_some() => n.rotation = (n.rotation + 1) % 4,
+            KeyCode::KeyQ => {
+                let mut cmds = vec![];
+                n.action(&UiAction::ClearHand, &mut cmds);
+                self.send_all(cmds);
+            }
+            KeyCode::F3 => {
+                let s = &mut self.ui.model.settings;
+                s.show_debug = !s.show_debug;
             }
             _ => {}
         }
@@ -498,32 +575,64 @@ impl Game {
         }
     }
 
-    fn start_new_world(&mut self, seed: u64, shape: demo::Shape) {
+    fn start_new_world(&mut self, seed: u64, shape: demo::Shape, mode: GameMode) {
         self.world = None; // Stops the old simulation thread.
-        let demo = demo::build(self.content.clone(), shape, seed);
+        let mut demo = demo::build(self.content.clone(), shape, seed);
         let (w, h) = demo.sim.size_cells();
         let chunks = (w / foundry_core::CHUNK_SIZE, h / foundry_core::CHUNK_SIZE);
-        let center = self.start_center.unwrap_or(DVec2::from(demo.start_center));
+        let mut center = self.start_center.unwrap_or(DVec2::from(demo.start_center));
+        let host = match mode {
+            GameMode::Sandbox => None,
+            GameMode::Normal => {
+                match FactoryHost::new_game(self.content.clone(), self.guide.clone(), &mut demo.sim, demo.start_center.0 as i32) {
+                    Ok(h) => {
+                        let (x, y) = h.robot.center();
+                        center = DVec2::new(x as f64, y as f64);
+                        Some(h)
+                    }
+                    Err(e) => {
+                        log::error!("cannot start a normal game: {e}");
+                        None
+                    }
+                }
+            }
+        };
         self.reset_view(center, DVec2::new(w as f64, h as f64));
-        self.world = Some(World { sim: SimThread::start(demo.sim), seed, chunks, user_paused: false, overlay: false });
+        let normal = host.is_some();
+        self.ui.set_mode(if normal { GameMode::Normal } else { GameMode::Sandbox });
+        self.world = Some(World::new(SimThread::start_with(demo.sim, host), seed, chunks, normal));
         self.ui.model.state = GameState::Playing;
     }
 
     /// Load a save when no world runs (from the main menu). The file is read here, then the
     /// simulation thread starts with it.
     fn load_from_menu(&mut self, path: &Path, now: Instant) {
+        // The factory side file of a normal game (none for a sandbox save).
+        let host = match FactoryHost::load_file(self.content.clone(), self.guide.clone(), path) {
+            Ok(h) => h,
+            Err(e) => {
+                self.ui.message(format!("Load failed: {e}"), now);
+                return;
+            }
+        };
         match Simulation::load_file_with_resolver(self.content.clone(), &demo::resolve_source, path) {
             Ok((sim, report)) => {
                 let (w, h) = sim.size_cells();
                 let meta = saves::read_meta(path).unwrap_or_default();
                 self.world = None;
-                let center = match sim.view() {
-                    Some(v) => DVec2::new((v.x0 + v.x1) as f64 / 2.0, (v.y0 + v.y1) as f64 / 2.0),
-                    None => DVec2::new(w as f64 * 0.48, h as f64 * 0.55),
+                let center = match (&host, sim.view()) {
+                    (Some(h), _) => {
+                        let (x, y) = h.robot.center();
+                        DVec2::new(x as f64, y as f64)
+                    }
+                    (None, Some(v)) => DVec2::new((v.x0 + v.x1) as f64 / 2.0, (v.y0 + v.y1) as f64 / 2.0),
+                    (None, None) => DVec2::new(w as f64 * 0.48, h as f64 * 0.55),
                 };
                 self.reset_view(center, DVec2::new(w as f64, h as f64));
                 let chunks = (w / foundry_core::CHUNK_SIZE, h / foundry_core::CHUNK_SIZE);
-                self.world = Some(World { sim: SimThread::start(sim), seed: meta.seed, chunks, user_paused: false, overlay: false });
+                let normal = host.is_some();
+                self.ui.set_mode(if normal { GameMode::Normal } else { GameMode::Sandbox });
+                self.world = Some(World::new(SimThread::start_with(sim, host), meta.seed, chunks, normal));
                 self.ui.model.state = GameState::Playing;
                 let mut text = format!("Game loaded: {}", save_name(path));
                 if !report.unknown_materials.is_empty() {
@@ -535,25 +644,11 @@ impl Game {
         }
     }
 
+    /// Load a save. The files are read on this thread, then a new simulation thread starts with
+    /// them, so a save of the other mode can be loaded too. If the load fails, the old world stays.
     fn load(&mut self, id: &str, now: Instant) {
         let path = self.ui.saves_dir.join(id);
-        let Some(world) = self.world.as_mut() else {
-            self.load_from_menu(&path, now);
-            return;
-        };
-        // The simulation thread loads the file and reports the result in a notice. If the load
-        // fails, the old world stays: `ResendAll` makes it send its chunks again.
-        let meta = saves::read_meta(&path).unwrap_or_default();
-        world.seed = meta.seed;
-        world.user_paused = false;
-        world.sim.send(Command::LoadWorld { path });
-        let view = self.last_view.unwrap_or_else(|| self.controls.view_area(VIEW_MARGIN));
-        world.sim.send(Command::SetView { area: view });
-        world.sim.send(Command::ResendAll);
-        world.sim.send(Command::SetPaused(false));
-        self.renderer.clear_chunks();
-        self.cells.clear();
-        self.ui.model.state = GameState::Playing;
+        self.load_from_menu(&path, now);
     }
 
     fn save(&mut self, name: &str, now: Instant) {
@@ -576,9 +671,40 @@ impl Game {
             w.sim.send(Command::SetPaused(true));
         }
         self.ui.model.state = GameState::Paused;
+        self.release_all();
+        self.ui.refresh_saves();
+    }
+
+    /// Forget all held keys and buttons (the window lost the focus, or a menu opened).
+    fn release_all(&mut self) {
         self.held = Held::default();
         self.stroke.end();
-        self.ui.refresh_saves();
+        if let Some(n) = self.normal_mut() {
+            n.held = Default::default();
+        }
+    }
+
+    fn normal_mut(&mut self) -> Option<&mut NormalMode> {
+        self.world.as_mut().and_then(|w| w.normal.as_mut())
+    }
+
+    fn is_normal(&self) -> bool {
+        self.world.as_ref().is_some_and(|w| w.normal.is_some())
+    }
+
+    /// The cell under the mouse.
+    fn mouse_cell(&self) -> CellPos {
+        let c = self.controls.camera.screen_to_cell(self.mouse);
+        CellPos::new(c.x.floor() as i32, c.y.floor() as i32)
+    }
+
+    /// Send commands to the simulation thread.
+    fn send_all(&self, cmds: Vec<GameCommand>) {
+        if let Some(w) = &self.world {
+            for c in cmds {
+                w.sim.send(c);
+            }
+        }
     }
 
     fn quit_to_menu(&mut self) {
@@ -592,13 +718,24 @@ impl Game {
     }
 
     fn handle_action(&mut self, action: UiAction, event_loop: &ActiveEventLoop, now: Instant) {
-        if self.ui.sandbox_action(&action) {
+        if let Some(w) = self.world.as_mut()
+            && let Some(n) = w.normal.as_mut()
+        {
+            let mut cmds = Vec::new();
+            if n.action(&action, &mut cmds) {
+                for c in cmds {
+                    w.sim.send(c);
+                }
+                return;
+            }
+        } else if self.ui.sandbox_action(&action) {
             return;
         }
         match action {
-            UiAction::NewGame { seed, size, .. } => {
-                self.start_new_world(seed, self.shape_for(size));
-                self.ui.message(format!("New world: seed {seed}"), now);
+            UiAction::NewGame { seed, size, mode } => {
+                self.start_new_world(seed, self.shape_for(size), mode);
+                let what = if mode == GameMode::Normal { "New game" } else { "New sandbox world" };
+                self.ui.message(format!("{what}: seed {seed}"), now);
             }
             UiAction::Continue => match self.ui.model.saves.first().map(|s| s.id.clone()) {
                 Some(id) => self.load(&id, now),
@@ -683,6 +820,15 @@ impl Game {
     /// Take the newest snapshot: upload it, keep its chunks for the cell under the mouse,
     /// and show its notices.
     fn take_snapshot(&mut self, now: Instant) {
+        // The factory views of the normal mode.
+        if let Some(w) = self.world.as_mut()
+            && let Some(n) = w.normal.as_mut()
+            && let Some(frame) = w.sim.take_factory()
+        {
+            for notice in n.take_frame(frame, now) {
+                self.ui.message(notice, now);
+            }
+        }
         let Some(world) = &self.world else { return };
         let Some(mut snapshot) = world.sim.take_snapshot() else { return };
         let evicted = self.renderer.apply_snapshot(&snapshot, &self.controls.camera);
@@ -735,7 +881,12 @@ impl Game {
         self.ui.update_message(now);
         let playing = self.playing();
         let over_ui = self.egui_ctx.is_pointer_over_egui();
-        self.ui.model.hover = if playing && self.mouse_inside && !over_ui { self.hover_cell() } else { None };
+        let mouse = self.mouse_cell();
+        let building = self.world.as_ref().and_then(|w| w.normal.as_ref()).and_then(|n| n.hover(mouse));
+        self.ui.model.hover = if playing && self.mouse_inside && !over_ui { building.or_else(|| self.hover_cell()) } else { None };
+        if let Some(n) = self.world.as_ref().and_then(|w| w.normal.as_ref()) {
+            n.fill_model(&mut self.ui.model);
+        }
         let fps = 1000.0 / self.timing.frame_ms.max(0.001);
         self.ui.model.fps = fps;
         self.ui.model.perf = self.ui.model.settings.show_fps.then(|| PerfView {
@@ -781,6 +932,11 @@ impl Game {
 
         // 1. The newest snapshot.
         self.take_snapshot(frame_start);
+        // In the normal mode the camera follows the robot. It moves before the UI, so the shapes
+        // over the world (robot, ghost) use the same camera as the world.
+        if self.is_normal() {
+            self.follow_robot(dt);
+        }
 
         // 2. The UI.
         self.update_model(frame_start);
@@ -791,6 +947,7 @@ impl Game {
         let show_brush = self.playing() && self.mouse_inside;
         let show_debug = self.ui.model.settings.show_debug && self.world.is_some();
         let (paused, overlay) = self.world.as_ref().map_or((false, false), |w| (w.user_paused, w.overlay));
+        let mouse_cell = self.mouse_cell();
         let mut actions = Vec::new();
         let mut debug_actions = Vec::new();
         let mut full_output = {
@@ -798,6 +955,8 @@ impl Game {
             let stats = &self.stats;
             let debug_chunks = &self.debug_chunks;
             let camera = &self.controls.camera;
+            let normal = self.world.as_ref().and_then(|w| w.normal.as_ref());
+            let content = &self.content;
             self.egui_ctx.run_ui(raw_input, |root| {
                 if show_debug {
                     debug_panel::draw(root, stats, paused, overlay, &mut debug_actions);
@@ -807,8 +966,18 @@ impl Game {
                 if overlay {
                     debug_panel::draw_overlay(&painter, debug_chunks, camera, root.ctx().pixels_per_point());
                 }
-                if show_brush && !root.ctx().is_pointer_over_egui() {
-                    painter.circle_stroke(brush_pos, brush_radius, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140)));
+                let over_ui = root.ctx().is_pointer_over_egui();
+                match normal {
+                    Some(n) => {
+                        let mouse = (show_brush && !over_ui).then_some(mouse_cell);
+                        let ghost = mouse.and_then(|m| n.ghost(content, m));
+                        overlay::draw(&painter, camera, root.ctx().pixels_per_point(), &n.frame, ghost.as_ref(), mouse);
+                    }
+                    None => {
+                        if show_brush && !over_ui {
+                            painter.circle_stroke(brush_pos, brush_radius, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140)));
+                        }
+                    }
                 }
             })
         };
@@ -829,9 +998,10 @@ impl Game {
             self.debug_action(action);
         }
         self.smoke_step(event_loop, frame_start);
+        self.send_normal_input();
 
         // 3. Camera, brush and view area.
-        if self.playing() {
+        if self.playing() && !self.is_normal() {
             let pan = Vec2::new(
                 (self.held.right as i32 - self.held.left as i32) as f32,
                 (self.held.down as i32 - self.held.up as i32) as f32,
@@ -927,6 +1097,38 @@ impl Game {
             && frame_start.duration_since(self.timing.start) >= limit
         {
             event_loop.exit();
+        }
+    }
+
+    /// The camera follows the robot (normal mode). The zoom still moves smoothly.
+    fn follow_robot(&mut self, dt: f32) {
+        let Some(r) = self.world.as_ref().and_then(|w| w.normal.as_ref()).and_then(|n| n.frame.robot) else { return };
+        if self.playing() {
+            self.controls.update(dt, Vec2::ZERO, false);
+        }
+        let (x, y) = r.center();
+        let target = DVec2::new(x as f64, y as f64 - 8.0);
+        let k = 1.0 - (-dt as f64 * 12.0).exp();
+        let c = &mut self.controls.camera.center;
+        *c += (target - *c) * k;
+        if (target - *c).length() > 400.0 {
+            *c = target;
+        }
+    }
+
+    /// Send the player input and the open windows to the factory (normal mode), when they changed.
+    fn send_normal_input(&mut self) {
+        let content = self.content.clone();
+        let mouse = self.mouse_cell();
+        let view = self.controls.camera.visible_rect();
+        let (research, guide) = (self.ui.ui.is_open(WindowKind::Research), self.ui.ui.is_open(WindowKind::Guide));
+        let Some(w) = self.world.as_mut() else { return };
+        let Some(n) = w.normal.as_mut() else { return };
+        if let Some(c) = n.input(&content, mouse, view) {
+            w.sim.send(c);
+        }
+        if let Some(c) = n.windows(research, guide) {
+            w.sim.send(c);
         }
     }
 
