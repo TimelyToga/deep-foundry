@@ -14,3 +14,17 @@ foundry_core.workspace = true
 foundry_content.workspace = true
 foundry_sim.workspace = true
 foundry_render.workspace = true
+wgpu = "30.0"
+winit = "0.30.13"
+egui = "0.36.2"
+egui-wgpu = "0.36.2"
+egui-winit = "0.36.2"
+glam = "0.33"
+bytemuck = "1.25.2"
+pollster = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+crossbeam-channel = "0.5"
+log.workspace = true
+env_logger = "0.11"
+anyhow.workspace = true
+spin_sleep = "1.3"
