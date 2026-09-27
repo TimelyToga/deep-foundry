@@ -14,6 +14,7 @@ foundry_core.workspace = true
 foundry_content.workspace = true
 foundry_sim.workspace = true
 foundry_render.workspace = true
+foundry_ui.workspace = true
 winit = "0.30.13"
 egui = "0.36.2"
 egui-wgpu = "0.36.2"

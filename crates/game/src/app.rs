@@ -1,23 +1,34 @@
 //! The window: winit events, the wgpu surface, egui, input and the frame loop.
 //!
+//! The game starts in the main menu with no world. "New game" builds a demo world and starts the
+//! simulation thread; "Load" and "Continue" load a save. The UI is `foundry_ui` in the sandbox
+//! mode (see `ui.rs`).
+//!
 //! Each frame:
-//! 1. Take the newest snapshot. Upload it (`Renderer::apply_snapshot`) and send `ForgetChunks` for
-//!    chunks the renderer dropped.
-//! 2. Run the egui panel.
+//! 1. Take the newest snapshot. Upload it (`Renderer::apply_snapshot`), keep its chunk images for
+//!    the cell under the mouse, and show its notices.
+//! 2. Update the UI model and run the UI. Apply the UI actions.
 //! 3. Move the camera, send brush strokes, and send `SetView` when the view area changed.
-//! 4. Render the world, then egui, and present.
+//! 4. Render the world (if there is one), then egui, and present.
 
-use crate::args::Args;
+use crate::args::{Args, UiState};
 use crate::controls::{CameraControl, MAX_ZOOM, Stroke};
+use crate::debug_panel::{self, DebugAction, StatsView};
 use crate::demo;
+use crate::saves::{self, SaveMeta};
 use crate::sim_thread::SimThread;
-use crate::ui::{self, PaintMaterial, PanelAction, PanelState, StatsView};
+use crate::smoke::{Smoke, Step};
+use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
 use foundry_content::Content;
-use foundry_core::{CellPos, CellRect, Command, MaterialId, PaintMode};
+use foundry_core::{CellPos, CellRect, CellTexel, ChunkPos, Command, DebugChunk, MaterialId, PaintMode};
 use foundry_render::headless::device_descriptor;
 use foundry_render::{Renderer, wgpu};
+use foundry_sim::Simulation;
+use foundry_ui::{GameState, HoverView, MenuPage, PerfView, SettingChange, UiAction, WindowKind};
 use glam::{DVec2, UVec2, Vec2};
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -76,9 +87,14 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(mut game) = self.game.take() {
-            game.sim.stop();
+            if let Some(failure) = game.smoke.as_ref().and_then(|s| s.failure.clone()) {
+                self.error = Some(anyhow::anyhow!("smoke test failed: {failure}"));
+            }
             if self.args.exit_after.is_some() {
                 game.timing.print_summary(&game);
+            }
+            if let Some(w) = game.world.as_mut() {
+                w.sim.stop();
             }
         }
     }
@@ -97,7 +113,7 @@ struct Held {
     drag: bool,
 }
 
-/// Frame timing, for the stats panel and `--exit-after`.
+/// Frame timing, for the stats and `--exit-after`.
 struct Timing {
     start: Instant,
     last_frame: Instant,
@@ -155,7 +171,7 @@ impl Timing {
         println!("average CPU time per frame: {:.2} ms", self.cpu_total_ms / self.frames.max(1) as f64);
         println!(
             "simulation: {:.1} ticks/s, average tick {:.2} ms, awake chunks {}",
-            game.sim.ticks_per_second(),
+            game.world.as_ref().map_or(0.0, |w| w.sim.ticks_per_second()),
             self.tick_ms_total / self.tick_samples.max(1) as f64,
             game.stats.awake_chunks
         );
@@ -168,12 +184,25 @@ impl Timing {
     }
 }
 
+/// A running world: the simulation thread and what the game knows about it.
+struct World {
+    sim: SimThread,
+    seed: u64,
+    /// World size in chunks.
+    chunks: (i32, i32),
+    /// Paused with the pause key (Space), not with the pause menu.
+    user_paused: bool,
+    /// The chunk overlay of the debug panel is on.
+    overlay: bool,
+}
+
 struct Game {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    present_modes: Vec<wgpu::PresentMode>,
     renderer: Renderer,
 
     egui_ctx: egui::Context,
@@ -182,7 +211,12 @@ struct Game {
     /// egui textures to free after the current frame.
     egui_free: Vec<egui::TextureId>,
 
-    sim: SimThread,
+    content: Arc<Content>,
+    ui: SandboxUi,
+    world: Option<World>,
+    /// Default camera position for new worlds (`--center`).
+    start_center: Option<DVec2>,
+    start_zoom: Option<f32>,
     controls: CameraControl,
     held: Held,
     stroke: Stroke,
@@ -191,27 +225,23 @@ struct Game {
     mouse: DVec2,
     mouse_inside: bool,
     last_view: Option<CellRect>,
-
-    materials: Vec<PaintMaterial>,
-    selected: usize,
-    brush_radius: u16,
-    paused: bool,
+    /// The chunk images the renderer has, for the cell under the mouse. The same chunks as on the
+    /// GPU: a chunk leaves this map when the renderer drops it.
+    cells: HashMap<ChunkPos, Box<[CellTexel]>>,
+    debug_chunks: Vec<DebugChunk>,
     tick: u64,
-    show_stats: bool,
     stats: StatsView,
-    actions: Vec<PanelAction>,
 
     timing: Timing,
     exit_after: Option<Duration>,
     /// The surface said it is suboptimal. Configure it after the current frame.
     needs_configure: bool,
+    /// `--smoke-test`.
+    smoke: Option<Smoke>,
 }
 
 impl Game {
     fn new(event_loop: &ActiveEventLoop, args: &Args, content: Arc<Content>) -> Result<Self> {
-        let demo = demo::build(content.clone(), args.world, args.seed);
-        let world = DVec2::new(demo.sim.size_cells().0 as f64, demo.sim.size_cells().1 as f64);
-
         let mut attrs =
             Window::default_attributes().with_title("Deep Foundry").with_inner_size(LogicalSize::new(1600.0, 900.0));
         if let Some((w, h)) = args.size {
@@ -236,19 +266,11 @@ impl Game {
         let caps = surface.get_capabilities(&adapter);
         // egui and the world shaders write sRGB values directly, so prefer a format that is not "...Srgb".
         let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
-        let present_mode = if args.no_vsync {
-            [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
-                .into_iter()
-                .find(|m| caps.present_modes.contains(m))
-                .unwrap_or(wgpu::PresentMode::Fifo)
-        } else {
-            wgpu::PresentMode::Fifo
-        };
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .context("the surface does not work with this GPU")?;
         config.format = format;
-        config.present_mode = present_mode;
+        config.present_mode = present_mode(&caps.present_modes, !args.no_vsync);
         config.desired_maximum_frame_latency = 2;
         config.alpha_mode = caps.alpha_modes[0];
         surface.configure(&device, &config);
@@ -256,7 +278,6 @@ impl Game {
         let renderer = Renderer::new(&device, &queue, format, &content);
 
         let egui_ctx = egui::Context::default();
-        ui::apply_style(&egui_ctx);
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
@@ -267,28 +288,31 @@ impl Game {
         );
         let egui_renderer = egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
 
+        let saves_dir = args.saves.clone().unwrap_or_else(saves::default_dir);
+        let mut ui = SandboxUi::new(&egui_ctx, content.clone(), saves_dir);
+        ui.model.settings.ui_scale = args.ui_scale;
+        ui.model.settings.vsync = !args.no_vsync;
+
         let viewport = UVec2::new(config.width, config.height);
-        let zoom = args.zoom.unwrap_or_else(|| (viewport.x as f32 / 1100.0).round().clamp(1.0, MAX_ZOOM));
-        let center = args.center.map_or(DVec2::from(demo.start_center), DVec2::from);
-        let mut controls = CameraControl::new(center, zoom, viewport, world);
-        controls.min_zoom = renderer.min_zoom(viewport, VIEW_MARGIN).max(1.0);
+        let controls = CameraControl::new(DVec2::ZERO, 2.0, viewport, DVec2::ZERO);
 
-        let materials = ui::paint_materials(&content);
-        let selected = materials.iter().position(|m| content.materials.ids[m.id.index()] == "sand").unwrap_or(0);
-        let sim = SimThread::start(demo.sim);
-
-        Ok(Self {
+        let mut game = Self {
             window,
             surface,
             device,
             queue,
             config,
+            present_modes: caps.present_modes,
             renderer,
             egui_ctx,
             egui_state,
             egui_renderer,
             egui_free: Vec::new(),
-            sim,
+            content,
+            ui,
+            world: None,
+            start_center: args.center.map(DVec2::from),
+            start_zoom: args.zoom,
             controls,
             held: Held::default(),
             stroke: Stroke::default(),
@@ -296,18 +320,42 @@ impl Game {
             mouse: DVec2::ZERO,
             mouse_inside: false,
             last_view: None,
-            materials,
-            selected,
-            brush_radius: 6,
-            paused: false,
+            cells: HashMap::new(),
+            debug_chunks: Vec::new(),
             tick: 0,
-            show_stats: true,
             stats: StatsView::default(),
-            actions: Vec::with_capacity(4),
             timing: Timing::new(args.exit_after),
             exit_after: args.exit_after.map(Duration::from_secs_f64),
             needs_configure: false,
-        })
+            smoke: args.smoke_test.then(Smoke::new),
+        };
+        game.enter(args.start_state(), args.seed, args.world);
+        Ok(game)
+    }
+
+    /// Go to a start screen (`--ui-state`).
+    fn enter(&mut self, state: UiState, seed: u64, world: (i32, i32)) {
+        if state.has_world() {
+            self.start_new_world(seed, world);
+        }
+        match state {
+            UiState::Menu | UiState::Playing => {}
+            UiState::NewGame => self.ui.ui.open_menu(MenuPage::NewGame),
+            UiState::Load => self.ui.ui.open_menu(MenuPage::Load),
+            UiState::Settings => self.ui.ui.open_menu(MenuPage::Settings),
+            UiState::Inventory => self.ui.ui.open_window(WindowKind::Character),
+            UiState::Debug => self.ui.model.settings.show_debug = true,
+            UiState::Pause | UiState::Save => {
+                self.pause();
+                if state == UiState::Save {
+                    self.ui.ui.open_menu(MenuPage::Save);
+                }
+            }
+        }
+    }
+
+    fn playing(&self) -> bool {
+        self.world.is_some() && self.ui.state() == GameState::Playing
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
@@ -317,11 +365,12 @@ impl Game {
             WindowEvent::Resized(size) => self.resize(UVec2::new(size.width, size.height)),
             WindowEvent::RedrawRequested => self.frame(event_loop),
             WindowEvent::KeyboardInput { event, .. } => {
-                if self.egui_ctx.text_edit_focused() {
-                    return;
-                }
                 let down = event.state == ElementState::Pressed;
                 let PhysicalKey::Code(code) = event.physical_key else { return };
+                // A text field has the keyboard: only key releases count.
+                if down && self.egui_ctx.text_edit_focused() {
+                    return;
+                }
                 self.key(code, down, event.repeat);
             }
             WindowEvent::ModifiersChanged(m) => self.held.shift = m.state().shift_key(),
@@ -333,7 +382,7 @@ impl Game {
             WindowEvent::CursorLeft { .. } => self.mouse_inside = false,
             WindowEvent::PinchGesture { delta, .. } => {
                 // Trackpad pinch. `delta` is the change of scale; it can be NaN.
-                if delta.is_finite() && !self.egui_ctx.is_pointer_over_egui() {
+                if delta.is_finite() && self.playing() && !self.egui_ctx.is_pointer_over_egui() {
                     let steps = ((1.0 + delta).max(0.1).ln() / 1.2f64.ln()) as f32;
                     self.controls.zoom_by(steps, self.mouse);
                 }
@@ -348,8 +397,8 @@ impl Game {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let down = state == ElementState::Pressed;
-                // Start an action only when the mouse is not over the panel. Always end it.
-                if down && (response.consumed || self.egui_ctx.is_pointer_over_egui()) {
+                // Start an action only in the world, not over the UI. Always end it.
+                if down && (!self.playing() || response.consumed || self.egui_ctx.is_pointer_over_egui()) {
                     return;
                 }
                 match button {
@@ -363,7 +412,7 @@ impl Game {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                if response.consumed || self.egui_ctx.is_pointer_over_egui() {
+                if !self.playing() || response.consumed || self.egui_ctx.is_pointer_over_egui() {
                     return;
                 }
                 let steps = match delta {
@@ -376,35 +425,31 @@ impl Game {
         }
     }
 
+    /// Game keys. The UI reads E, P, Esc, 1-0 and Shift + 1-0 itself; the game does not use them.
     fn key(&mut self, code: KeyCode, down: bool, repeat: bool) {
         match code {
             KeyCode::KeyA | KeyCode::ArrowLeft => self.held.left = down,
             KeyCode::KeyD | KeyCode::ArrowRight => self.held.right = down,
             KeyCode::KeyW | KeyCode::ArrowUp => self.held.up = down,
             KeyCode::KeyS | KeyCode::ArrowDown => self.held.down = down,
-            _ if !down => {}
-            KeyCode::Space if !repeat => self.actions.push(PanelAction::TogglePause),
-            KeyCode::Period => self.actions.push(PanelAction::Step),
-            KeyCode::F3 if !repeat => self.show_stats = !self.show_stats,
-            KeyCode::BracketLeft => self.brush_radius = self.brush_radius.saturating_sub(1),
-            KeyCode::BracketRight => self.brush_radius = (self.brush_radius + 1).min(ui::MAX_BRUSH),
-            _ => {
-                let digit = match code {
-                    KeyCode::Digit1 => 1,
-                    KeyCode::Digit2 => 2,
-                    KeyCode::Digit3 => 3,
-                    KeyCode::Digit4 => 4,
-                    KeyCode::Digit5 => 5,
-                    KeyCode::Digit6 => 6,
-                    KeyCode::Digit7 => 7,
-                    KeyCode::Digit8 => 8,
-                    KeyCode::Digit9 => 9,
-                    _ => 0,
-                };
-                if digit > 0 && digit <= self.materials.len() {
-                    self.selected = digit - 1;
-                }
+            _ => {}
+        }
+        if !down || !self.playing() {
+            return;
+        }
+        match code {
+            KeyCode::Space if !repeat => self.debug_action(DebugAction::TogglePause),
+            KeyCode::Period => self.debug_action(DebugAction::Step),
+            KeyCode::BracketLeft => self.ui.set_brush_radius(self.ui.brush_radius().saturating_sub(1)),
+            KeyCode::BracketRight => self.ui.set_brush_radius(self.ui.brush_radius() + 1),
+            KeyCode::F3 if !repeat => {
+                let s = &mut self.ui.model.settings;
+                s.show_debug = !s.show_debug;
             }
+            KeyCode::KeyQ if !repeat => {
+                self.ui.sandbox_action(&UiAction::ClearHand);
+            }
+            _ => {}
         }
     }
 
@@ -417,6 +462,279 @@ impl Game {
         self.surface.configure(&self.device, &self.config);
         self.controls.set_viewport(size);
         self.controls.min_zoom = self.renderer.min_zoom(size, VIEW_MARGIN).max(1.0);
+    }
+
+    // ------------------------------------------------------------ worlds
+
+    /// Forget the old world's view data and put the camera at `center`.
+    fn reset_view(&mut self, center: DVec2, world_cells: DVec2) {
+        self.renderer.clear_chunks();
+        self.cells.clear();
+        self.debug_chunks.clear();
+        self.last_view = None;
+        self.tick = 0;
+        self.stroke.end();
+        let viewport = self.controls.camera.viewport;
+        let zoom = self.start_zoom.unwrap_or_else(|| (viewport.x as f32 / 1100.0).round().clamp(1.0, MAX_ZOOM));
+        self.controls = CameraControl::new(center, zoom, viewport, world_cells);
+        self.controls.min_zoom = self.renderer.min_zoom(viewport, VIEW_MARGIN).max(1.0);
+    }
+
+    fn start_new_world(&mut self, seed: u64, chunks: (i32, i32)) {
+        self.world = None; // Stops the old simulation thread.
+        let demo = demo::build(self.content.clone(), chunks, seed);
+        let (w, h) = demo.sim.size_cells();
+        let center = self.start_center.unwrap_or(DVec2::from(demo.start_center));
+        self.reset_view(center, DVec2::new(w as f64, h as f64));
+        self.world = Some(World { sim: SimThread::start(demo.sim), seed, chunks, user_paused: false, overlay: false });
+        self.ui.model.state = GameState::Playing;
+    }
+
+    /// Load a save when no world runs (from the main menu). The file is read here, then the
+    /// simulation thread starts with it.
+    fn load_from_menu(&mut self, path: &Path, now: Instant) {
+        match Simulation::load_file(self.content.clone(), path) {
+            Ok((sim, report)) => {
+                let (w, h) = sim.size_cells();
+                let meta = saves::read_meta(path).unwrap_or_default();
+                self.world = None;
+                self.reset_view(DVec2::new(w as f64 * 0.48, h as f64 * 0.55), DVec2::new(w as f64, h as f64));
+                let chunks = (w / foundry_core::CHUNK_SIZE, h / foundry_core::CHUNK_SIZE);
+                self.world = Some(World { sim: SimThread::start(sim), seed: meta.seed, chunks, user_paused: false, overlay: false });
+                self.ui.model.state = GameState::Playing;
+                let mut text = format!("Game loaded: {}", save_name(path));
+                if !report.unknown_materials.is_empty() {
+                    text.push_str(&format!(". Unknown materials became air: {}", report.unknown_materials.join(", ")));
+                }
+                self.ui.message(text, now);
+            }
+            Err(e) => self.ui.message(format!("Load failed: {e}"), now),
+        }
+    }
+
+    fn load(&mut self, id: &str, now: Instant) {
+        let path = self.ui.saves_dir.join(id);
+        let Some(world) = self.world.as_mut() else {
+            self.load_from_menu(&path, now);
+            return;
+        };
+        // The simulation thread loads the file and reports the result in a notice. If the load
+        // fails, the old world stays: `ResendAll` makes it send its chunks again.
+        let meta = saves::read_meta(&path).unwrap_or_default();
+        world.seed = meta.seed;
+        world.user_paused = false;
+        world.sim.send(Command::LoadWorld { path });
+        let view = self.last_view.unwrap_or_else(|| self.controls.view_area(VIEW_MARGIN));
+        world.sim.send(Command::SetView { area: view });
+        world.sim.send(Command::ResendAll);
+        world.sim.send(Command::SetPaused(false));
+        self.renderer.clear_chunks();
+        self.cells.clear();
+        self.ui.model.state = GameState::Playing;
+    }
+
+    fn save(&mut self, name: &str, now: Instant) {
+        let Some(world) = &self.world else { return };
+        let dir = self.ui.saves_dir.clone();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.ui.message(format!("Save failed: cannot make the folder {}: {e}", dir.display()), now);
+            return;
+        }
+        let path = saves::world_path(&dir, name);
+        world.sim.send(Command::SaveWorld { path: path.clone() });
+        let meta = SaveMeta { seed: world.seed, chunks: world.chunks, ticks: self.tick };
+        if let Err(e) = saves::write_meta(&path, meta) {
+            log::warn!("cannot write the save info file: {e}");
+        }
+    }
+
+    fn pause(&mut self) {
+        if let Some(w) = &self.world {
+            w.sim.send(Command::SetPaused(true));
+        }
+        self.ui.model.state = GameState::Paused;
+        self.held = Held::default();
+        self.stroke.end();
+        self.ui.refresh_saves();
+    }
+
+    fn quit_to_menu(&mut self) {
+        self.world = None;
+        self.renderer.clear_chunks();
+        self.cells.clear();
+        self.debug_chunks.clear();
+        self.ui.model.state = GameState::MainMenu;
+        self.ui.model.hover = None;
+        self.ui.refresh_saves();
+    }
+
+    fn handle_action(&mut self, action: UiAction, event_loop: &ActiveEventLoop, now: Instant) {
+        if self.ui.sandbox_action(&action) {
+            return;
+        }
+        match action {
+            UiAction::NewGame { seed, size } => {
+                self.start_new_world(seed, size.chunks());
+                self.ui.message(format!("New world: seed {seed}"), now);
+            }
+            UiAction::Continue => match self.ui.model.saves.first().map(|s| s.id.clone()) {
+                Some(id) => self.load(&id, now),
+                None => self.ui.message("There is no saved game yet.", now),
+            },
+            UiAction::Pause => self.pause(),
+            UiAction::Resume => {
+                if let Some(w) = &self.world {
+                    w.sim.send(Command::SetPaused(w.user_paused));
+                }
+                self.ui.model.state = GameState::Playing;
+            }
+            UiAction::Save { name, .. } => self.save(&name, now),
+            UiAction::Load(id) => self.load(&id, now),
+            UiAction::DeleteSave(id) => {
+                match saves::delete(&self.ui.saves_dir, &id) {
+                    Ok(()) => self.ui.message(format!("Deleted: {}", save_name(Path::new(&id))), now),
+                    Err(e) => self.ui.message(format!("Delete failed: {e}"), now),
+                }
+                self.ui.refresh_saves();
+            }
+            UiAction::QuitToMenu => self.quit_to_menu(),
+            UiAction::QuitGame => event_loop.exit(),
+            UiAction::ChangeSetting(change) => self.change_setting(change),
+            // No factory, research or alerts in the sandbox yet.
+            UiAction::OpenWindow(_)
+            | UiAction::CloseWindow(_)
+            | UiAction::OpenPowerNetwork(_)
+            | UiAction::ClickSlot { .. }
+            | UiAction::SelectHotbar(_)
+            | UiAction::SetHotbar { .. }
+            | UiAction::ClearHand
+            | UiAction::Craft { .. }
+            | UiAction::CancelCraft { .. }
+            | UiAction::SetRecipe { .. }
+            | UiAction::ShowAlert(_) => {}
+        }
+    }
+
+    fn change_setting(&mut self, change: SettingChange) {
+        let s = &mut self.ui.model.settings;
+        match change {
+            SettingChange::UiScale(v) => s.ui_scale = v,
+            SettingChange::ShowFps(v) => s.show_fps = v,
+            SettingChange::ShowDebug(v) => s.show_debug = v,
+            SettingChange::Vsync(v) => {
+                s.vsync = v;
+                self.config.present_mode = present_mode(&self.present_modes, v);
+                self.surface.configure(&self.device, &self.config);
+            }
+            // The simulation has no number settings yet. The liquids work adds them
+            // (`Simulation::settings_mut`); then this sends them to the simulation thread.
+            SettingChange::Simulation { key, value } => log::info!("simulation setting {key} = {value} (not used yet)"),
+        }
+    }
+
+    fn debug_action(&mut self, action: DebugAction) {
+        let Some(w) = self.world.as_mut() else { return };
+        match action {
+            DebugAction::TogglePause => {
+                w.user_paused = !w.user_paused;
+                w.sim.send(Command::SetPaused(w.user_paused));
+            }
+            DebugAction::Step => {
+                if w.user_paused {
+                    w.sim.send(Command::Step);
+                }
+            }
+            DebugAction::ToggleOverlay => {
+                w.overlay = !w.overlay;
+                w.sim.send(Command::SetDebug(w.overlay));
+                if !w.overlay {
+                    self.debug_chunks.clear();
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ frame
+
+    /// Take the newest snapshot: upload it, keep its chunks for the cell under the mouse,
+    /// and show its notices.
+    fn take_snapshot(&mut self, now: Instant) {
+        let Some(world) = &self.world else { return };
+        let Some(mut snapshot) = world.sim.take_snapshot() else { return };
+        let evicted = self.renderer.apply_snapshot(&snapshot, &self.controls.camera);
+        for image in snapshot.chunks.drain(..) {
+            self.cells.insert(image.pos, image.texels);
+        }
+        if !evicted.is_empty() {
+            for pos in &evicted {
+                self.cells.remove(pos);
+            }
+            world.sim.send(Command::ForgetChunks(evicted));
+        }
+        if snapshot.tick != self.tick {
+            self.timing.tick_ms_total += snapshot.stats.tick_ms as f64;
+            self.timing.tick_samples += 1;
+        }
+        self.tick = snapshot.tick;
+        self.stats.tick = snapshot.stats.tick;
+        self.stats.tick_ms = snapshot.stats.tick_ms;
+        self.stats.awake_chunks = snapshot.stats.awake_chunks;
+        self.stats.loaded_chunks = snapshot.stats.loaded_chunks;
+        let (w, h) = snapshot.world_cells;
+        self.controls.world = DVec2::new(w as f64, h as f64);
+        if world.overlay {
+            self.debug_chunks = std::mem::take(&mut snapshot.debug_chunks);
+        }
+        if !snapshot.notices.is_empty() {
+            for notice in snapshot.notices.drain(..) {
+                self.ui.message(notice, now);
+            }
+            self.ui.refresh_saves();
+        }
+    }
+
+    /// The cell under the mouse, from the chunk images.
+    fn hover_cell(&self) -> Option<HoverView> {
+        let c = self.controls.camera.screen_to_cell(self.mouse);
+        let pos = CellPos::new(c.x.floor() as i32, c.y.floor() as i32);
+        let (w, h) = (self.controls.world.x as i32, self.controls.world.y as i32);
+        if pos.x < 0 || pos.y < 0 || pos.x >= w || pos.y >= h {
+            return None;
+        }
+        let texel = self.cells.get(&pos.chunk())?.get(pos.local_index())?;
+        Some(HoverView::Cell { pos, material: MaterialId(texel[0]), temperature: texel[1] as i16 as f32 })
+    }
+
+    /// Put the numbers of this frame into the UI model.
+    fn update_model(&mut self, now: Instant) {
+        self.ui.update_message(now);
+        let playing = self.playing();
+        let over_ui = self.egui_ctx.is_pointer_over_egui();
+        self.ui.model.hover = if playing && self.mouse_inside && !over_ui { self.hover_cell() } else { None };
+        let fps = 1000.0 / self.timing.frame_ms.max(0.001);
+        self.ui.model.fps = fps;
+        self.ui.model.perf = self.ui.model.settings.show_fps.then(|| PerfView {
+            fps,
+            tick_ms: self.stats.tick_ms,
+            ticks_per_second: self.world.as_ref().map_or(0.0, |w| w.sim.ticks_per_second()),
+            awake_chunks: self.stats.awake_chunks,
+            loaded_chunks: self.stats.loaded_chunks,
+        });
+        if let Some(s) = self.ui.model.sandbox.as_mut() {
+            s.sim_paused = self.world.as_ref().is_some_and(|w| w.user_paused);
+        }
+        let r = self.renderer.stats();
+        let s = &mut self.stats;
+        s.frame_ms = self.timing.frame_ms;
+        s.fps = fps;
+        s.cpu_ms = self.timing.cpu_ms;
+        s.ticks_per_second = self.world.as_ref().map_or(0.0, |w| w.sim.ticks_per_second());
+        s.gpu_chunks = r.resident_chunks;
+        s.gpu_capacity = r.chunk_capacity;
+        s.drawn_chunks = r.drawn_chunks;
+        s.zoom = self.controls.camera.zoom;
+        let c = self.controls.camera.screen_to_cell(self.mouse);
+        s.cursor = Some((c.x.floor() as i32, c.y.floor() as i32));
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
@@ -437,55 +755,35 @@ impl Game {
         let dt = dt.min(0.05);
 
         // 1. The newest snapshot.
-        if let Some(snapshot) = self.sim.take_snapshot() {
-            let evicted = self.renderer.apply_snapshot(&snapshot, &self.controls.camera);
-            if !evicted.is_empty() {
-                self.sim.send(Command::ForgetChunks(evicted));
-            }
-            if snapshot.tick != self.tick {
-                self.timing.tick_ms_total += snapshot.stats.tick_ms as f64;
-                self.timing.tick_samples += 1;
-            }
-            self.tick = snapshot.tick;
-            self.paused = snapshot.paused;
-            self.stats.tick = snapshot.stats.tick;
-            self.stats.tick_ms = snapshot.stats.tick_ms;
-            self.stats.awake_chunks = snapshot.stats.awake_chunks;
-            self.stats.loaded_chunks = snapshot.stats.loaded_chunks;
-            let (w, h) = snapshot.world_cells;
-            self.controls.world = DVec2::new(w as f64, h as f64);
-        }
+        self.take_snapshot(frame_start);
 
-        // 2. The panel.
-        self.update_stats();
+        // 2. The UI.
+        self.update_model(frame_start);
         let raw_input = self.egui_state.take_egui_input(&self.window);
-        // The brush outline at the mouse, in egui points.
         let ppp = self.egui_ctx.pixels_per_point();
-        let brush = egui::pos2((self.mouse.x as f32) / ppp, (self.mouse.y as f32) / ppp);
-        let brush_radius = (self.brush_radius as f32 + 0.5) * self.controls.camera.zoom / ppp;
-        let mouse_inside = self.mouse_inside;
+        let brush_pos = egui::pos2((self.mouse.x as f32) / ppp, (self.mouse.y as f32) / ppp);
+        let brush_radius = (self.ui.brush_radius() as f32 + 0.5) * self.controls.camera.zoom / ppp;
+        let show_brush = self.playing() && self.mouse_inside;
+        let show_debug = self.ui.model.settings.show_debug && self.world.is_some();
+        let (paused, overlay) = self.world.as_ref().map_or((false, false), |w| (w.user_paused, w.overlay));
+        let mut actions = Vec::new();
+        let mut debug_actions = Vec::new();
         let mut full_output = {
-            let state = PanelState {
-                materials: &self.materials,
-                selected: &mut self.selected,
-                brush_radius: &mut self.brush_radius,
-                paused: self.paused,
-                show_stats: self.show_stats,
-                stats: &self.stats,
-            };
-            let mut state = Some(state);
-            let actions = &mut self.actions;
-            self.egui_ctx.run_ui(raw_input, |ui| {
-                if let Some(s) = state.take() {
-                    ui::draw(ui, s, actions);
+            let ui = &mut self.ui;
+            let stats = &self.stats;
+            let debug_chunks = &self.debug_chunks;
+            let camera = &self.controls.camera;
+            self.egui_ctx.run_ui(raw_input, |root| {
+                if show_debug {
+                    debug_panel::draw(root, stats, paused, overlay, &mut debug_actions);
                 }
-                if mouse_inside && !ui.ctx().is_pointer_over_egui() {
-                    let painter = ui.ctx().layer_painter(egui::LayerId::background());
-                    painter.circle_stroke(
-                        brush,
-                        brush_radius,
-                        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140)),
-                    );
+                actions = ui.ui.show(root.ctx(), &ui.model);
+                let painter = root.ctx().layer_painter(egui::LayerId::background());
+                if overlay {
+                    debug_panel::draw_overlay(&painter, debug_chunks, camera, root.ctx().pixels_per_point());
+                }
+                if show_brush && !root.ctx().is_pointer_over_egui() {
+                    painter.circle_stroke(brush_pos, brush_radius, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140)));
                 }
             })
         };
@@ -499,31 +797,29 @@ impl Game {
         self.egui_free.extend(full_output.textures_delta.free.drain());
         let pixels_per_point = full_output.pixels_per_point;
         let paint_jobs = self.egui_ctx.tessellate(std::mem::take(&mut full_output.shapes), pixels_per_point);
-        for action in self.actions.drain(..) {
-            match action {
-                PanelAction::TogglePause => {
-                    self.paused = !self.paused;
-                    self.sim.send(Command::SetPaused(self.paused));
-                }
-                PanelAction::Step => {
-                    if self.paused {
-                        self.sim.send(Command::Step);
-                    }
-                }
-            }
+        for action in actions {
+            self.handle_action(action, event_loop, frame_start);
         }
+        for action in debug_actions {
+            self.debug_action(action);
+        }
+        self.smoke_step(event_loop, frame_start);
 
         // 3. Camera, brush and view area.
-        let pan = Vec2::new(
-            (self.held.right as i32 - self.held.left as i32) as f32,
-            (self.held.down as i32 - self.held.up as i32) as f32,
-        );
-        self.controls.update(dt, pan, self.held.shift);
-        self.paint();
-        let view = self.controls.view_area(VIEW_MARGIN);
-        if self.last_view != Some(view) {
-            self.sim.send(Command::SetView { area: view });
-            self.last_view = Some(view);
+        if self.playing() {
+            let pan = Vec2::new(
+                (self.held.right as i32 - self.held.left as i32) as f32,
+                (self.held.down as i32 - self.held.up as i32) as f32,
+            );
+            self.controls.update(dt, pan, self.held.shift);
+            self.paint();
+        }
+        if let Some(world) = &self.world {
+            let view = self.controls.view_area(VIEW_MARGIN);
+            if self.last_view != Some(view) {
+                world.sim.send(Command::SetView { area: view });
+                self.last_view = Some(view);
+            }
         }
 
         // 4. Draw.
@@ -553,12 +849,16 @@ impl Game {
         let target = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
 
-        self.renderer.set_time(frame_start.duration_since(self.timing.start).as_secs_f64());
-        self.renderer.render(&mut encoder, &target, &self.controls.camera);
+        let has_world = self.world.is_some();
+        if has_world {
+            self.renderer.set_time(frame_start.duration_since(self.timing.start).as_secs_f64());
+            self.renderer.render(&mut encoder, &target, &self.controls.camera);
+        }
 
-        // egui on top.
+        // egui on top. With no world, egui clears the screen first.
         let screen =
             egui_wgpu::ScreenDescriptor { size_in_pixels: [self.config.width, self.config.height], pixels_per_point };
+        let clear = (!has_world).then_some(wgpu::Color::BLACK);
         let egui_cmds = ui::render_egui(
             &mut self.egui_renderer,
             &self.device,
@@ -567,6 +867,7 @@ impl Game {
             &target,
             &paint_jobs,
             &screen,
+            clear,
         );
         self.queue.submit(egui_cmds.into_iter().chain([encoder.finish()]));
         self.free_egui_textures();
@@ -604,48 +905,84 @@ impl Game {
         }
     }
 
+    /// Run the next step of `--smoke-test`.
+    fn smoke_step(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
+        let Some(step) = self.smoke.as_mut().and_then(|s| s.next()) else { return };
+        match step {
+            Step::Act(action) => {
+                println!("smoke test: {action:?}");
+                self.handle_action(action, event_loop, now);
+            }
+            Step::PaintSand => {
+                if let (Some(w), Some(sand)) = (&self.world, self.content.material("sand")) {
+                    let c = self.controls.camera.center;
+                    let center = CellPos::new(c.x as i32, c.y as i32 - 60);
+                    w.sim.send(Command::Paint { center, radius: 8, material: sand, mode: PaintMode::Replace, temperature: None });
+                }
+            }
+            Step::Expect(text) => {
+                let found = self.ui.message_log.iter().any(|m| m.contains(text));
+                let Some(smoke) = self.smoke.as_mut() else { return };
+                if found {
+                    println!("smoke test: saw \"{text}\"");
+                    smoke.passed_expect();
+                    self.ui.message_log.clear();
+                } else if !smoke.retry(Step::Expect(text)) {
+                    eprintln!("smoke test failed: {:?}; messages: {:?}", smoke.failure, self.ui.message_log);
+                    event_loop.exit();
+                }
+            }
+            Step::Done => {
+                println!("smoke test passed");
+                event_loop.exit();
+            }
+        }
+    }
+
     fn free_egui_textures(&mut self) {
         for id in self.egui_free.drain(..) {
             self.egui_renderer.free_texture(&id);
         }
     }
 
-    /// Send paint commands for the mouse stroke.
+    /// Send paint commands for the mouse stroke. Left paints the material in the hand;
+    /// right erases (paints air).
     fn paint(&mut self) {
         if !self.held.paint && !self.held.erase {
             return;
         }
+        let Some(world) = &self.world else { return };
         let material = if self.held.paint {
-            self.materials.get(self.selected).map_or(MaterialId::AIR, |m| m.id)
+            match self.ui.brush_material() {
+                Some(m) => m,
+                None => return,
+            }
         } else {
             MaterialId::AIR
         };
+        let radius = self.ui.brush_radius();
         let cell = self.controls.camera.screen_to_cell(self.mouse);
         self.paint_points.clear();
-        self.stroke.advance(cell, self.brush_radius, self.tick, &mut self.paint_points);
+        self.stroke.advance(cell, radius, self.tick, &mut self.paint_points);
         for &center in &self.paint_points {
-            self.sim.send(Command::Paint {
-                center,
-                radius: self.brush_radius,
-                material,
-                mode: PaintMode::Replace,
-                temperature: None,
-            });
+            world.sim.send(Command::Paint { center, radius, material, mode: PaintMode::Replace, temperature: None });
         }
     }
-
-    fn update_stats(&mut self) {
-        let r = self.renderer.stats();
-        let s = &mut self.stats;
-        s.frame_ms = self.timing.frame_ms;
-        s.fps = 1000.0 / self.timing.frame_ms.max(0.001);
-        s.cpu_ms = self.timing.cpu_ms;
-        s.ticks_per_second = self.sim.ticks_per_second();
-        s.gpu_chunks = r.resident_chunks;
-        s.gpu_capacity = r.chunk_capacity;
-        s.drawn_chunks = r.drawn_chunks;
-        s.zoom = self.controls.camera.zoom;
-        let c = self.controls.camera.screen_to_cell(self.mouse);
-        s.cursor = Some((c.x.floor() as i32, c.y.floor() as i32));
-    }
 }
+
+/// Fifo waits for the display refresh (vertical sync). Without it, prefer Mailbox, then Immediate.
+fn present_mode(available: &[wgpu::PresentMode], vsync: bool) -> wgpu::PresentMode {
+    if vsync {
+        return wgpu::PresentMode::Fifo;
+    }
+    [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
+        .into_iter()
+        .find(|m| available.contains(m))
+        .unwrap_or(wgpu::PresentMode::Fifo)
+}
+
+/// The save name of a world file (its name without the extension).
+fn save_name(path: &Path) -> String {
+    path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+}
+

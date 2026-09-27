@@ -1,15 +1,20 @@
 //! `--screenshot`: build the demo world, run some ticks with no thread and no window,
-//! render one frame with the real renderer, and save it as a PNG file.
+//! render one frame with the real renderer and the UI, and save it as a PNG file.
+//!
+//! `--ui-state` picks the screen (main menu, pause menu, game, materials window, ...).
+//! `--no-ui` draws only the world.
 
-use crate::args::Args;
+use crate::args::{Args, UiState};
+use crate::debug_panel::{self, StatsView};
 use crate::demo;
-use crate::ui::{self, PaintMaterial, PanelState, StatsView};
+use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
 use foundry_content::Content;
-use foundry_core::Command;
+use foundry_core::{CellPos, Command};
 use foundry_render::headless::{CAPTURE_FORMAT, capture, capture_with, create_device};
 use foundry_render::wgpu;
 use foundry_render::{Camera, Renderer};
+use foundry_ui::{GameState, HoverView, MenuPage, PerfView, WindowKind};
 use glam::{DVec2, UVec2};
 use std::path::Path;
 use std::sync::Arc;
@@ -17,6 +22,7 @@ use std::time::Instant;
 
 pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     let start = Instant::now();
+    let state = if args.no_ui { UiState::Playing } else { args.ui_state.unwrap_or(UiState::Playing) };
     let demo = demo::build(content.clone(), args.world, args.seed);
     let mut sim = demo.sim;
     let built = start.elapsed();
@@ -39,12 +45,29 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     let mut renderer = Renderer::new(&device, &queue, CAPTURE_FORMAT, &content);
     renderer.set_time(args.ticks as f64 * foundry_core::TICK_SECONDS);
     let upload_start = Instant::now();
-    let evicted = renderer.apply_snapshot(&snapshot, &camera);
-    let upload_time = upload_start.elapsed();
-    if !evicted.is_empty() {
-        log::warn!("{} chunks did not fit on the GPU; use a larger zoom", evicted.len());
+    if state.has_world() {
+        let evicted = renderer.apply_snapshot(&snapshot, &camera);
+        if !evicted.is_empty() {
+            log::warn!("{} chunks did not fit on the GPU; use a larger zoom", evicted.len());
+        }
     }
-    let pixels = if args.ui {
+    let upload_time = upload_start.elapsed();
+
+    let pixels = if args.no_ui {
+        capture(&device, &queue, &mut renderer, &camera)
+    } else {
+        let ctx = egui::Context::default();
+        let saves_dir = args.saves.clone().unwrap_or_else(crate::saves::default_dir);
+        let mut ui = SandboxUi::new(&ctx, content.clone(), saves_dir);
+        ui.model.settings.ui_scale = args.ui_scale;
+        // A picture has no frame rate, so the HUD shows "-" for the FPS.
+        ui.model.perf = Some(PerfView {
+            fps: 0.0,
+            tick_ms: snapshot.stats.tick_ms,
+            ticks_per_second: 0.0,
+            awake_chunks: snapshot.stats.awake_chunks,
+            loaded_chunks: snapshot.stats.loaded_chunks,
+        });
         let stats = StatsView {
             tick: snapshot.stats.tick,
             tick_ms: snapshot.stats.tick_ms,
@@ -55,13 +78,36 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             zoom: camera.zoom,
             ..Default::default()
         };
-        let mut panel = OffscreenPanel::new(&device, &content, size);
-        panel.layout(&device, &queue, &stats);
-        capture_with(&device, &queue, &mut renderer, &camera, |encoder, view| {
-            panel.draw(&device, &queue, encoder, view)
-        })
-    } else {
-        capture(&device, &queue, &mut renderer, &camera)
+        let show_debug = state == UiState::Debug;
+        match state {
+            UiState::Menu => {}
+            UiState::NewGame => ui.ui.open_menu(MenuPage::NewGame),
+            UiState::Load => ui.ui.open_menu(MenuPage::Load),
+            UiState::Settings => ui.ui.open_menu(MenuPage::Settings),
+            UiState::Pause | UiState::Save => {
+                ui.model.state = GameState::Paused;
+                if state == UiState::Save {
+                    ui.ui.open_menu(MenuPage::Save);
+                }
+            }
+            UiState::Playing | UiState::Inventory | UiState::Debug => {
+                ui.model.state = GameState::Playing;
+                if state == UiState::Inventory {
+                    ui.ui.open_window(WindowKind::Character);
+                }
+            }
+        }
+        if state.has_world() {
+            // The HUD shows the cell at the image center (there is no mouse).
+            let pos = CellPos::new(center.x.floor() as i32, center.y.floor() as i32);
+            let cell = sim.cell(pos);
+            ui.model.hover = Some(HoverView::Cell { pos, material: cell.material, temperature: cell.temperature as f32 });
+        }
+        let mut panel = OffscreenUi::new(&device, ctx, ui, size);
+        panel.layout(&device, &queue, &stats, show_debug);
+        let draw_world = state.has_world();
+        let clear = (!draw_world).then_some(wgpu::Color::BLACK);
+        capture_with(&device, &queue, &mut renderer, &camera, |encoder, view| panel.draw(&device, &queue, encoder, view, clear))
     };
 
     if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -72,7 +118,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
 
     let view = camera.visible_rect();
     println!(
-        "saved {} ({}x{}, zoom {}, center {:.1},{:.1}, cells {}..{} x {}..{}); world built in {:.0} ms, {} ticks in {:.0} ms, {} chunks uploaded in {:.2} ms, {} chunks drawn",
+        "saved {} ({}x{}, zoom {}, center {:.1},{:.1}, cells {}..{} x {}..{}, screen {:?}); world built in {:.0} ms, {} ticks in {:.0} ms, {} chunks uploaded in {:.2} ms, {} chunks drawn",
         out.display(),
         size.0,
         size.1,
@@ -83,6 +129,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
         view.x1,
         view.y0,
         view.y1,
+        state,
         built.as_secs_f64() * 1000.0,
         args.ticks,
         ticks_time.as_secs_f64() * 1000.0,
@@ -93,57 +140,46 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     Ok(())
 }
 
-/// The egui side panel, drawn with no window.
-struct OffscreenPanel {
-    ctx: egui::Context,
+/// The game UI, drawn with no window.
+struct OffscreenUi {
     renderer: egui_wgpu::Renderer,
-    materials: Vec<PaintMaterial>,
-    selected: usize,
-    screen: egui_wgpu::ScreenDescriptor,
+    ui: SandboxUi,
+    ctx: egui::Context,
+    size: (u32, u32),
+    pixels_per_point: f32,
     jobs: Vec<egui::ClippedPrimitive>,
 }
 
-impl OffscreenPanel {
-    fn new(device: &wgpu::Device, content: &Content, size: (u32, u32)) -> Self {
-        let ctx = egui::Context::default();
-        ui::apply_style(&ctx);
-        let materials = ui::paint_materials(content);
-        let selected = materials.iter().position(|m| content.materials.ids[m.id.index()] == "sand").unwrap_or(0);
-        // Large images look like a high-density display.
-        let pixels_per_point = if size.0 >= 2400 { 2.0 } else { 1.0 };
+impl OffscreenUi {
+    fn new(device: &wgpu::Device, ctx: egui::Context, ui: SandboxUi, size: (u32, u32)) -> Self {
         Self {
-            ctx,
             renderer: egui_wgpu::Renderer::new(device, CAPTURE_FORMAT, egui_wgpu::RendererOptions::default()),
-            materials,
-            selected,
-            screen: egui_wgpu::ScreenDescriptor { size_in_pixels: [size.0, size.1], pixels_per_point },
+            ui,
+            ctx,
+            size,
+            pixels_per_point: 1.0,
             jobs: Vec::new(),
         }
     }
 
-    /// Run the panel code. It runs twice, because egui measures text in the first pass.
-    fn layout(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, stats: &StatsView) {
-        let ppp = self.screen.pixels_per_point;
-        let size = egui::vec2(self.screen.size_in_pixels[0] as f32, self.screen.size_in_pixels[1] as f32) / ppp;
-        let mut brush = 6u16;
-        for _ in 0..2 {
+    /// Run the UI several times: the fonts become active in the second frame, and windows
+    /// measure their size in their first frame.
+    fn layout(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, stats: &StatsView, show_debug: bool) {
+        for _ in 0..6 {
+            // The UI scale is the egui zoom factor, so the screen in points depends on it.
+            let ppp = self.ctx.zoom_factor();
+            let points = egui::vec2(self.size.0 as f32, self.size.1 as f32) / ppp;
             let mut raw = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, points)),
                 ..Default::default()
             };
-            raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(ppp);
-            let mut actions = Vec::new();
-            let (materials, selected) = (&self.materials, &mut self.selected);
-            let mut out = self.ctx.run_ui(raw, |ui| {
-                let state = PanelState {
-                    materials,
-                    selected: &mut *selected,
-                    brush_radius: &mut brush,
-                    paused: false,
-                    show_stats: true,
-                    stats,
-                };
-                ui::draw(ui, state, &mut actions);
+            raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(1.0);
+            let ui = &mut self.ui;
+            let mut out = self.ctx.run_ui(raw, |root| {
+                if show_debug {
+                    debug_panel::draw(root, stats, false, false, &mut Vec::new());
+                }
+                let _ = ui.ui.show(root.ctx(), &ui.model);
             });
             for (id, deltas) in out.textures_delta.set.drain() {
                 for delta in &deltas {
@@ -153,6 +189,7 @@ impl OffscreenPanel {
             for id in out.textures_delta.free.drain() {
                 self.renderer.free_texture(&id);
             }
+            self.pixels_per_point = out.pixels_per_point;
             self.jobs = self.ctx.tessellate(std::mem::take(&mut out.shapes), out.pixels_per_point);
         }
     }
@@ -163,8 +200,10 @@ impl OffscreenPanel {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
+        clear: Option<wgpu::Color>,
     ) {
+        let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: [self.size.0, self.size.1], pixels_per_point: self.pixels_per_point };
         // No paint callbacks are used, so there are no extra command buffers to send.
-        let _ = ui::render_egui(&mut self.renderer, device, queue, encoder, target, &self.jobs, &self.screen);
+        let _ = ui::render_egui(&mut self.renderer, device, queue, encoder, target, &self.jobs, &screen, clear);
     }
 }

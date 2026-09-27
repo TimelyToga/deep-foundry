@@ -66,6 +66,8 @@ When the game reloads the data, it puts a new `Arc<Content>` into the model. The
 | `settings` | UI scale, vertical sync, show FPS, key bindings (read only). |
 | `fps` | Frames per second (shown when `settings.show_fps` is on). |
 | `message` | A short line at the top of the screen, for example "Game saved". |
+| `sandbox` | `Some` in the sandbox mode (section 3.1). |
+| `perf` | `Some`: the HUD shows a box at the top right with FPS, tick time, ticks per second and awake chunks. |
 
 Details of the player:
 
@@ -78,6 +80,22 @@ Details of the player:
 Details of a building window (`BuildingView`): status and status text, the current recipe, input, output and fuel slots (each slot can have a `filter`: the item it expects), material buffers (for example "Water in", "Steam out"), progress, speed, power use (with the voltage of the building and of its network) and temperature. The name, the icon, the maximum temperature and the list of recipes that the building can make come from the content (`item::building_recipes`).
 
 Details of a power network window (`PowerNetworkView`): voltage tier, satisfaction, production and its maximum, consumption, energy in batteries, current and the limit of the weakest cable, producers and consumers by building type (with history for the graph lines), total production and consumption history, and warnings (overloaded cable, wrong voltage, not enough power, no generators).
+
+### 3.1 Sandbox mode
+
+The game runs in the sandbox mode while there is no player and no factory (like the Factorio cheat mode). The game sets `UiModel::sandbox`:
+
+- The inventory holds every material with no limit. The slots show no counts. The character screen is called "Sandbox": the materials on the left, and a "Brush" panel (the material in the hand, the brush size, the paint keys) on the right. There is no crafting and no tank.
+- The stack in the hand is the paint brush. A click on a material sends `ClickSlot`; the game puts that material in the hand.
+- The line above the quickbar shows the brush (material and size) instead of the hull and heat bars.
+- A click on a full quickbar slot selects it (the hand always holds something, so it does not replace the slot). A click on an empty slot puts the material in the hand there. A right click clears a slot.
+- P (production statistics) does nothing.
+
+Over the world, the stack in the hand is drawn at the lower right of the mouse, so the brush center stays visible.
+
+### 3.2 Settings
+
+`Settings` has `ui_scale`, `vsync`, `show_fps`, `show_debug` (the debug panel, F3), `key_bindings` (read only) and `simulation`: a list of number settings of the simulation (`SimSetting`: key, label, help, value, min, max, step). The settings screen shows one slider for each in the "Simulation" section. When the list is empty, it says that the liquid settings will be there. A slider move sends `ChangeSetting(SettingChange::Simulation { key, value })`.
 
 Graphs use `TimeSeries`: 300 samples for each time range (5 s, 1 m, 10 m, 1 h, 10 h). The game can use `foundry_ui::graph::History` to collect them: call `push(value)` once per tick and `fill(&mut series)` when the window is open. A sample of a long range is the average of the samples of the shorter range.
 
@@ -134,7 +152,7 @@ The UI reads these keys itself. The game must not use them for other things.
 | Key | Action |
 |---|---|
 | E | Open or close the character screen. If a building or power window is open, close it (as in Factorio). |
-| P | Open or close the production statistics. |
+| P | Open or close the production statistics (not in the sandbox mode). |
 | Esc | Close the top window. With no window open, send `Pause`. In the pause menu: go back one page, or send `Resume`. |
 | 1 to 0 | Select quickbar slots 1 to 10 (the bottom row). |
 | Shift + 1 to 0 | Select quickbar slots 11 to 20 (the top row). |
@@ -158,11 +176,11 @@ The UI ignores keys while a text field has the keyboard.
 | Power network | Voltage tier, satisfaction, production, storage and current bars, warnings, consumers and producers by building type, graphs of consumption and production with time ranges 5s / 1m / 10m / 1h / 10h. |
 | Production statistics (P) | Time range tabs, graphs of made and used per minute, and lists of items with bars and rates. |
 | Main menu | Continue, New game, Load game, Settings, Quit game. |
-| New game | Seed (with a Random button) and world size (Small 4096 × 4096, Normal 8192 × 8192, Large 16384 × 8192). |
+| New game | Seed (with a Random button) and world size. The sandbox sizes are Small 2048 × 1024, Normal 4096 × 2048 and Large 8192 × 4096 cells (`WorldSize::chunks`). |
 | Pause menu (Esc) | Resume, Save game, Load game, Settings, Quit to main menu, Quit game. The world is dimmed. |
 | Save game | List of saves (name, date, play time), name field, Save. A save with the same name asks "Overwrite save?". |
 | Load game | List of saves, Delete (asks first), Load. A double click loads. |
-| Settings | UI scale (75 % to 200 %), vertical sync, show FPS, the list of keys (read only). |
+| Settings | UI scale (75 % to 200 %), vertical sync, show FPS, debug panel, simulation settings (sliders), the list of keys (read only). |
 
 Tooltips appear at once, next to the mouse, and follow the Factorio layout: a title bar with the name and the kind, the description, facts, the recipe (ingredients with icons, red when the player has too few), crafting time, "Made in", and "Used in".
 

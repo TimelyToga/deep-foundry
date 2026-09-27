@@ -74,13 +74,20 @@ pub enum WorldSize {
 impl WorldSize {
     pub const ALL: [WorldSize; 3] = [WorldSize::Small, WorldSize::Normal, WorldSize::Large];
 
+    /// Width and height in chunks of 64 × 64 cells. These are the sizes of the sandbox world.
+    /// The full game (game design section 5.1) will use larger worlds.
+    pub fn chunks(self) -> (i32, i32) {
+        match self {
+            WorldSize::Small => (32, 16),
+            WorldSize::Normal => (64, 32),
+            WorldSize::Large => (128, 64),
+        }
+    }
+
     /// Width and height in cells.
     pub fn cells(self) -> (i32, i32) {
-        match self {
-            WorldSize::Small => (4096, 4096),
-            WorldSize::Normal => (8192, 8192),
-            WorldSize::Large => (16384, 8192),
-        }
+        let (w, h) = self.chunks();
+        (w * foundry_core::CHUNK_SIZE, h * foundry_core::CHUNK_SIZE)
     }
 
     pub fn label(self) -> &'static str {
@@ -93,11 +100,15 @@ impl WorldSize {
 }
 
 /// A change to one setting.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SettingChange {
     UiScale(f32),
     Vsync(bool),
     ShowFps(bool),
+    /// Show or hide the debug panel (F3).
+    ShowDebug(bool),
+    /// A number setting of the simulation (`SimSetting::key`).
+    Simulation { key: String, value: f32 },
 }
 
 /// Everything the player can ask for.
