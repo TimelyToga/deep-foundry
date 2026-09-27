@@ -66,17 +66,7 @@ impl Game {
 
     /// A free place for a building right of the robot.
     fn free_place(&self, kind: BuildingKindId) -> TilePos {
-        let r = self.host.robot.rect();
-        let size = self.content.factory.building_def(kind).size;
-        for dx in 1..12 {
-            for dy in -2..=2 {
-                let at = TilePos::new(r.x1.div_euclid(TILE_SIZE) + dx, r.y1.div_euclid(TILE_SIZE) - size.1 as i32 + dy);
-                if self.host.check_place(kind, at, 0, &self.sim).is_ok() {
-                    return at;
-                }
-            }
-        }
-        panic!("no free place");
+        self.host.free_place(kind, &self.sim).expect("a free place")
     }
 }
 

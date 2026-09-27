@@ -19,7 +19,7 @@ use crate::args::{Args, UiState};
 use crate::controls::{CameraControl, MAX_ZOOM, Stroke};
 use crate::debug_panel::{self, DebugAction, StatsView};
 use crate::demo;
-use crate::factory_host::{FactoryHost, GameCommand};
+use crate::factory_host::{FactoryCommand, FactoryHost, GameCommand};
 use crate::normal::NormalMode;
 use crate::overlay;
 use crate::saves::{self, SaveMeta};
@@ -1163,7 +1163,117 @@ impl Game {
                 println!("smoke test passed");
                 event_loop.exit();
             }
+            step => {
+                // The normal-mode steps. `Ok(true)`: done; `Ok(false)`: try again next frame.
+                let result = self.smoke_normal(&step);
+                let Some(smoke) = self.smoke.as_mut() else { return };
+                match result {
+                    Ok(true) => {
+                        println!("smoke test: {step:?} ok");
+                        smoke.passed_expect();
+                    }
+                    Ok(false) => {
+                        if !smoke.retry(step) {
+                            eprintln!("smoke test failed: {:?}; messages: {:?}", smoke.failure, self.ui.message_log);
+                            event_loop.exit();
+                        }
+                    }
+                    Err(e) => {
+                        smoke.failure = Some(format!("{step:?}: {e}"));
+                        eprintln!("smoke test failed: {e}; messages: {:?}", self.ui.message_log);
+                        event_loop.exit();
+                    }
+                }
+            }
         }
+    }
+
+    /// One normal-mode step of the smoke test.
+    fn smoke_normal(&mut self, step: &Step) -> Result<bool, String> {
+        let content = self.content.clone();
+        let near_clay = self.nearest_cell(content.material("clay"));
+        let open_kind = self.ui.model.building.as_ref().map(|b| b.kind);
+        let Some(w) = self.world.as_mut() else { return Err("no world".into()) };
+        let Some(n) = w.normal.as_mut() else { return Err("not the normal mode".into()) };
+        let mut cmds: Vec<GameCommand> = vec![];
+        let item_count = |n: &NormalMode, id: &str| -> Result<u32, String> {
+            let item = content.item(id).ok_or(format!("unknown item {id}"))?;
+            let f = &n.frame;
+            let tanks: u32 = f.inventory.tanks.iter().filter(|t| t.item == Some(item)).map(|t| t.units).sum();
+            let slots: u32 = f.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count).sum();
+            let hand = f.cursor.filter(|c| c.item == item).map_or(0, |c| c.count);
+            Ok(tanks + slots + hand)
+        };
+        let done = match *step {
+            Step::DigClay => {
+                let at = near_clay.ok_or("no clay in reach of the robot")?;
+                n.aim_override = Some(at);
+                n.held.dig = true;
+                true
+            }
+            Step::StopTools => {
+                n.held = Default::default();
+                n.aim_override = None;
+                true
+            }
+            Step::Have(id, count) => item_count(n, id)? >= count,
+            Step::Craft(id, count) => {
+                let recipe = content.factory.recipe(id).ok_or(format!("unknown recipe {id}"))?;
+                n.action(&UiAction::Craft { recipe, count }, &mut cmds);
+                true
+            }
+            Step::PlaceNear(id) => {
+                let part = content.factory.part(id).ok_or(format!("unknown part {id}"))?;
+                cmds.push(FactoryCommand::PickToCursor(part).into());
+                cmds.push(FactoryCommand::PlaceNear.into());
+                true
+            }
+            Step::OpenPlaced => {
+                let (_, r) = n.frame.last_placed.ok_or("nothing was placed")?;
+                let center = CellPos::new((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2);
+                n.aim_override = Some(center);
+                // Click when the host reports the building under the aim point.
+                if n.building_under(center) {
+                    cmds = n.press(&content, true, center);
+                    n.aim_override = None;
+                    true
+                } else {
+                    false
+                }
+            }
+            Step::WindowOf(id) => {
+                let kind = content.factory.building(id).ok_or(format!("unknown building {id}"))?;
+                open_kind == Some(kind)
+            }
+            _ => true,
+        };
+        for c in cmds {
+            w.sim.send(c);
+        }
+        Ok(done)
+    }
+
+    /// The cell of a material in the chunk images that is nearest to the robot and in reach.
+    fn nearest_cell(&self, material: Option<MaterialId>) -> Option<CellPos> {
+        let m = material?;
+        let r = self.world.as_ref()?.normal.as_ref()?.frame.robot?;
+        let (cx, cy) = r.center();
+        let (cx, cy) = (cx as i32, cy as i32);
+        let reach = crate::tools::REACH as i32 - 8;
+        let mut best: Option<(i32, CellPos)> = None;
+        for y in cy - reach..cy + reach {
+            for x in cx - reach..cx + reach {
+                let p = CellPos::new(x, y);
+                let d = (x - cx).pow(2) + (y - cy).pow(2);
+                if d > reach * reach || best.is_some_and(|(bd, _)| bd <= d) {
+                    continue;
+                }
+                if self.cells.get(&p.chunk()).and_then(|c| c.get(p.local_index())).is_some_and(|t| t[0] == m.0) {
+                    best = Some((d, p));
+                }
+            }
+        }
+        best.map(|(_, p)| p)
     }
 
     fn free_egui_textures(&mut self) {
