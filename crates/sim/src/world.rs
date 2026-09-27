@@ -674,30 +674,54 @@ impl World {
         self.worked.extend(out.iter().map(|w| w.0));
     }
 
-    /// Raw pointers to the 3 × 3 chunks around `c` (row by row), for the movement pass. Null for
-    /// chunks outside the world. Live chunks that are missing are added to `missing` and the
-    /// result is false.
-    pub(crate) fn hood_ptrs(&mut self, c: ChunkPos, missing: &mut Vec<ChunkPos>) -> ([*mut Chunk; 9], bool) {
-        let mut out = [std::ptr::null_mut(); 9];
+    /// Raw pointers to the 3 × 3 chunks around each chunk in `work` (row by row), for the
+    /// movement pass. Null for chunks outside the world. Chunks that are not live are added to
+    /// `missing`; then the result is false.
+    ///
+    /// `work` is sorted by (y, x). When a chunk is the right neighbor of the chunk before it, the
+    /// two share 6 of their 9 chunks, so only the new column is looked up.
+    pub(crate) fn hood_ptrs(
+        &mut self,
+        work: &[(ChunkPos, LocalRect)],
+        out: &mut Vec<[*mut Chunk; 9]>,
+        missing: &mut Vec<ChunkPos>,
+    ) -> bool {
+        out.clear();
         let mut complete = true;
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                let q = ChunkPos::new(c.x + dx, c.y + dy);
-                if !self.chunk_in_bounds(q) {
-                    continue;
+        let mut prev: Option<(ChunkPos, [*mut Chunk; 9])> = None;
+        for &(c, _) in work {
+            let mut hood = [std::ptr::null_mut(); 9];
+            let columns = match prev {
+                Some((p, h)) if p.y == c.y && p.x + 1 == c.x => {
+                    for row in 0..3 {
+                        hood[row * 3] = h[row * 3 + 1];
+                        hood[row * 3 + 1] = h[row * 3 + 2];
+                    }
+                    1..=1
                 }
-                match self.live.get_mut(&q) {
-                    // `Box::as_mut_ptr` makes no reference to the chunk, so pointers made by several
-                    // calls for the same chunk stay valid together.
-                    Some(b) => out[((dy + 1) * 3 + dx + 1) as usize] = Box::as_mut_ptr(b),
-                    None => {
-                        missing.push(q);
-                        complete = false;
+                _ => -1..=1,
+            };
+            for dy in -1..=1 {
+                for dx in columns.clone() {
+                    let q = ChunkPos::new(c.x + dx, c.y + dy);
+                    if !self.chunk_in_bounds(q) {
+                        continue;
+                    }
+                    match self.live.get_mut(&q) {
+                        // `Box::as_mut_ptr` makes no reference to the chunk, so pointers made by
+                        // several calls for the same chunk stay valid together.
+                        Some(b) => hood[((dy + 1) * 3 + dx + 1) as usize] = Box::as_mut_ptr(b),
+                        None => {
+                            missing.push(q);
+                            complete = false;
+                        }
                     }
                 }
             }
+            out.push(hood);
+            prev = Some((c, hood));
         }
-        (out, complete)
+        complete
     }
 
     /// Put a chunk into the awake list if it is not queued yet. For the movement pass, which holds

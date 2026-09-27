@@ -330,6 +330,52 @@ mod tests {
         assert_eq!(demo.sim.cell(CellPos::new(2047, 100)).material, bedrock);
     }
 
+    /// Walk the view 10,000 chunks to the right over the demo world, one chunk per tick, and
+    /// print tick times, chunks made per second and memory. Run it with:
+    /// `cargo test --release -p deep_foundry walk_the_demo_world -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn walk_the_demo_world() {
+        let content = content();
+        let mut demo = build(content, Shape::Infinite { depth_chunks: 128 }, 1);
+        let s = &mut demo.sim;
+        let (w, h) = (28 * CHUNK_SIZE, 16 * CHUNK_SIZE);
+        let y0 = 1024 - h / 2;
+        let chunks = 10_000;
+        let mut times = Vec::with_capacity(chunks as usize);
+        let start = std::time::Instant::now();
+        for t in 0..chunks {
+            let x = t * CHUNK_SIZE;
+            s.apply(Command::SetView { area: CellRect::new(x, y0, x + w, y0 + h) });
+            let t0 = std::time::Instant::now();
+            s.tick();
+            times.push(t0.elapsed().as_secs_f64() * 1000.0);
+            s.take_snapshot();
+        }
+        let total = start.elapsed().as_secs_f64();
+        let m = s.memory();
+        times.sort_by(f64::total_cmp);
+        let mean = times.iter().sum::<f64>() / times.len() as f64;
+        println!(
+            "demo walk of {chunks} chunks: {total:.1} s, tick mean {mean:.3} ms, p95 {:.3} ms, max {:.3} ms",
+            times[times.len() * 95 / 100],
+            times[times.len() - 1]
+        );
+        println!("chunks made: {} ({:.0} per second)", m.generated_total, m.generated_total as f64 / total);
+        println!(
+            "memory: {:.1} MB of chunk data (live {}, air {}, packed {} = {:.1} MB, paused {})",
+            m.bytes as f64 / 1e6,
+            m.live_chunks,
+            m.air_chunks,
+            m.packed_chunks,
+            m.packed_bytes as f64 / 1e6,
+            m.paused_chunks
+        );
+        let mut bytes = vec![];
+        s.save(&mut bytes).unwrap();
+        println!("save: {} chunks, {:.2} MB", s.world().saved_positions().len(), bytes.len() as f64 / 1e6);
+    }
+
     /// Chunks are made quickly enough for a camera that moves fast.
     #[test]
     fn making_a_chunk_is_fast() {

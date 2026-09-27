@@ -50,6 +50,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             tick_ms: snapshot.stats.tick_ms,
             awake_chunks: snapshot.stats.awake_chunks,
             loaded_chunks: snapshot.stats.loaded_chunks,
+            packed_chunks: snapshot.stats.packed_chunks,
             gpu_chunks: renderer.stats().resident_chunks,
             gpu_capacity: renderer.stats().chunk_capacity,
             zoom: camera.zoom,

@@ -73,7 +73,7 @@ pub const BENCHES: &[Bench] = &[
     },
     Bench {
         name: "infinite_work",
-        about: "Infinite world. The view shows 40 x 25 chunks of falling sand and water (about 1,000 awake chunks).",
+        about: "Infinite world. The view shows 40 x 25 chunks of falling sand and water (about 1,000 awake chunks at the start).",
         ticks: 150,
         make: infinite_work,
     },
@@ -360,18 +360,22 @@ fn mixed(content: &Arc<Content>) -> BenchWorld {
     BenchWorld { sim, before_tick: Box::new(move |sim, _| scatter(sim, &mut rng, sand, (64, 4, 960, 12), 128)) }
 }
 
-/// An infinite world 40 chunks tall: 16 chunks of sky over stone.
+/// An infinite world 40 chunks tall: 32 chunks of sky over stone.
 fn infinite_sim(content: &Arc<Content>) -> Simulation {
-    Simulation::new(content.clone(), SimConfig { depth_chunks: 24, ..SimConfig::infinite(1, None) })
+    Simulation::new(content.clone(), SimConfig { sky_chunks: 32, depth_chunks: 8, ..SimConfig::infinite(1, None) })
 }
 
-/// The view shows 40 x 25 chunks. The top half has falling sand and water (every 2nd column,
-/// every 3rd row), so about 1,000 chunks are awake at the start.
+/// The view shows 40 x 25 chunks of sky with falling sand and water (every 2nd column, every
+/// 3rd row), so about 1,000 chunks are awake at the start. The work starts at tick 1100 in every
+/// world (ticks with no work run first), so the worlds of different benchmarks run the same ticks.
 fn add_falling_work(sim: &mut Simulation, content: &Content) {
     let (sand, water) = (content.expect_material("sand"), content.expect_material("water"));
     let area = CellRect::new(0, 0, 40 * CHUNK_SIZE, 25 * CHUNK_SIZE);
     sim.apply(Command::SetView { area });
-    for y in (40..area.y1 / 2).step_by(3) {
+    while sim.tick_count() < 1100 {
+        sim.tick();
+    }
+    for y in (40..area.y1 - 40).step_by(3) {
         for x in (4..area.x1 - 4).step_by(2) {
             sim.set_cell(CellPos::new(x, y), if (x / 64 + y / 64) % 2 == 0 { sand } else { water }, None);
         }
@@ -411,13 +415,13 @@ fn infinite_explored(content: &Arc<Content>) -> BenchWorld {
 }
 
 fn infinite_walk(content: &Arc<Content>) -> BenchWorld {
-    let sim = infinite_sim(content);
+    let sim = Simulation::new(content.clone(), SimConfig { depth_chunks: 24, ..SimConfig::infinite(1, None) });
     let (sand, water) = (content.expect_material("sand"), content.expect_material("water"));
     let (w, h, y0) = (28 * CHUNK_SIZE, 16 * CHUNK_SIZE, 8 * CHUNK_SIZE);
     let before_tick = Box::new(move |sim: &mut Simulation, t: u32| {
         let x = t as i32 * CHUNK_SIZE;
         sim.apply(Command::SetView { area: CellRect::new(x, y0, x + w, y0 + h) });
-        if t % 32 == 0 {
+        if t.is_multiple_of(32) {
             let p = CellPos::new(x + w - 200, 1060);
             sim.paint(p, 30, MaterialId::AIR, PaintMode::Replace, None);
             sim.paint(p.offset(-20, -120), 12, sand, PaintMode::Replace, None);
