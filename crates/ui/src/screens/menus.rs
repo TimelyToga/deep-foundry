@@ -347,9 +347,16 @@ fn load_dialog(cx: &mut Cx, st: &mut UiState) {
     }
 }
 
+/// Rows of the "Simulation" section of the settings.
+fn sim_rows(cx: &Cx) -> usize {
+    cx.model.settings.simulation.len().max(1)
+}
+
 fn settings(cx: &mut Cx, st: &mut UiState) {
     let id = Id::new("settings-dialog");
-    let (back, _) = dialog(cx, id, "Settings", vec2(620.0, 470.0), None, |ui, cx, r| {
+    let sim_h = 34.0 + sim_rows(cx) as f32 * 34.0 + 6.0;
+    let height = 150.0 + 12.0 + sim_h + 14.0 + 26.0 + 180.0;
+    let (back, _) = dialog(cx, id, "Settings", vec2(640.0, height), None, |ui, cx, r| {
         let p = ui.painter().clone();
         let s = &cx.model.settings;
         let top = Rect::from_min_size(r.min, vec2(r.width(), 150.0));
@@ -370,16 +377,59 @@ fn settings(cx: &mut Cx, st: &mut UiState) {
         y += 44.0;
         widgets::heading(&p, pos2(x, y), "Graphics");
         y += 26.0;
-        let cb1 = Rect::from_min_size(pos2(x, y), vec2(200.0, 26.0));
-        if widgets::checkbox(ui, Id::new("vsync"), cb1, "Vertical sync", s.vsync).clicked() {
-            cx.act(UiAction::ChangeSetting(SettingChange::Vsync(!s.vsync)));
+        let checks = [
+            ("vsync", "Vertical sync", s.vsync, SettingChange::Vsync(!s.vsync)),
+            ("show-fps", "Show FPS", s.show_fps, SettingChange::ShowFps(!s.show_fps)),
+            ("show-debug", "Debug panel (F3)", s.show_debug, SettingChange::ShowDebug(!s.show_debug)),
+        ];
+        for (i, (key, label, on, change)) in checks.into_iter().enumerate() {
+            let cb = Rect::from_min_size(pos2(x + i as f32 * 200.0, y), vec2(190.0, 26.0));
+            if widgets::checkbox(ui, Id::new(key), cb, label, on).clicked() {
+                cx.act(UiAction::ChangeSetting(change));
+            }
         }
-        let cb2 = Rect::from_min_size(pos2(x + 240.0, y), vec2(200.0, 26.0));
-        if widgets::checkbox(ui, Id::new("show-fps"), cb2, "Show FPS", s.show_fps).clicked() {
-            cx.act(UiAction::ChangeSetting(SettingChange::ShowFps(!s.show_fps)));
+
+        // Simulation settings (for example the liquid rules), one slider each.
+        let sim = Rect::from_min_size(pos2(r.left(), top.bottom() + 12.0), vec2(r.width(), sim_h));
+        widgets::shallow(&p, sim);
+        widgets::heading(&p, pos2(x, sim.top() + 10.0), "Simulation");
+        let list = &cx.model.settings.simulation;
+        if list.is_empty() {
+            p.text(
+                pos2(x, sim.top() + 44.0),
+                Align2::LEFT_TOP,
+                "No simulation settings yet. The liquid settings will be here.",
+                font_regular(text::BODY),
+                color::TEXT_DIM,
+            );
         }
+        for (i, setting) in list.iter().enumerate() {
+            let row_y = sim.top() + 40.0 + i as f32 * 34.0;
+            let label = p.text(pos2(x, row_y + 12.0), Align2::LEFT_CENTER, &setting.label, font(text::BODY), color::TEXT);
+            let slider_rect = Rect::from_min_size(pos2(x + 200.0, row_y), vec2(sim.width() - 240.0, 26.0));
+            let mut value = setting.value;
+            let slider = egui::Slider::new(&mut value, setting.min..=setting.max)
+                .step_by(setting.step as f64)
+                .show_value(true);
+            let resp = ui
+                .scope(|ui| {
+                    // Leave room for the number box on the right.
+                    ui.spacing_mut().slider_width = slider_rect.width() - 80.0;
+                    ui.put(slider_rect, slider)
+                })
+                .inner;
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, &setting.label));
+            if resp.changed() {
+                cx.act(UiAction::ChangeSetting(SettingChange::Simulation { key: setting.key.clone(), value }));
+            }
+            let hover = Rect::from_min_max(pos2(x, row_y), pos2(label.right(), row_y + 26.0));
+            if !setting.help.is_empty() && ui.interact(hover, Id::new(("sim-help", i)), egui::Sense::hover()).hovered() {
+                cx.tip(crate::tooltip::Tip::Text { title: setting.label.clone(), body: setting.help.clone() });
+            }
+        }
+
         // Key bindings (read only).
-        let ky = top.bottom() + 14.0;
+        let ky = sim.bottom() + 14.0;
         widgets::heading(&p, pos2(r.left(), ky), "Controls");
         p.text(pos2(r.right(), ky + 10.0), Align2::RIGHT_CENTER, "Changing keys comes later.", font_regular(text::SMALL), color::TEXT_FAINT);
         let list = Rect::from_min_max(pos2(r.left(), ky + 26.0), r.right_bottom());
