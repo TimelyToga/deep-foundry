@@ -1,0 +1,68 @@
+// Benchmark baseline: milliseconds per tick.
+// Made by `cargo run -p foundry_headless --release -- bench --save-baseline`.
+// `bench --compare` fails if a mean is more than 10% above the number here.
+(
+    machine: "macos aarch64, 10 threads",
+    benches: {
+        "lava_water": (
+            ticks: 600,
+            mean_ms: 3.284,
+            p50_ms: 2.225,
+            p95_ms: 9.351,
+            max_ms: 27.171,
+            awake_mean: 69.6,
+            awake_max: 70,
+            chunks_with_material: 60,
+        ),
+        "mixed": (
+            ticks: 300,
+            mean_ms: 34.789,
+            p50_ms: 33.016,
+            p95_ms: 46.055,
+            max_ms: 124.022,
+            awake_mean: 1595.6,
+            awake_max: 1621,
+            chunks_with_material: 1537,
+        ),
+        "ocean": (
+            ticks: 600,
+            mean_ms: 22.397,
+            p50_ms: 23.064,
+            p95_ms: 53.267,
+            max_ms: 79.217,
+            awake_mean: 310.5,
+            awake_max: 330,
+            chunks_with_material: 273,
+        ),
+        "pile_collapse": (
+            ticks: 600,
+            mean_ms: 5.597,
+            p50_ms: 2.897,
+            p95_ms: 17.159,
+            max_ms: 88.455,
+            awake_mean: 102.0,
+            awake_max: 102,
+            chunks_with_material: 100,
+        ),
+        "sand_rain": (
+            ticks: 600,
+            mean_ms: 3.499,
+            p50_ms: 2.604,
+            p95_ms: 11.111,
+            max_ms: 39.391,
+            awake_mean: 192.3,
+            awake_max: 256,
+            chunks_with_material: 256,
+        ),
+        "settled_world": (
+            ticks: 300,
+            mean_ms: 13.216,
+            p50_ms: 14.138,
+            p95_ms: 22.943,
+            max_ms: 26.527,
+            awake_mean: 1120.9,
+            awake_max: 1123,
+            chunks_with_material: 1107,
+        ),
+    },
+)
