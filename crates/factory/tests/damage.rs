@@ -26,7 +26,8 @@ fn a_building_next_to_lava_gets_too_hot_breaks_and_releases_its_contents() {
     let c = content();
     let mut sim = world(&c, Some(GROUND));
     let mut f = Factory::new(c.clone());
-    let (sand, lava, stone, wood) = (mat(&c, "sand"), mat(&c, "lava"), mat(&c, "stone"), mat(&c, "wood_block"));
+    let (sand, lava, stone, wood, scrap) =
+        (mat(&c, "sand"), mat(&c, "lava"), mat(&c, "stone"), mat(&c, "wood_block"), mat(&c, "scrap"));
     // A hopper on the ground holds 20 sand (its output faces the ground, so it keeps it).
     let at = TilePos::new(6, 11);
     let foot = tile_cells(at, 1, 1);
@@ -58,10 +59,11 @@ fn a_building_next_to_lava_gets_too_hot_breaks_and_releases_its_contents() {
     assert!(broke, "the hopper broke");
     assert!(f.buildings.get(id).is_none());
     assert_eq!(f.buildings.at_tile(at, foundry_content::Layer::Front), None);
-    // The 20 sand cells are back in the world. Scrap (the body material, which has no broken
-    // form) lies in the bottom quarter of the old footprint.
+    // The 20 sand cells are back in the world. Scrap lies in the bottom quarter of the old
+    // footprint (the data now has a `scrap` material, so it is used instead of the body
+    // material's broken form).
     assert_eq!(count_all(&sim, sand), 20);
-    assert_eq!(sim.count_material(CellRect::new(foot.x0, foot.y1 - 2, foot.x1, foot.y1), wood), 16);
+    assert_eq!(sim.count_material(CellRect::new(foot.x0, foot.y1 - 2, foot.x1, foot.y1), scrap), 16);
 }
 
 #[test]
