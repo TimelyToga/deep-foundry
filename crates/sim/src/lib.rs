@@ -76,7 +76,7 @@ impl Simulation {
             view: None,
             sent: HashMap::new(),
             stats: SimStats::default(),
-            paint_rng: Rng::new(config.seed ^ 0x7061_696e_74),
+            paint_rng: Rng::new(config.seed ^ 0x70_6169_6e74),
         };
         if config.bedrock_border && !bedrock.is_air() {
             let (w, h) = sim.size_cells();

@@ -27,11 +27,10 @@ pub fn default_assets_dir() -> PathBuf {
     if let Ok(d) = std::env::current_dir() {
         starts.push(d);
     }
-    if let Ok(e) = std::env::current_exe() {
-        if let Some(d) = e.parent() {
+    if let Ok(e) = std::env::current_exe()
+        && let Some(d) = e.parent() {
             starts.push(d.to_path_buf());
         }
-    }
     starts.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
     for start in starts {
         for dir in start.ancestors() {
@@ -127,11 +126,10 @@ impl Content {
             if d.heat_capacity <= 0.0 {
                 errors.push(format!("`{}`: heat_capacity must be above 0", d.id));
             }
-            if let Some((lo, hi)) = d.life {
-                if lo > hi || hi == 0 {
+            if let Some((lo, hi)) = d.life
+                && (lo > hi || hi == 0) {
                     errors.push(format!("`{}`: life must be (min, max) with 0 < max and min <= max", d.id));
                 }
-            }
             if d.colors.is_empty() {
                 errors.push(format!("`{}`: needs at least one color", d.id));
             }
@@ -151,19 +149,17 @@ impl Content {
                     tags.names.push(t.clone());
                 }
             }
-            if let Some(b) = &d.behavior {
-                if !behavior_names.contains(b) {
+            if let Some(b) = &d.behavior
+                && !behavior_names.contains(b) {
                     behavior_names.push(b.clone());
                 }
-            }
         }
         for r in &reaction_defs {
             for s in [&r.a, &r.b] {
-                if let Some(t) = s.strip_prefix("tag:") {
-                    if tags.bit(t).is_none() {
+                if let Some(t) = s.strip_prefix("tag:")
+                    && tags.bit(t).is_none() {
                         errors.push(format!("reaction {} + {}: no material has tag `{t}`", r.a, r.b));
                     }
-                }
             }
         }
         if tags.names.len() > 64 {
