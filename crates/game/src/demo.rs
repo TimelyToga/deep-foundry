@@ -82,7 +82,7 @@ struct Section {
     posts: [i32; 3],
     lava: Ellipse,
     gravel: [Ellipse; 6],
-    /// Clay in the dirt: one patch between the posts and the start, one at the left bank of the pool.
+    /// Clay in the dirt: one patch right of the start, one at the left bank of the pool.
     clay: [Ellipse; 2],
     /// Malachite (copper ore) in the dirt, left of the start.
     malachite: Ellipse,
@@ -172,9 +172,11 @@ impl DemoSource {
         });
         // Small deposits near the start, a few cells under the ground (in the dirt layer).
         let deposit = |cx: i32, rx: i32, ry: i32| Ellipse { cx, cy: self.surface(cx, phases) + 4 + ry, rx, ry };
-        let clay = [deposit(at(0.445), 16, 5), deposit(pool.0 - 36, 14, 5)];
+        // The start is at 0.48 with the Hub there and the robot right of it: clay is in reach of
+        // the robot, malachite is left of the Hub, the tin gravel is before the dune.
+        let clay = [deposit(at(0.497), 12, 5), deposit(pool.0 - 36, 14, 5)];
         let malachite = deposit(at(0.459), 9, 4);
-        let tin = deposit(at(0.505), 14, 4);
+        let tin = deposit(at(0.512), 12, 4);
         Section { pool, water_top, ball, dune, posts, lava, gravel, clay, malachite, tin }
     }
 }

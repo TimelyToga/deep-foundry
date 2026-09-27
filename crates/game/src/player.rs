@@ -4,6 +4,8 @@
 //!   slow speeds still move it.
 //! - Solid cells and powder stop it. Liquids, gases, fire and air do not.
 //! - In a liquid it wades: it moves slower, it falls slower, and the jump key swims up.
+//! - The jump key held in the air runs a small jetpack (game design 6.1) for up to `JET_FUEL`
+//!   ticks. The fuel fills again on the ground. (No exhaust gas yet.)
 //! - It steps up onto ledges of up to `STEP_UP` cells while it walks.
 //! - It only checks the cells that it moves into. So when sand falls onto the robot, the robot
 //!   can still walk out of it.
@@ -33,6 +35,12 @@ const JUMP_SPEED: f32 = 2.2;
 const WADE_FACTOR: f32 = 0.5;
 const WADE_GRAVITY: f32 = 0.35;
 const SWIM_UP: f32 = 0.9;
+/// Jetpack: ticks of flight, upward push per tick (on top of gravity), and top speed up.
+pub const JET_FUEL: f32 = 45.0;
+const JET_PUSH: f32 = 0.1;
+const JET_MAX_UP: f32 = 1.5;
+/// Fuel that comes back per tick on the ground.
+const JET_REFILL: f32 = 3.0;
 /// Part of the body cells that must be liquid for the robot to count as "in a liquid".
 const WADE_FRACTION: f32 = 0.25;
 
@@ -60,6 +68,12 @@ pub struct Robot {
     pub in_liquid: bool,
     /// -1 looks left, 1 looks right.
     pub facing: i8,
+    /// Jetpack fuel in ticks, 0 to `JET_FUEL`.
+    #[serde(default)]
+    pub fuel: f32,
+    /// The jetpack pushed in the last tick.
+    #[serde(default)]
+    pub jetting: bool,
 }
 
 impl Robot {
@@ -73,6 +87,8 @@ impl Robot {
             on_ground: false,
             in_liquid: false,
             facing: 1,
+            fuel: JET_FUEL,
+            jetting: false,
         }
     }
 
@@ -114,8 +130,14 @@ impl Robot {
                 self.vel.1 = (self.vel.1 - 0.3).max(-SWIM_UP);
             }
         } else {
+            self.jetting = false;
             if input.jump && self.on_ground {
                 self.vel.1 = -JUMP_SPEED;
+            } else if input.jump && self.fuel > 0.0 && self.vel.1 > -JET_MAX_UP * 0.5 {
+                // Near the top of the jump (or falling): the jetpack pushes up.
+                self.vel.1 = (self.vel.1 - GRAVITY - JET_PUSH).max(-JET_MAX_UP);
+                self.fuel -= 1.0;
+                self.jetting = true;
             }
             self.vel.1 = (self.vel.1 + GRAVITY).min(MAX_FALL);
         }
@@ -123,6 +145,9 @@ impl Robot {
         self.move_x(sim, c);
         self.move_y(sim, c);
         self.on_ground = !is_free(sim, c, shifted(self.rect(), 0, 1), self.rect());
+        if self.on_ground {
+            self.fuel = (self.fuel + JET_REFILL).min(JET_FUEL);
+        }
         if self.on_ground && self.vel.1 > 0.0 {
             self.vel.1 = 0.0;
             self.rem.1 = 0.0;
@@ -273,6 +298,29 @@ mod tests {
             }
         }
         assert!(ground - highest >= 15, "jump height {}", ground - highest);
+    }
+
+    #[test]
+    fn jetpack_flies_higher_than_a_jump_and_runs_out() {
+        let sim = world();
+        let mut r = Robot::standing_at(CellPos::new(100, 200));
+        run(&mut r, &sim, MoveInput::default(), 5);
+        let ground = r.top;
+        let mut highest = r.top;
+        let mut least_fuel = JET_FUEL;
+        for _ in 0..200 {
+            r.step(MoveInput { x: 0, jump: true }, &sim);
+            highest = highest.min(r.top);
+            least_fuel = least_fuel.min(r.fuel);
+            if r.on_ground && r.vel.1 == 0.0 && least_fuel < JET_FUEL {
+                break;
+            }
+        }
+        assert!(ground - highest >= 30, "flight height {}", ground - highest);
+        assert!(least_fuel < 1.0, "the fuel ran out");
+        assert!(r.on_ground, "it came down");
+        run(&mut r, &sim, MoveInput::default(), 60);
+        assert_eq!(r.fuel, JET_FUEL, "refilled on the ground");
     }
 
     #[test]
