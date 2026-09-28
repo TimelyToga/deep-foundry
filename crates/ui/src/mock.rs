@@ -584,6 +584,11 @@ pub fn model(content: Arc<Content>) -> UiModel {
             CraftJobView { recipe: rid(c, "bronze_kit"), count: 2, progress: 0.0 },
         ],
         craft_speed: 2.0,
+        // Dug materials: the robot throws out dirt and gravel.
+        dig: ["charcoal", "clay", "dirt", "gravel", "raw_cassiterite", "raw_malachite", "sand", "wood"]
+            .iter()
+            .map(|id| DigRule { material: c.expect_material(id), keep: !matches!(*id, "dirt" | "gravel") })
+            .collect(),
     };
     model.finished_techs = ["bronze", "research", "steam_power", "steam_machines_1", "iron_logistics"].iter().map(|t| tid(c, t)).collect();
     model.hover = Some(HoverView::Cell { pos: CellPos { x: 4133, y: 612 }, material: c.expect_material("raw_malachite"), temperature: 24.0 });
@@ -712,6 +717,11 @@ impl MockGame {
                 if let Some(t) = md.player.tank.get_mut(i) {
                     t.material = None;
                     t.units = 0;
+                }
+            }
+            UiAction::SetKeep { material, keep } => {
+                if let Some(r) = md.player.dig.iter_mut().find(|r| r.material == material) {
+                    r.keep = keep;
                 }
             }
             UiAction::SelectHotbar(i) => {

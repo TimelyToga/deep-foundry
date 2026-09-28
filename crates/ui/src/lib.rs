@@ -95,6 +95,11 @@ pub(crate) struct UiState {
     pub menu_background: Option<(egui::Rect, std::sync::Arc<egui::Mesh>)>,
     /// The yes/no question to empty this robot tank is open.
     pub confirm_empty: Option<usize>,
+    /// The hint "move items with the bar below" shows for this building window (the first
+    /// building window that the player opens).
+    pub transfer_hint: Option<BuildingId>,
+    /// The hint was shown once.
+    pub transfer_hint_seen: bool,
 }
 
 impl Default for UiState {
@@ -113,6 +118,8 @@ impl Default for UiState {
             last_power: None,
             menu_background: None,
             confirm_empty: None,
+            transfer_hint: None,
+            transfer_hint_seen: false,
         }
     }
 }
@@ -348,6 +355,12 @@ impl FoundryUi {
         let building = model.building.as_ref().map(|b| b.id);
         if building != st.last_building {
             st.picker_open = false;
+            // The first building window of the normal game shows how to move items with the HUD.
+            st.transfer_hint = None;
+            if building.is_some() && !st.transfer_hint_seen && model.sandbox.is_none() {
+                st.transfer_hint = building;
+                st.transfer_hint_seen = true;
+            }
             if building.is_some() {
                 // As in Factorio: a building window replaces the character screen and the other
                 // main windows.

@@ -194,6 +194,8 @@ pub enum FactoryCommand {
     SetHotbar { index: usize, item: Option<ItemRef> },
     /// Delete the material in this robot tank (the trash button).
     EmptyTank(usize),
+    /// Keep (true) or drop (false) this material when the robot digs.
+    SetKeep { material: MaterialId, keep: bool },
     /// Fill the tanks, so that the tank of `material` has `room` units of room and no other
     /// tank has room (for the smoke test: it does not dig for minutes).
     FillTanks { material: MaterialId, room: u32 },
@@ -304,6 +306,8 @@ pub struct FactoryFrame {
     pub dig_limit: u8,
     /// Materials the player has discovered (scanned).
     pub discovered: Vec<MaterialId>,
+    /// Dug materials and whether the robot keeps them (`Factory::dig_list`).
+    pub dig_list: Vec<(MaterialId, bool)>,
     /// Messages for the player.
     pub notices: Vec<String>,
 }
@@ -659,6 +663,7 @@ impl FactoryHost {
                 }
             }
             FactoryCommand::FillTanks { material, room } => self.fill_tanks(material, room),
+            FactoryCommand::SetKeep { material, keep } => self.factory.set_keep(material, keep),
             FactoryCommand::EmptyTank(tank) => {
                 let content = self.factory.content.clone();
                 let material = self.factory.player.tanks.get(tank).and_then(|t| t.material);
@@ -734,7 +739,11 @@ impl FactoryHost {
                     self.notice("The inventory is full");
                 }
             }
-            SlotGroup::Fuel => {}
+            SlotGroup::Fuel => {
+                if let Err(text) = self.factory.fuel_to_robot(id, click) {
+                    self.notice(text);
+                }
+            }
         }
     }
 
@@ -1099,6 +1108,7 @@ impl FactoryHost {
             remove_queue: self.removal_queue_rects(),
             dig_limit: tools::dig_limit(f),
             discovered: f.progress.discovered_materials().collect(),
+            dig_list: f.dig_list(),
             notices: std::mem::take(&mut self.notices),
         }
     }

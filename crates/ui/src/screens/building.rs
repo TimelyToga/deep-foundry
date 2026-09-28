@@ -144,7 +144,9 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
         let fi = widgets::window(ui, id.with("inv"), inv_rect, "Character", false);
         st.move_window(WindowKind::Building, fi.drag);
         inventory::panel(ui, cx, st, Rect::from_min_size(fi.content.min, inv), "Shift + click: move to building");
-        // Building.
+        // Building. Items of the robot dropped on it go in.
+        let zone = ui.interact(b_rect, id.with("drop"), egui::Sense::hover());
+        super::drag::building_zone(cx, &zone);
         let fb = widgets::window(ui, id.with("b"), b_rect, name, true);
         st.move_window(WindowKind::Building, fb.drag);
         if fb.close_clicked {
@@ -152,6 +154,9 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
             return;
         }
         recipe_slot = building_panel(ui, cx, st, b, &recipes, fb.content);
+        if super::drag::dragging_to_building(ctx) {
+            super::drag::outline(ui.painter(), b_rect.shrink(2.0));
+        }
     });
     // The picker is a Foreground layer: hide it under the pause menu.
     if st.picker_open && st.is_open(WindowKind::Building) && cx.model.state == crate::model::GameState::Playing {
@@ -412,9 +417,10 @@ fn slot_grid(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, g
         let content = SlotContent { item: s.stack.map(|x| x.item), count: count.as_deref(), ghost: s.filter, fill, ..Default::default() };
         // A material slot is dark, like a tank, so its fill bar shows.
         let look = if s.stack.is_some() && s.capacity == 0 { SlotLook::Normal } else { SlotLook::Dark };
-        let resp = widgets::slot(ui, Id::new(("b-slot", group, i)), sr, look, &content, cx.atlas);
+        let resp = widgets::slot_drag(ui, Id::new(("b-slot", group, i)), sr, look, &content, cx.atlas);
         if let Some(x) = s.stack {
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, item::name(&model.content, x.item)));
+            super::drag::source(&resp, super::drag::Drag::Building { building: b.id, group, index: i });
         }
         if resp.hovered() {
             if let Some(st) = s.stack {

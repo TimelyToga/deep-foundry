@@ -374,19 +374,19 @@ mod tests {
         let (mut f, _) = setup();
         let malachite = f.content.expect_material("malachite");
         let raw = f.content.expect_material("raw_malachite");
-        assert!(f.take_dug_cell(malachite));
+        assert_eq!(f.take_dug_cell(malachite), crate::Dug::Kept);
         assert_eq!(f.player.count(ItemRef::Material(raw)), 1, "the vein breaks into raw ore");
         assert!(f.progress.is_material_discovered(malachite) && f.progress.is_material_discovered(raw));
         let events: Vec<_> = f.progress.drain_events().collect();
         assert_eq!(events.len(), 2, "one discovery each: {events:?}");
-        assert!(f.take_dug_cell(malachite));
+        assert_eq!(f.take_dug_cell(malachite), crate::Dug::Kept);
         assert_eq!(f.progress.drain_events().count(), 0, "a second dig discovers nothing");
         // No room: nothing is taken.
         for t in &mut f.player.tanks {
             t.material = Some(f.content.expect_material("sand"));
             t.units = t.capacity;
         }
-        assert!(!f.take_dug_cell(malachite));
+        assert_eq!(f.take_dug_cell(malachite), crate::Dug::NoRoom(raw));
     }
 
     #[test]
