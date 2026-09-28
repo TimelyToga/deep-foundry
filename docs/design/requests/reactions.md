@@ -28,7 +28,8 @@ How: `heat::step` does not get the `ReactTable` now. Either pass `&ReactTable` (
 `Simulation::react`), or copy `wake_temp` into the material table. `wake_temp(m)` is the lowest
 temperature at which something starts for material `m` (`None`: nothing depends on heat). A
 simple rule that also works: wake a cell when its temperature changes by 10 °C or more since it
-was last visited.
+was last visited. Wake the cell and its 8 neighbors (as `Hood::mark_changed` does): some
+materials, for example water, leave their reactions to the neighbor material.
 
 Stub until then: the scene and unit tests set the start temperatures in the picture, so the
 cells are awake from the start.
