@@ -421,7 +421,14 @@ impl Game {
             UiState::Research => self.ui.ui.open_window(WindowKind::Research),
             UiState::Guide => self.ui.ui.open_window(WindowKind::Guide),
             // Screens for `--screenshot`. In the window they start the normal game.
-            UiState::Building | UiState::Ghost | UiState::Hub | UiState::GhostRed | UiState::Drag | UiState::Alt | UiState::Remove => {}
+            UiState::Building
+            | UiState::Ghost
+            | UiState::Hub
+            | UiState::GhostRed
+            | UiState::Drag
+            | UiState::Alt
+            | UiState::Remove
+            | UiState::Tanks => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {

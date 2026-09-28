@@ -269,6 +269,9 @@ impl FoundryUi {
     pub fn open_menu(&mut self, page: MenuPage) {
         self.state.menu.page = page;
         self.state.menu.confirm = None;
+        if page == MenuPage::Save && self.state.menu.save_name.is_empty() {
+            self.state.menu.save_name = "My factory".into();
+        }
     }
 
     /// Open the recipe selector of the building window (for tests and previews).

@@ -23,7 +23,8 @@ OPTIONS:
                              playing, inventory or debug (default: menu; playing with --exit-after).
                              Normal mode only: building (a workbench window), ghost (a building in
                              the hand), research, guide, hub (the Hub window),
-                             ghost-red, drag (a belt line), alt (alt mode), remove
+                             ghost-red, drag (a belt line), alt (alt mode), remove,
+                             tanks (full tanks: the tank HUD says what to do)
     --mode MODE              The mode of a world that --ui-state starts: sandbox (default) or
                              normal (the robot, the factory and the Hub)
     --ui-scale S             Size of the UI, 0.75 to 2 (default: the settings file, else 1)
@@ -105,6 +106,8 @@ pub enum UiState {
     Alt,
     /// Normal mode: the remove button takes a building.
     Remove,
+    /// Normal mode: the tanks are full and the dig tool has no room.
+    Tanks,
 }
 
 impl UiState {
@@ -128,6 +131,7 @@ impl UiState {
             "drag" => UiState::Drag,
             "alt" => UiState::Alt,
             "remove" => UiState::Remove,
+            "tanks" => UiState::Tanks,
             _ => return None,
         })
     }
@@ -150,6 +154,7 @@ impl UiState {
                 | UiState::Drag
                 | UiState::Alt
                 | UiState::Remove
+                | UiState::Tanks
         )
     }
 }
