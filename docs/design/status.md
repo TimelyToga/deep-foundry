@@ -21,12 +21,13 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 | Work | Where | Merge notes |
 |---|---|---|
 | Character (Opus): new robot sprites (user's image skill), animations, sprite pass in crates/render, smoother movement | agent worktree | crates/game player.rs + drawing, new crates/render sprite file, assets/sprites, tools/sprites. |
+| Play-test round 2 (Opus): keep/drop per material when digging, HUD bar transfers with a building window open, guide texts after the workbench, campfire fires raw clay bricks | agent worktree | crates/factory, crates/ui, guide data, small crates/game edits. |
 | Stutter when mining (Opus): measure sim vs main thread while digging; pointer/dig target must follow the mouse every frame | agent worktree | Small changes in crates/game; may touch app.rs, sim_thread.rs, factory_host.rs. |
 | Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
 
 ## Next
 1. Play-test fixes merged (tell the user: test point).
-   Then launch play-test round 2 (Opus, new agent), from the user's second play-test:
+   Play-test round 2 is RUNNING (list below is its task):
    - Digging fills the tank with dirt and stone. Make digging useful: common materials (dirt, stone, sand...) are knocked loose or dropped instead of stored, ores and wanted materials are kept; the player can set keep/drop per material in the tank UI.
    - Move resources between the HUD quickbar and the tanks (both ways) without opening the inventory: drag, click and shift-click like Factorio.
    - Guide: after the workbench the user did not know what to do. Check the whole path from spawn to the kiln step: each step says what to do, where, and with which key; the guide advances on every goal. Check the play-test fixes (dig discovers, crate storage) on the merged build.
