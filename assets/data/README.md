@@ -51,7 +51,7 @@ Do not invent new tags; ask for a schema change instead (see `docs/design/reques
 | `oil` | A crude-oil family liquid. |
 | `ore` | A vein, or a raw/crushed/washed ore powder. |
 | `gangue` | Waste rock from an ore, not yet used in the Tier 0-1 data. |
-| `fuel` | Burns and is meant to power furnaces and boilers. |
+| `fuel` | Burns and is meant to power furnaces and boilers. A burner machine (the campfire) takes a powder or solid with this tag in its fuel slot. |
 | `carbon` | A carbon fuel (charcoal, coke, coal) used to reduce ore in smelting. |
 | `organic` | Comes from a living thing (wood, resin, rubber). |
 | `soluble` | Dissolves in water. |
@@ -220,3 +220,16 @@ tech that reference to gate the recipe behind research; leave it out of every te
 `unlocks` to make the recipe free from the start (this project uses that for early Tier 0
 recipes such as bricks, the campfire and the crucible, so a new player has something to do
 before any research is done).
+
+## Guide goals
+
+The guide is in `guide/tier*.ron` (fields in `crates/factory/src/progress/guide.rs`).
+
+- Each text says what to do, where, and with which key or button.
+- Keys are `{key:ID}` (all keys of the action) or `{key1:ID}` (the first key), with the action ids
+  of `crates/game/src/keys.rs`. Never write a fixed letter: the player can change the keys, and on
+  a Dvorak keyboard the letters are in other places. The test
+  `guide_texts_name_keys_through_the_key_table` checks this.
+- `waits_for` names the machine that the goal needs and that the game does not have yet, for
+  example `Some("the kiln")`. The guide shows "Next: the kiln. It comes in a later update." when no
+  other goal is open. Goals that the game can do come before the goals that wait.

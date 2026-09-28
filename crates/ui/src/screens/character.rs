@@ -25,8 +25,10 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
     }
     let ctx = cx.ctx;
     let inv = inventory::panel_size(cx);
+    // The keep or drop list of dug materials is under the inventory.
+    let keep_h = super::keep::list_height(cx);
     let craft_h = HEAD + TAB_H + 12.0 + RECIPE_ROWS as f32 * size::SLOT + 4.0;
-    let content = vec2(inv.x + 16.0 + CRAFT_W, inv.y.max(craft_h));
+    let content = vec2(inv.x + 16.0 + CRAFT_W, (inv.y + keep_h).max(craft_h));
     let outer = widgets::window_outer(content);
     let rect = widgets::place(ctx.content_rect(), outer, st.offset(WindowKind::Character) - vec2(0.0, 40.0));
     let id = window_id(WindowKind::Character);
@@ -39,6 +41,7 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
         }
         let inv_rect = Rect::from_min_size(f.content.min, inv);
         inventory::panel(ui, cx, st, inv_rect, "");
+        super::keep::list(ui, cx, Rect::from_min_size(inv_rect.left_bottom(), vec2(inv.x, keep_h)));
         let craft_rect = Rect::from_min_size(pos2(inv_rect.right() + 16.0, f.content.top()), vec2(CRAFT_W, craft_h));
         crafting_panel(ui, cx, st, craft_rect);
     });

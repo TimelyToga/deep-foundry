@@ -7,7 +7,7 @@ use crate::crafting::cancel_count;
 use crate::format;
 use crate::item;
 use foundry_content::ItemRef;
-use crate::model::{AlertKind, DigState, GuideGoal, HoverView, UiModel};
+use crate::model::{AlertKind, DigState, HoverView, NextGoal, UiModel, next_goal};
 use crate::theme::{self, color, font, font_bold, font_regular, size, text};
 use crate::tooltip::Tip;
 use crate::widgets::{self, SlotContent, SlotLook};
@@ -22,6 +22,7 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
     let screen = cx.ctx.content_rect();
     let qb = quickbar(cx, screen);
     tank_summary(cx, qb);
+    super::drag::first_hint(cx, st, qb);
     crafting_queue(cx, screen);
     let left_top = research(cx, st, screen);
     guide_tracker(cx, st, screen, left_top);
@@ -89,6 +90,9 @@ fn quickbar(cx: &mut Cx, screen: Rect) -> Rect {
     let rect = Rect::from_min_size(pos2((screen.center().x - outer.x * 0.5).round(), screen.bottom() - MARGIN - outer.y), outer);
     panel_area(ctx, "quickbar", rect, |ui| {
         let p = ui.painter().clone();
+        // A building slot dropped on the bar goes back to the robot.
+        let zone = ui.interact(rect, Id::new("hud-quickbar-drop"), egui::Sense::hover());
+        super::drag::robot_zone(cx, &zone);
         let bars = Rect::from_min_size(rect.min + vec2(PANEL_PAD, PANEL_PAD), vec2(outer.x - 2.0 * PANEL_PAD, BARS_H));
         if let Some(sb) = cx.model.sandbox {
             brush_line(&p, cx.model, bars, sb);
@@ -157,24 +161,45 @@ fn quickbar_slots(ui: &mut Ui, cx: &mut Cx, p: &Painter, rect: Rect, bars: Rect,
             ..Default::default()
         };
         let look = if item.is_some() { SlotLook::Normal } else { SlotLook::Dark };
-        let resp = widgets::slot(ui, Id::new(("hotbar", i)), sr, look, &content, cx.atlas);
+        let resp = widgets::slot_drag(ui, Id::new(("hotbar", i)), sr, look, &content, cx.atlas);
         if let Some(it) = item {
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Quickbar {}", item::name(&model.content, it))));
+            super::drag::source(&resp, super::drag::Drag::Quickbar(i));
         }
+        super::drag::quickbar_zone(cx, &resp, i);
         if resp.hovered() {
             match item {
                 Some(it) if sandbox => cx.tip(Tip::Item {
                     item: it,
                     amount: Some("Click: paint with it. Right click: clear the slot.".into()),
                 }),
-                Some(it) => cx.tip(Tip::Item { item: it, amount: None }),
+                Some(it) => {
+                    let amount = match &model.building {
+                        Some(b) if item::is_bulk(it) => {
+                            Some(format!("Click: move it into the {}. You can also drag it there.", item::building_name(&model.content, b.kind)))
+                        }
+                        Some(b) => Some(format!(
+                            "Click: take it in the hand. Shift + click: move all of it into the {}.",
+                            item::building_name(&model.content, b.kind)
+                        )),
+                        None => None,
+                    };
+                    cx.tip(Tip::Item { item: it, amount })
+                }
                 None => cx.tip(Tip::Text {
                     title: "Empty quickbar slot".into(),
-                    body: "Hold an item and click here to put it in the quickbar.".into(),
+                    body: "Hold an item and click here to put it in the quickbar. You can also drag a tank or an item here.".into(),
                 }),
             }
         }
-        if resp.clicked() {
+        // With a building window open: a click on a material, or Shift + click on a part, moves
+        // it into the building.
+        let (shift, _) = cx.modifiers();
+        let to_building = model.building.is_some() && pl.hand.is_none() && item.is_some_and(|it| item::is_bulk(it) || shift);
+        if resp.clicked() && to_building {
+            let click = super::inventory::slot_click(cx, &resp).unwrap_or(crate::action::SlotClick::LEFT);
+            super::drag::quickbar_to_building(cx, i, click);
+        } else if resp.clicked() {
             // In the sandbox the hand always holds the brush, so a click on a full slot selects it.
             match (pl.hand, item) {
                 (Some(h), None) => cx.act(UiAction::SetHotbar { index: i, item: Some(h.item) }),
@@ -219,6 +244,12 @@ fn tank_summary(cx: &mut Cx, qb: Rect) {
     let rect = Rect::from_min_size(pos2(qb.right() + 8.0, qb.top()), outer);
     panel_area(cx.ctx, "tank", rect, |ui| {
         let p = ui.painter().clone();
+        // A building slot dropped on the tanks goes back to the robot.
+        let zone = ui.interact(rect, Id::new("hud-tank-drop"), egui::Sense::hover());
+        super::drag::robot_zone(cx, &zone);
+        if super::drag::dragging_from_building(cx.ctx) {
+            super::drag::outline(&p, rect.shrink(3.0));
+        }
         let head_y = rect.top() + PANEL_PAD + BARS_H * 0.5;
         p.text(pos2(rect.left() + PANEL_PAD + 2.0, head_y), Align2::LEFT_CENTER, "Tanks", font_bold(text::SMALL), color::HEADING);
         let used: u64 = tank.iter().map(|t| t.units as u64).sum();
@@ -240,16 +271,26 @@ fn tank_summary(cx: &mut Cx, qb: Rect) {
             let it = t.material.map(ItemRef::Material);
             let count = it.map(|_| format::count(t.units as u64));
             let content = SlotContent { count: count.as_deref(), ..super::inventory::tank_slot_content(model, t) };
-            let resp = widgets::slot(ui, Id::new(("hud-tank", i)), sr, SlotLook::Dark, &content, cx.atlas);
+            let resp = widgets::slot_drag(ui, Id::new(("hud-tank", i)), sr, SlotLook::Dark, &content, cx.atlas);
             if let Some(x) = it {
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("HUD tank {}", item::name(&model.content, x))));
+                super::drag::source(&resp, super::drag::Drag::Tank(i));
             }
             if resp.hovered() {
                 match it {
-                    Some(x) => cx.tip(Tip::Item {
-                        item: x,
-                        amount: Some(format!("{} / {} units. Click to spray this material.", format::count_full(t.units as u64), format::count_full(t.capacity as u64))),
-                    }),
+                    Some(x) => {
+                        let what = match &model.building {
+                            Some(b) => format!(
+                                "Click: move it into the {}. Right click: half. You can also drag it there.",
+                                item::building_name(&model.content, b.kind)
+                            ),
+                            None => "Click to spray this material.".to_string(),
+                        };
+                        cx.tip(Tip::Item {
+                            item: x,
+                            amount: Some(format!("{} / {} units. {what}", format::count_full(t.units as u64), format::count_full(t.capacity as u64))),
+                        })
+                    }
                     None => cx.tip(Tip::Text {
                         title: "Empty tank".into(),
                         body: format!("Holds up to {} units of one material. Dig to fill it.", format::count_full(t.capacity as u64)),
@@ -259,13 +300,22 @@ fn tank_summary(cx: &mut Cx, qb: Rect) {
             if let Some(click) = super::inventory::slot_click(cx, &resp) {
                 cx.act(UiAction::ClickSlot { slot: crate::action::SlotRef::Tank(i), click });
             }
+            super::keep::corner_button(ui, cx, Id::new(("hud-keep", i)), sr, t.material);
         }
         // Which material the spray tool puts out, and how.
         let tx = grid.right() + 10.0;
         let mut y = grid.top() + 2.0;
         let spray = model.player.spray.filter(|m| tank.iter().any(|t| t.material == Some(*m) && t.units > 0));
-        match spray {
-            Some(m) => {
+        match (spray, &model.building) {
+            // A building window is open: a tank click moves the tank into it.
+            (_, Some(b)) => {
+                let name = item::building_name(&model.content, b.kind);
+                p.text(pos2(tx, y), Align2::LEFT_TOP, format!("{name} open:"), font_regular(text::SMALL), color::TEXT_DIM);
+                y += 17.0;
+                let how = format!("Click a tank to move it into the {name}. Right click: half. Or drag it there.");
+                widgets::wrapped(&p, pos2(tx, y), &how, font_regular(text::SMALL), color::ORANGE, TANK_TEXT_W);
+            }
+            (Some(m), None) => {
                 let it = ItemRef::Material(m);
                 p.text(pos2(tx, y), Align2::LEFT_TOP, "Spray tool:", font_regular(text::SMALL), color::TEXT_DIM);
                 y += 17.0;
@@ -277,7 +327,7 @@ fn tank_summary(cx: &mut Cx, qb: Rect) {
                 y = widgets::wrapped(&p, pos2(tx, y), &how, font_regular(text::SMALL), color::TEXT, TANK_TEXT_W).bottom() + 2.0;
                 widgets::wrapped(&p, pos2(tx, y), "Click a tank to choose another.", font_regular(text::SMALL), color::TEXT_FAINT, TANK_TEXT_W);
             }
-            None => {
+            (None, None) => {
                 let text = if used == 0 { "The tanks are empty. Dig to fill them." } else { "Click a tank to choose what the spray tool puts out." };
                 widgets::wrapped(&p, pos2(tx, y), text, font_regular(text::SMALL), color::TEXT_DIM, TANK_TEXT_W);
             }
@@ -400,32 +450,61 @@ const GUIDE_PAD: f32 = 10.0;
 /// Goals that the guide tracker shows.
 const GUIDE_GOALS: usize = 2;
 
-/// The height of the guide tracker: the heading, and a title line and the text for each goal.
-fn tracker_height(ctx: &egui::Context, settings: &crate::model::Settings, goals: &[&GuideGoal]) -> f32 {
+/// One entry of the guide tracker.
+struct TrackerRow {
+    title: String,
+    count: Option<(u32, u32)>,
+    /// The hint, with the player's keys.
+    text: String,
+    /// The title color: white for a goal, yellow for "what comes next".
+    color: Color32,
+}
+
+/// The rows of the guide tracker: the first open goals that the game can do. When the game can
+/// do no more goals, one row says what comes next ("Next: the kiln. It comes in a later
+/// update."), so the tracker is never empty while goals are open.
+fn tracker_rows(model: &UiModel) -> Vec<TrackerRow> {
+    let open = model.guide.iter().filter(|g| !g.done && g.waits_for.is_none()).take(GUIDE_GOALS);
+    let mut rows: Vec<TrackerRow> = open
+        .map(|g| TrackerRow { title: g.title.clone(), count: g.count, text: model.settings.with_keys(&g.text), color: color::TEXT })
+        .collect();
+    if let (true, NextGoal::Waiting(g)) = (rows.is_empty(), next_goal(&model.guide)) {
+        rows.push(TrackerRow {
+            title: "You did every goal for now".into(),
+            count: None,
+            text: g.next_text().unwrap_or_default(),
+            color: color::YELLOW,
+        });
+    }
+    rows
+}
+
+/// The height of the guide tracker: the heading, and a title line and the text for each row.
+fn tracker_height(ctx: &egui::Context, rows: &[TrackerRow]) -> f32 {
     let text_w = GUIDE_W - 2.0 * GUIDE_PAD;
     let mut h = GUIDE_PAD + 20.0;
-    for g in goals {
+    for r in rows {
         h += 22.0;
-        if !g.text.is_empty() {
-            h += widgets::text_height(ctx, &settings.with_keys(&g.text), font_regular(text::SMALL), text_w);
+        if !r.text.is_empty() {
+            h += widgets::text_height(ctx, &r.text, font_regular(text::SMALL), text_w);
         }
         h += 6.0;
     }
     h + GUIDE_PAD - 4.0
 }
 
-/// The guide tracker on the left side: the first goals that are not done. A click opens the guide.
+/// The guide tracker on the left side: the next goals, or what comes next. A click opens the
+/// guide.
 fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
     let model = cx.model;
     if model.sandbox.is_some() {
         return;
     }
-    // Goals that the game cannot do yet are only in the guide window.
-    let goals: Vec<&GuideGoal> = model.guide.iter().filter(|g| !g.done && g.waits_for.is_none()).take(GUIDE_GOALS).collect();
-    if goals.is_empty() {
+    let rows = tracker_rows(model);
+    if rows.is_empty() {
         return;
     }
-    let h = tracker_height(cx.ctx, &model.settings, &goals);
+    let h = tracker_height(cx.ctx, &rows);
     let rect = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(GUIDE_W, h));
     panel_area(cx.ctx, "guide", rect, |ui| {
         let p = ui.painter().clone();
@@ -442,18 +521,17 @@ fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
         let all = format!("{}: all goals", model.settings.key("guide"));
         p.text(pos2(right, y + 8.0), Align2::RIGHT_CENTER, &all, font_regular(text::SMALL), color::TEXT_FAINT);
         y += 20.0;
-        for g in &goals {
+        for r in &rows {
             let cy = y + 10.0;
-            let count = g.count.map(|(have, need)| format!("{have} / {need}"));
+            let count = r.count.map(|(have, need)| format!("{have} / {need}"));
             let count_rect = count.as_ref().map(|c| p.text(pos2(right, cy), Align2::RIGHT_CENTER, c, font_bold(text::BODY), color::TEXT));
             let title_right = count_rect.map(|r| r.left() - 8.0).unwrap_or(right);
-            let title = p.layout_no_wrap(g.title.clone(), font_bold(text::BODY), color::TEXT);
+            let title = p.layout_no_wrap(r.title.clone(), font_bold(text::BODY), r.color);
             let clip = Rect::from_min_max(pos2(x, y), pos2(title_right, y + 22.0));
-            p.with_clip_rect(clip).galley(pos2(x, cy - title.size().y * 0.5), title, color::TEXT);
+            p.with_clip_rect(clip).galley(pos2(x, cy - title.size().y * 0.5), title, r.color);
             y += 22.0;
-            if !g.text.is_empty() {
-                let text = model.settings.with_keys(&g.text);
-                y = widgets::wrapped(&p, pos2(x, y), &text, font_regular(text::SMALL), color::TEXT_DIM, text_w).bottom();
+            if !r.text.is_empty() {
+                y = widgets::wrapped(&p, pos2(x, y), &r.text, font_regular(text::SMALL), color::TEXT_DIM, text_w).bottom();
             }
             y += 6.0;
         }
@@ -521,6 +599,13 @@ fn hover_lines(model: &UiModel, hover: &HoverView) -> Vec<HoverLine> {
             }
             if let Some(b) = content.materials.broken_into.get(m).filter(|b| b.index() != m && !b.is_air()) {
                 out.push(HoverLine::new(format!("Breaks into {}", content.materials.names[b.index()]), color::TEXT_DIM));
+            }
+            // Keep or drop (the setting of the dug form).
+            let dug = content.materials.broken_into.get(m).copied().unwrap_or(*material);
+            match (&d.dig, model.player.keeps(dug)) {
+                (Some(DigState::CanDig), Some(true)) => out.push(HoverLine::new("When dug: kept in the tanks", color::TEXT_DIM)),
+                (Some(DigState::CanDig), Some(false)) => out.push(HoverLine::new("When dug: thrown out (drop)", color::TEXT_DIM)),
+                _ => {}
             }
             if d.undiscovered {
                 out.push(HoverLine::new(format!("Not discovered: scan with {} (hold)", model.settings.key("scan")), color::ORANGE));

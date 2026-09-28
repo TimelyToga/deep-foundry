@@ -45,18 +45,23 @@
     Building(
         id: "campfire",
         name: "Campfire",
-        description: "Burns fuel from its small hopper. Heats what is above it.",
+        description: "Burns wood or charcoal from its fuel slot. It fires raw clay bricks into clay bricks, slowly (pit firing). It heats what is above it.",
         kind: "furnace",
         size: (1, 1),
         tier: 0,
         body: "wood_block",
         max_temp: 900,
         ports: [
-            (kind: BulkIn, tile: (0, 0), side: Up, filter: ["wood", "charcoal", "coal", "coke"]),
+            (kind: BulkIn, tile: (0, 0), side: Up, filter: ["wood", "charcoal", "raw_coal", "coke"]),
             (kind: Heat, tile: (0, 0), side: Up),
         ],
         power: Some((tier: 0, burn_w: 4000.0)),
         category: Some("power"),
+        // A crafter with a fuel slot (see foundry_factory machines.rs): the slot holds 100 units
+        // of wood or charcoal, and one unit burns for 300 ticks (5 seconds). The buffers hold 8
+        // bricks.
+        crafts: ["pit_firing"],
+        params: {"buffer_crafts": 8.0, "fuel_capacity": 100.0, "fuel_ticks": 300.0},
     ),
     Building(
         id: "wood_wall",

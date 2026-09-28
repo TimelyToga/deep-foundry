@@ -8,11 +8,14 @@
 //!   recipe time. A craft of `time` seconds needs `time × 60` of work (game design section 12.2).
 //! - Byproducts use a random number from `foundry_core::Rng` with a seed made from the building
 //!   and the number of finished crafts. So the result is the same in every run.
+//! - A burner machine (a campfire: a crafter with the params `fuel_capacity` and `fuel_ticks`)
+//!   has a fuel slot (`Fuel`). Each unit of fuel gives `fuel_ticks` ticks of work. The machine
+//!   burns fuel only while a craft runs. With no fuel it stops ("No fuel").
 //!
 //! Ports and the world are handled in `buildings.rs`. This file has no world access.
 
 use foundry_content::{Content, ItemRef, Recipe, Stack};
-use foundry_core::{RecipeId, Rng, TICKS_PER_SECOND};
+use foundry_core::{MaterialId, RecipeId, Rng, TICKS_PER_SECOND};
 use serde::{Deserialize, Serialize};
 
 /// What a building is doing. The building window shows it with a reason.
@@ -31,6 +34,8 @@ pub enum Status {
     /// An output port or exhaust has no free cells in front of it.
     OutputBlocked,
     NoPower,
+    /// A burner machine has no fuel in its fuel slot.
+    NoFuel,
     /// The recipe needs a higher temperature.
     TooCold,
     /// The body is hotter than the building's maximum temperature.
@@ -50,6 +55,7 @@ impl Status {
             Status::OutputFull => "Output full",
             Status::OutputBlocked => "Output blocked",
             Status::NoPower => "No power",
+            Status::NoFuel => "No fuel",
             Status::TooCold => "Too cold",
             Status::TooHot => "Too hot",
             Status::Broken => "Broken",
@@ -90,6 +96,70 @@ pub struct Machine {
     pub crafts: u64,
     /// Each buffer holds this many crafts.
     pub buffer_crafts: u32,
+    /// The fuel slot of a burner machine. `None`: the machine needs no fuel.
+    #[serde(default)]
+    pub fuel: Option<Fuel>,
+}
+
+/// The fuel slot of a burner machine (a campfire).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Fuel {
+    /// The fuel material in the slot. `None` when the slot is empty.
+    pub material: Option<MaterialId>,
+    pub units: u32,
+    /// The most units the slot holds.
+    pub capacity: u32,
+    /// Ticks of work that one unit of fuel gives.
+    pub ticks_per_unit: u32,
+    /// Ticks of work left from the unit that burns now.
+    pub burn: u32,
+}
+
+impl Fuel {
+    pub fn new(capacity: u32, ticks_per_unit: u32) -> Self {
+        Self { material: None, units: 0, capacity, ticks_per_unit: ticks_per_unit.max(1), burn: 0 }
+    }
+
+    /// How many units of `m` the slot can take now. The slot holds one material at a time.
+    pub fn room(&self, m: MaterialId) -> u32 {
+        match self.material {
+            Some(x) if x != m && self.units > 0 => 0,
+            _ => self.capacity.saturating_sub(self.units),
+        }
+    }
+
+    /// Put up to `n` units of `m` into the slot. Returns the count taken.
+    pub fn add(&mut self, m: MaterialId, n: u32) -> u32 {
+        let n = n.min(self.room(m));
+        if n > 0 {
+            self.material = Some(m);
+            self.units += n;
+        }
+        n
+    }
+
+    /// Take up to `n` units out of the slot. Returns the material and the count taken.
+    pub fn take(&mut self, n: u32) -> Option<(MaterialId, u32)> {
+        let m = self.material?;
+        let t = self.units.min(n);
+        self.units -= t;
+        if self.units == 0 {
+            self.material = None;
+        }
+        (t > 0).then_some((m, t))
+    }
+
+    /// Make sure a unit burns for this tick. False if there is no fuel.
+    fn light(&mut self) -> bool {
+        if self.burn > 0 {
+            return true;
+        }
+        if self.take(1).is_none() {
+            return false;
+        }
+        self.burn = self.ticks_per_unit;
+        true
+    }
 }
 
 /// Why a recipe cannot be set.
@@ -116,6 +186,14 @@ impl std::fmt::Display for RecipeError {
 }
 
 impl std::error::Error for RecipeError {}
+
+/// True if a burner machine burns this material: it has the tag `fuel` and it is a powder or a
+/// solid (a campfire does not burn oil).
+pub fn is_fuel(content: &Content, m: MaterialId) -> bool {
+    let Some(bit) = content.tags.bit("fuel") else { return false };
+    content.materials.has_tag(m, bit)
+        && matches!(content.materials.phase[m.index()], foundry_content::Phase::Powder | foundry_content::Phase::Solid)
+}
 
 /// Tiers of the machine above the recipe tier.
 pub fn overclock(machine_tier: u8, recipe_tier: u8) -> u32 {
@@ -144,7 +222,22 @@ pub fn work_needed(recipe: &Recipe) -> f64 {
 
 impl Machine {
     pub fn new(buffer_crafts: u32) -> Self {
-        Self { recipe: None, inputs: vec![], outputs: vec![], work: 0.0, running: false, crafts: 0, buffer_crafts: buffer_crafts.max(1) }
+        Self {
+            recipe: None,
+            inputs: vec![],
+            outputs: vec![],
+            work: 0.0,
+            running: false,
+            crafts: 0,
+            buffer_crafts: buffer_crafts.max(1),
+            fuel: None,
+        }
+    }
+
+    /// A burner machine: a machine with a fuel slot.
+    pub fn with_fuel(mut self, fuel: Fuel) -> Self {
+        self.fuel = Some(fuel);
+        self
     }
 
     /// Capacity of input buffer `k`.
@@ -241,6 +334,13 @@ impl Machine {
         out
     }
 
+    /// Empty the fuel slot. For a removed building (a new recipe keeps the fuel).
+    pub fn take_fuel(&mut self) -> Option<Stack> {
+        let f = self.fuel.as_mut()?;
+        let (m, n) = f.take(u32::MAX)?;
+        Some(Stack { item: ItemRef::Material(m), count: n })
+    }
+
     /// Why a new craft cannot start, or `None` if it can.
     fn start_problem(&self, recipe: &Recipe) -> Option<Status> {
         if recipe.inputs.iter().enumerate().any(|(k, s)| self.inputs[k] < s.count) {
@@ -304,6 +404,12 @@ impl Machine {
             && c.heat < t
         {
             return Status::TooCold;
+        }
+        if let Some(f) = &mut self.fuel {
+            if !f.light() {
+                return Status::NoFuel;
+            }
+            f.burn -= 1;
         }
         if !self.running {
             self.start(recipe);
