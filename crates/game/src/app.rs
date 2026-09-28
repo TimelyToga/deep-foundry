@@ -441,7 +441,8 @@ impl Game {
             | UiState::Alt
             | UiState::Remove
             | UiState::Tanks
-            | UiState::Campfire => {}
+            | UiState::Campfire
+            | UiState::Kiln => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {
