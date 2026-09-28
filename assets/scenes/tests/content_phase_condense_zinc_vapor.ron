@@ -1,13 +1,14 @@
 // Generated content scene: condense of zinc_vapor into molten_zinc at 907C.
-// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
 Scene(
     note: "zinc_vapor condenses into molten_zinc.",
     legend: {
         "#e8eaea": (material: "zinc_vapor", temperature: 827),
         "#6b6a70": "stone",
     },
-    ticks: 300,
+    ticks: 3,
     checks: [
-        Total(material: "molten_zinc", min: 1, pending: true),
+        Total(material: "molten_zinc", min: 1),
     ],
 )

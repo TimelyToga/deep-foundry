@@ -1,13 +1,15 @@
 // Generated content scene: melt of frozen_ground into mud at 1C.
-// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+// It starts at 30 °C: mud dries into dirt at 60 °C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
 Scene(
     note: "frozen_ground melts into mud.",
     legend: {
-        "#4f5a5e": (material: "frozen_ground", temperature: 81),
+        "#4f5a5e": (material: "frozen_ground", temperature: 30),
         "#6b6a70": "stone",
     },
-    ticks: 300,
+    ticks: 3,
     checks: [
-        Total(material: "mud", min: 1, pending: true),
+        Total(material: "mud", min: 1),
     ],
 )
