@@ -156,7 +156,7 @@ pub fn spray(factory: &mut Factory, sim: &mut Simulation, robot: &Robot, aim: Ce
             continue;
         }
         let (w, h) = sim.size_cells();
-        if p.x < 0 || p.y < 0 || p.x >= w || p.y >= h {
+        if (w > 0 && (p.x < 0 || p.x >= w)) || p.y < 0 || p.y >= h {
             continue;
         }
         if factory.player.remove(item, 1) == 1 {
@@ -262,3 +262,7 @@ mod tests {
         assert!(scan(&mut f, &sim, &robot, CellPos::new(120, 100)).is_none(), "air is not scanned");
     }
 }
+
+#[cfg(test)]
+#[path = "generated_tools_tests.rs"]
+mod generated_tools_tests;
