@@ -18,6 +18,9 @@ use foundry_factory::progress::GuideState;
 use foundry_ui::{NextGoal, SlotClick, SlotRef, UiAction, UiModel, next_goal};
 use std::time::Instant;
 
+#[path = "ore_guide.rs"]
+mod ore_guide;
+
 struct Player {
     host: FactoryHost,
     sim: Simulation,
@@ -351,113 +354,7 @@ impl Player {
 
     /// Play one goal with the player actions. `None`: there is no script for this goal.
     fn process_ore(&mut self, wash: bool) -> Result<(), String> {
-        for i in 0..self.content.factory.techs.len() {
-            self.host
-                .factory
-                .progress
-                .debug_complete(&self.content, foundry_core::TechId(i as u16));
-        }
-        let x = self.center_x().div_euclid(foundry_core::TILE_SIZE) + 4 + if wash { 20 } else { 0 };
-        let base = self.host.robot.center().1 as i32 / foundry_core::TILE_SIZE - 5;
-        for y in (base - 12) * foundry_core::TILE_SIZE..(base + 2) * foundry_core::TILE_SIZE {
-            for x_cell in (x - 1) * foundry_core::TILE_SIZE..(x + 15) * foundry_core::TILE_SIZE {
-                self.sim
-                    .set_cell(CellPos::new(x_cell, y), foundry_core::MaterialId::AIR, None);
-            }
-        }
-        let stone = self.content.expect_material("stone");
-        for y in (base + 1) * foundry_core::TILE_SIZE..(base + 2) * foundry_core::TILE_SIZE {
-            for x_cell in (x + 2) * foundry_core::TILE_SIZE..(x + 15) * foundry_core::TILE_SIZE {
-                self.sim.set_cell(CellPos::new(x_cell, y), stone, None);
-            }
-        }
-        let place =
-            |p: &mut Player, name: &str, at: TilePos| -> Result<foundry_core::BuildingId, String> {
-                let kind = p
-                    .content
-                    .factory
-                    .building(name)
-                    .ok_or_else(|| format!("no building {name}"))?;
-                p.host
-                    .factory
-                    .place(kind, at, 0, false, &mut p.sim)
-                    .map_err(|e| format!("cannot place {name}: {e}"))
-            };
-        let _hopper = place(self, "hopper", TilePos::new(x, base - 7))?;
-        let stamp = place(self, "stamp_mill", TilePos::new(x, base - 5))?;
-        for belt_x in x + 2..=x + 6 {
-            place(self, "wood_belt", TilePos::new(belt_x, base - 1))?;
-        }
-        let output = if wash {
-            let sluice = place(self, "sluice", TilePos::new(x + 7, base - 2))?;
-            self.host
-                .factory
-                .set_recipe(
-                    sluice,
-                    Some(
-                        self.content
-                            .factory
-                            .recipe("washed_malachite")
-                            .ok_or("no wash recipe")?,
-                    ),
-                )
-                .map_err(|e| e.to_string())?;
-            place(self, "crate", TilePos::new(x + 10, base - 2))?
-        } else {
-            place(self, "crate", TilePos::new(x + 2, base - 3))?
-        };
-        self.host
-            .factory
-            .set_recipe(
-                stamp,
-                Some(
-                    self.content
-                        .factory
-                        .recipe("crushed_malachite")
-                        .ok_or("no crush recipe")?,
-                ),
-            )
-            .map_err(|e| e.to_string())?;
-
-        let raw = self.content.expect_material("raw_malachite");
-        for y in (base - 10) * foundry_core::TILE_SIZE..(base - 9) * foundry_core::TILE_SIZE {
-            for x_cell in x * foundry_core::TILE_SIZE..(x + 1) * foundry_core::TILE_SIZE {
-                self.sim.set_cell(CellPos::new(x_cell, y), raw, None);
-            }
-        }
-        if wash {
-            let water = self.content.expect_material("water");
-            for y in (base - 6) * foundry_core::TILE_SIZE..(base - 4) * foundry_core::TILE_SIZE {
-                for x_cell in (x + 7) * foundry_core::TILE_SIZE..(x + 8) * foundry_core::TILE_SIZE {
-                    self.sim.set_cell(CellPos::new(x_cell, y), water, None);
-                }
-            }
-        }
-        let item = ItemRef::Material(self.content.expect_material(if wash {
-            "washed_malachite"
-        } else {
-            "crushed_malachite"
-        }));
-        let needed = if wash { 3 } else { 16 };
-        for _ in 0..4800 {
-            self.ticks(1);
-            if self
-                .host
-                .factory
-                .buildings
-                .inventory(output)
-                .is_some_and(|inv| inv.count(item) >= needed)
-            {
-                return Ok(());
-            }
-        }
-        Err(format!(
-            "ore line produced {} of {item:?}; hopper={:?}, stamp={:?}, output={:?}",
-            self.host.factory.item_count(item),
-            self.host.factory.building_view(_hopper),
-            self.host.factory.building_view(stamp),
-            self.host.factory.building_view(output)
-        ))
+        ore_guide::process(self, wash)
     }
 
     fn play(&mut self, goal: &str) -> Option<Result<(), String>> {
