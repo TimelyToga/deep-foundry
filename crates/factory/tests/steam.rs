@@ -5,7 +5,7 @@ mod common;
 use common::*;
 use foundry_core::{CellPos, TilePos};
 use foundry_factory::Factory;
-use foundry_factory::steam::SteamState;
+use foundry_factory::steam::{FluidTank, SteamState};
 
 #[test]
 fn boiler_heats_water_and_runs_a_crusher_through_bronze_pipes() {
@@ -30,6 +30,8 @@ fn boiler_heats_water_and_runs_a_crusher_through_bronze_pipes() {
         TilePos::new(7, 10),
         TilePos::new(7, 11),
         TilePos::new(8, 11),
+        TilePos::new(3, 11),
+        TilePos::new(2, 11),
     ];
     for tile in pipe_tiles.into_iter().rev() {
         f.place(kind(&c, "bronze_pipe"), tile, 0, false, &mut sim)
@@ -57,7 +59,7 @@ fn boiler_heats_water_and_runs_a_crusher_through_bronze_pipes() {
         }
     }
     for y in 88..96 {
-        for x in 0..24 {
+        for x in 0..16 {
             sim.set_cell(CellPos::new(x, y), water, None);
         }
     }
@@ -90,6 +92,71 @@ fn boiler_heats_water_and_runs_a_crusher_through_bronze_pipes() {
         crusher_view.reason != "No power",
         "the stop reason names missing steam when the network is dry"
     );
+}
+
+#[test]
+fn steam_lab_stops_without_steam_then_researches_and_iron_belt_moves_cells() {
+    let c = content();
+    let mut sim = world(&c, Some(112));
+    let mut f = Factory::new(c.clone());
+    let steam_power = c.factory.tech("steam_power").unwrap();
+    let steam_machines = c.factory.tech("steam_machines_1").unwrap();
+    f.progress.debug_unlock_tier(1);
+    f.progress.debug_complete(&c, steam_power);
+    f.progress.start_research(&c, steam_machines).unwrap();
+    let lab = f
+        .place(
+            kind(&c, "steam_lab"),
+            TilePos::new(5, 10),
+            0,
+            false,
+            &mut sim,
+        )
+        .unwrap();
+    let pipe = f
+        .place(
+            kind(&c, "bronze_pipe"),
+            TilePos::new(6, 10),
+            0,
+            false,
+            &mut sim,
+        )
+        .unwrap();
+    assert_eq!(f.buildings.insert(&c, lab, item(&c, "bronze_kit"), 10), 10);
+    run(&mut f, &mut sim, 5);
+    let stopped = f.building_view(lab).unwrap();
+    assert_eq!(stopped.status, foundry_factory::Status::NoPower);
+    assert!(stopped.reason.contains("Needs steam"));
+    assert_eq!(f.progress.research_status(&c).unwrap().progress, 0.0);
+
+    f.buildings.get_mut(pipe).unwrap().steam = SteamState::Pipe(FluidTank {
+        material: Some(mat(&c, "steam")),
+        amount: 10.0,
+        capacity: 200.0,
+    });
+    f.buildings.wake(lab);
+    run(&mut f, &mut sim, 60);
+    assert!(f.progress.research_status(&c).unwrap().progress > 0.0);
+
+    let iron_belt = kind(&c, "iron_belt");
+    for x in 8..=10 {
+        f.place(iron_belt, TilePos::new(x, 13), 0, false, &mut sim)
+            .unwrap();
+    }
+    let sand = mat(&c, "sand");
+    fill(
+        &mut sim,
+        foundry_core::CellRect::new(66, 100, 70, 104),
+        sand,
+        None,
+    );
+    let total = count_all(&sim, sand);
+    run(&mut f, &mut sim, 240);
+    assert!(
+        sim.count_material(foundry_core::CellRect::new(88, 64, 128, 112), sand) > 0,
+        "iron belt moves a real powder cell"
+    );
+    assert_eq!(count_all(&sim, sand), total);
 }
 
 #[test]
