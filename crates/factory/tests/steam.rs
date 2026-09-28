@@ -3,9 +3,10 @@
 mod common;
 
 use common::*;
+use foundry_content::ItemRef;
 use foundry_core::{CellPos, TilePos};
-use foundry_factory::Factory;
 use foundry_factory::steam::{FluidTank, SteamState};
+use foundry_factory::{Click, Factory, RobotSlot};
 
 #[test]
 fn boiler_heats_water_and_runs_a_crusher_through_bronze_pipes() {
@@ -72,6 +73,7 @@ fn boiler_heats_water_and_runs_a_crusher_through_bronze_pipes() {
     run(&mut f, &mut sim, 1);
     let b = f.buildings.get(boiler).unwrap();
     assert!(b.temperature < 100, "the boiler starts cold");
+    assert!(f.building_view(boiler).unwrap().reason.contains("Heating water"));
     assert!(
         matches!(b.steam, SteamState::Boiler { steam: 0.0, .. }),
         "cold water must not make steam"
@@ -91,6 +93,73 @@ fn boiler_heats_water_and_runs_a_crusher_through_bronze_pipes() {
     assert!(
         crusher_view.reason != "No power",
         "the stop reason names missing steam when the network is dry"
+    );
+}
+
+#[test]
+fn boiler_on_the_right_feeds_a_left_hand_crusher_with_reverse_pipe_placement() {
+    let c = content();
+    let mut sim = world(&c, Some(112));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let crusher = f
+        .place(
+            kind(&c, "steam_crusher"),
+            TilePos::new(3, 10),
+            0,
+            false,
+            &mut sim,
+        )
+        .unwrap();
+    f.set_recipe(crusher, c.factory.recipe("crushed_magnetite"))
+        .unwrap();
+    let boiler = f
+        .place(
+            kind(&c, "small_boiler"),
+            TilePos::new(9, 10),
+            0,
+            false,
+            &mut sim,
+        )
+        .unwrap();
+    let pipe_tiles = [
+        TilePos::new(3, 11),
+        TilePos::new(4, 11),
+        TilePos::new(5, 11),
+        TilePos::new(6, 11),
+        TilePos::new(7, 11),
+        TilePos::new(7, 10),
+        TilePos::new(8, 10),
+        TilePos::new(9, 10),
+        TilePos::new(10, 10),
+        TilePos::new(9, 11),
+    ];
+    for tile in pipe_tiles.into_iter().rev() {
+        f.place(kind(&c, "bronze_pipe"), tile, 0, false, &mut sim)
+            .unwrap();
+    }
+
+    let charcoal = mat(&c, "charcoal");
+    let water = mat(&c, "water");
+    let ore = mat(&c, "raw_magnetite");
+    for y in 76..80 {
+        for x in 72..80 {
+            sim.set_cell(CellPos::new(x, y), charcoal, None);
+        }
+        for x in 24..32 {
+            sim.set_cell(CellPos::new(x, y), ore, None);
+        }
+    }
+    for y in 88..96 {
+        for x in 68..72 {
+            sim.set_cell(CellPos::new(x, y), water, None);
+        }
+    }
+    run(&mut f, &mut sim, 1600);
+    assert!(matches!(f.buildings.get(boiler).unwrap().steam, SteamState::Boiler { .. }));
+    assert!(
+        count_all(&sim, mat(&c, "crushed_magnetite")) > 0,
+        "a right-hand boiler feeds a left-facing steam machine across pipes created in reverse"
     );
 }
 
@@ -192,4 +261,97 @@ fn removing_steam_buildings_returns_stored_resources_once() {
     assert_eq!(count("charcoal"), 2);
     assert_eq!(count("water"), 2);
     assert_eq!(count("steam"), 3);
+}
+
+#[test]
+fn boiler_window_transfers_fuel_water_and_steam() {
+    let c = content();
+    let mut sim = world(&c, None);
+    let mut f = Factory::new(c.clone());
+    let boiler = f
+        .place(
+            kind(&c, "small_boiler"),
+            TilePos::new(3, 10),
+            0,
+            false,
+            &mut sim,
+        )
+        .unwrap();
+    let charcoal = mat(&c, "charcoal");
+    let water = mat(&c, "water");
+    let steam = mat(&c, "steam");
+    f.player.insert(&c, ItemRef::Material(charcoal), 12);
+    f.player.insert(&c, ItemRef::Material(water), 24);
+    for material in [charcoal, water] {
+        let tank = f
+            .player
+            .tanks
+            .iter()
+            .position(|t| t.material == Some(material))
+            .unwrap();
+        assert_eq!(
+            f.click_robot_slot(RobotSlot::Tank(tank), Click::Left, Some(boiler)),
+            Ok(true)
+        );
+    }
+    let loaded = f.building_view(boiler).unwrap();
+    assert_eq!(loaded.fuel.unwrap().units, 12);
+    assert_eq!(
+        loaded
+            .inputs
+            .iter()
+            .find(|b| b.item == ItemRef::Material(water))
+            .unwrap()
+            .count,
+        24
+    );
+
+    // Window clicks return the water buffer and fuel to robot tanks.
+    assert_eq!(
+        f.buildings
+            .take_input(&c, boiler, ItemRef::Material(water), 7),
+        7
+    );
+    assert_eq!(f.fuel_to_robot(boiler, Click::Right), Ok(6));
+    assert_eq!(
+        f.buildings.insert(&c, boiler, ItemRef::Material(water), 7),
+        7
+    );
+    f.buildings.get_mut(boiler).unwrap().steam = SteamState::Boiler {
+        fuel: Some(charcoal),
+        fuel_units: 6,
+        burn_ticks: 0,
+        fraction: 0.0,
+        water: 24.0,
+        steam: 5.0,
+    };
+    assert_eq!(
+        f.buildings
+            .take_output(&c, boiler, ItemRef::Material(steam), 2),
+        2
+    );
+    assert_eq!(f.building_view(boiler).unwrap().outputs[0].count, 3);
+}
+
+#[test]
+fn old_saves_initialize_new_steam_states() {
+    let c = content();
+    let mut sim = world(&c, None);
+    let mut f = Factory::new(c.clone());
+    let boiler = f
+        .place(
+            kind(&c, "small_boiler"),
+            TilePos::new(3, 10),
+            0,
+            false,
+            &mut sim,
+        )
+        .unwrap();
+    f.buildings.get_mut(boiler).unwrap().steam = SteamState::None;
+    let save = f.save();
+    f.load(save);
+    assert!(matches!(
+        f.buildings.get(boiler).unwrap().steam,
+        SteamState::Boiler { .. }
+    ));
 }

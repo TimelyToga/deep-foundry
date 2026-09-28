@@ -181,12 +181,11 @@ impl Buildings {
                             }
                         },
                     );
-                    if taken > 0 {
-                        if let Some(b) = self.at_index_mut(i)
-                            && let SteamState::Pipe(tank) = &mut b.steam
-                        {
-                            tank.add(water, taken as f64);
-                        }
+                    if taken > 0
+                        && let Some(b) = self.at_index_mut(i)
+                        && let SteamState::Pipe(tank) = &mut b.steam
+                    {
+                        tank.add(water, taken as f64);
                     }
                 }
             }
@@ -205,46 +204,46 @@ impl Buildings {
                 steam: steam_tank,
                 ..
             } = &mut b.steam
+                && (*burn_ticks > 0 || *fuel_units > 0)
+                && *steam_tank < TANK_CAPACITY
             {
-                if (*burn_ticks > 0 || *fuel_units > 0) && *steam_tank < TANK_CAPACITY {
-                    if *burn_ticks == 0 {
-                        *fuel_units -= 1;
-                        *burn_ticks = foundry_core::TICKS_PER_SECOND;
-                    }
-                    *burn_ticks = burn_ticks.saturating_sub(1);
-                    // Heat the boiler's actual body cells while fuel burns.
-                    let mut heat_sum = 0i64;
-                    let mut heat_cells = 0i64;
-                    for y in rect.y0..rect.y1 {
-                        for x in rect.x0..rect.x1 {
-                            let p = foundry_core::CellPos::new(x, y);
-                            let cell = sim.cell(p);
-                            if cell.material == body {
-                                sim.set_cell(
-                                    p,
-                                    cell.material,
-                                    Some((cell.temperature + 10).min(350)),
-                                );
-                                heat_sum += (cell.temperature + 10).min(350) as i64;
-                                heat_cells += 1;
-                            }
+                if *burn_ticks == 0 {
+                    *fuel_units -= 1;
+                    *burn_ticks = foundry_core::TICKS_PER_SECOND;
+                }
+                *burn_ticks = burn_ticks.saturating_sub(1);
+                // Heat the boiler's actual body cells while fuel burns.
+                let mut heat_sum = 0i64;
+                let mut heat_cells = 0i64;
+                for y in rect.y0..rect.y1 {
+                    for x in rect.x0..rect.x1 {
+                        let p = foundry_core::CellPos::new(x, y);
+                        let cell = sim.cell(p);
+                        if cell.material == body {
+                            sim.set_cell(
+                                p,
+                                cell.material,
+                                Some((cell.temperature + 10).min(350)),
+                            );
+                            heat_sum += (cell.temperature + 10).min(350) as i64;
+                            heat_cells += 1;
                         }
                     }
-                    let temperature = if heat_cells > 0 {
-                        (heat_sum / heat_cells) as i16
-                    } else {
-                        20
-                    };
-                    if temperature >= 100 && *water_tank > 0.0 {
-                        *fraction +=
-                            BOILER_STEAM_PER_SECOND / foundry_core::TICKS_PER_SECOND as f64;
-                        let produced = fraction.floor();
-                        if produced > 0.0 {
-                            let amount = produced.min(*water_tank).min(TANK_CAPACITY - *steam_tank);
-                            *water_tank -= amount;
-                            *steam_tank += amount;
-                            *fraction -= amount;
-                        }
+                }
+                let temperature = if heat_cells > 0 {
+                    (heat_sum / heat_cells) as i16
+                } else {
+                    20
+                };
+                if temperature >= 100 && *water_tank > 0.0 {
+                    *fraction +=
+                        BOILER_STEAM_PER_SECOND / foundry_core::TICKS_PER_SECOND as f64;
+                    let produced = fraction.floor();
+                    if produced > 0.0 {
+                        let amount = produced.min(*water_tank).min(TANK_CAPACITY - *steam_tank);
+                        *water_tank -= amount;
+                        *steam_tank += amount;
+                        *fraction -= amount;
                     }
                 }
             }
@@ -377,14 +376,15 @@ fn transfer_endpoint(
                     .min(TANK_CAPACITY - *amount);
                 *amount += tank.take(moved);
             }
-        } else if steam_in && tank.material == Some(steam) {
-            if let SteamState::Machine(machine) = &mut endpoint.steam {
-                let moved = tank
-                    .amount
-                    .min(PIPE_FLOW_PER_TICK)
-                    .min(machine.room_for(steam));
-                machine.add(steam, tank.take(moved));
-            }
+        } else if steam_in
+            && tank.material == Some(steam)
+            && let SteamState::Machine(machine) = &mut endpoint.steam
+        {
+            let moved = tank
+                .amount
+                .min(PIPE_FLOW_PER_TICK)
+                .min(machine.room_for(steam));
+            machine.add(steam, tank.take(moved));
         }
     }
 }
