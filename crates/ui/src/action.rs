@@ -134,6 +134,24 @@ pub enum SettingChange {
     ShowDebug(bool),
     /// A number setting of the simulation (`SimSetting::key`).
     Simulation { key: String, value: f32 },
+    /// Match keys by the character that they type (true) or by their position (false).
+    KeysByLetter(bool),
+    /// The player clicked a row of the Controls list (`KeyRow::id`): the next key press becomes
+    /// its key. The same id again stops waiting.
+    RebindKey(String),
+    /// All keys back to the defaults.
+    ResetKeys,
+}
+
+/// A key of the UI that the game read with its key bindings (`FoundryUi::press_key`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiKey {
+    Character,
+    Production,
+    Research,
+    Guide,
+    /// Quickbar slot 0 to 19.
+    Quickbar(usize),
 }
 
 /// Everything the player can ask for.

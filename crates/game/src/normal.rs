@@ -4,15 +4,15 @@
 //! The factory runs on the simulation thread (`factory_host.rs`). This module only reads its
 //! `FactoryFrame`s and sends `FactoryCommand`s.
 
-use crate::factory_host::{FactoryCommand, FactoryFrame, GameCommand, GhostRequest, PlayerInput, SlotGroup, SlotTarget};
-use crate::overlay::LocalGhost;
+use crate::construct::{BuildView, Construct, DragLine, LocalGhost, Mods, footprint_at, turned_size};
+use crate::factory_host::{FactoryCommand, FactoryFrame, GameCommand, GhostRequest, Placement, PlayerInput, SlotGroup, SlotTarget, Turn};
 use crate::player::MoveInput;
-use foundry_content::{Content, ItemRef, Stack};
-use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId, TILE_SIZE, TilePos};
-use foundry_factory::progress::{GoalView, TechState as FactoryTechState, TechView};
+use foundry_content::{Content, ItemRef, Phase, Stack};
+use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId, TechId};
+use foundry_factory::progress::{GoalView, LockReason, TechState as FactoryTechState, TechView};
 use foundry_factory::{Click, Status};
 use foundry_ui::{
-    BuildingSlot, BuildingSlots, BuildingView, ClickButton, CraftJobView, Delivery, GuideGoal, HoverView, MachineStatus, MaterialBuffer,
+    BuildingSlot, BuildingSlots, BuildingView, ClickButton, CraftJobView, Delivery, DigState, GuideGoal, HoverDetail, HoverView, MachineStatus, MaterialBuffer,
     MilestoneView, ResearchView, SlotClick, SlotRef, TankSlot, TechEntry, TechState, UiAction, UiModel, WindowKind,
 };
 use std::time::Instant;
@@ -36,8 +36,10 @@ pub struct NormalMode {
     /// The newest guide and technology lists (they are not in every frame).
     pub guide: Vec<GoalView>,
     pub techs: Vec<TechView>,
-    /// Rotation of the building in the hand (0 to 3).
-    pub rotation: u8,
+    /// Construction: rotation per building kind, drag line, remove button, alt mode.
+    pub build: Construct,
+    /// Messages for the player from the main thread (for example "cannot be flipped").
+    pub messages: Vec<String>,
     /// The material the spray tool puts out. `None`: the first tank that has material.
     pub spray: Option<MaterialId>,
     pub held: NormalHeld,
@@ -65,6 +67,13 @@ impl NormalMode {
             self.techs = t;
         }
         let notices = std::mem::take(&mut frame.notices);
+        // A drag line stops where the factory could not place.
+        if let (Some(d), Some(s)) = (self.build.drag.as_mut(), frame.drag_stop.as_ref())
+            && s.action == d.action
+            && d.stop.is_none()
+        {
+            d.stop = Some((s.at, s.reason.clone()));
+        }
         if frame.tick != self.frame.tick || self.frame_time.is_none() {
             self.prev_robot = self.frame.robot.map(|r| top_left(&r));
             self.frame_time = Some(now);
@@ -95,12 +104,24 @@ impl NormalMode {
     /// The ghost for the building in the hand, centered on the mouse cell.
     pub fn ghost(&self, content: &Content, mouse: CellPos) -> Option<LocalGhost> {
         let kind = self.building_in_hand(content)?;
-        let def = content.factory.building_def(kind);
-        let size = if self.rotation & 1 == 1 { (def.size.1, def.size.0) } else { def.size };
-        let t = TILE_SIZE as f32;
-        let x = (mouse.x as f32 / t - size.0 as f32 * 0.5 + 0.5).floor() as i32;
-        let y = (mouse.y as f32 / t - size.1 as f32 * 0.5 + 0.5).floor() as i32;
-        Some(LocalGhost { request: GhostRequest { kind, at: TilePos::new(x, y), rotation: self.rotation }, size })
+        let (rotation, flip) = self.build.transform(kind);
+        let size = turned_size(content.factory.building_def(kind), rotation);
+        let at = footprint_at(mouse, size);
+        Some(LocalGhost { request: GhostRequest { kind, at, rotation, flip }, size })
+    }
+
+    /// What the overlay draws for construction this frame. `mouse` is `None` when the mouse is
+    /// over the UI or outside the window.
+    pub fn build_view(&self, content: &Content, mouse: Option<CellPos>) -> BuildView {
+        let dragging = self.build.drag.is_some();
+        BuildView {
+            ghost: if dragging { None } else { mouse.and_then(|m| self.ghost(content, m)) },
+            drag: self.build.drag.clone(),
+            grid: self.building_in_hand(content).is_some() || dragging,
+            alt: self.build.alt,
+            mouse,
+            removing: self.build.removing.is_some(),
+        }
     }
 
     /// The material the spray tool puts out now.
@@ -126,8 +147,11 @@ impl NormalMode {
             dig: h.dig,
             spray: if h.spray { self.spray_material() } else { None },
             scan: h.scan,
-            ghost: self.ghost(content, mouse).map(|g| g.request),
+            // While a line is dragged, its buildings are placed at once; there is no ghost to check.
+            ghost: if self.build.drag.is_some() { None } else { self.ghost(content, mouse).map(|g| g.request) },
             view,
+            remove: self.build.removing,
+            alt: self.build.alt,
         };
         if self.last_input == Some(input) {
             return None;
@@ -151,25 +175,123 @@ impl NormalMode {
     }
 
     /// A mouse button went down in the world. Returns the commands.
-    /// Left: place the building in the hand, else open the building under the mouse, else dig.
-    /// Right: take the building under the mouse, else spray.
-    pub fn press(&mut self, content: &Content, left: bool, mouse: CellPos) -> Vec<GameCommand> {
+    /// - Left: Shift pastes the copied settings on the building under the mouse. Else a building
+    ///   in the hand is placed and a drag line starts. Else an empty hand opens the building under
+    ///   the mouse. Else the tool digs.
+    /// - Right: Shift copies the settings of the building under the mouse. Else, on a building,
+    ///   the remove button is down until the release. Else the tool sprays.
+    pub fn press(&mut self, content: &Content, left: bool, mouse: CellPos, mods: Mods) -> Vec<GameCommand> {
+        let mouse = self.aim_override.unwrap_or(mouse);
         let on_building = self.building_under(mouse);
         if left {
+            if mods.shift && on_building {
+                return vec![FactoryCommand::PasteSettings(mouse).into()];
+            }
             if let Some(g) = self.ghost(content, mouse) {
-                return vec![FactoryCommand::Place { kind: g.request.kind, at: g.request.at, rotation: g.request.rotation }.into()];
+                let r = g.request;
+                let action = self.build.next_action();
+                let mut line = DragLine::new(action, r.kind, content.factory.building_def(r.kind), r.at, r.rotation, r.flip);
+                line.recipe = self.build.recipe_for(r.kind);
+                let p = Placement { kind: r.kind, at: r.at, rotation: r.rotation, flip: r.flip, recipe: line.recipe, action };
+                self.build.drag = Some(line);
+                return vec![FactoryCommand::Place(p).into()];
             }
             if on_building && self.frame.cursor.is_none() {
                 return vec![FactoryCommand::OpenAt(mouse).into()];
             }
             self.held.dig = true;
         } else {
+            if mods.shift && on_building {
+                return vec![FactoryCommand::CopySettings(mouse).into()];
+            }
             if on_building {
-                return vec![FactoryCommand::RemoveAt(mouse).into()];
+                self.build.removing = Some(self.build.next_action());
+                return vec![];
             }
             self.held.spray = true;
         }
         vec![]
+    }
+
+    /// A mouse button went up (also over the UI).
+    pub fn release(&mut self, left: bool) {
+        if left {
+            self.held.dig = false;
+            self.build.drag = None;
+        } else {
+            self.held.spray = false;
+            self.build.removing = None;
+        }
+    }
+
+    /// Each frame: grow the drag line to the mouse. Returns the placements (and the turn of the
+    /// first belt when the drag direction is known).
+    pub fn update(&mut self, mouse: CellPos) -> Vec<GameCommand> {
+        let mouse = self.aim_override.unwrap_or(mouse);
+        let Some(d) = self.build.drag.as_mut() else { return vec![] };
+        let step = d.advance(footprint_at(mouse, d.size));
+        let (kind, start, action, rotation, flip, recipe) = (d.kind, d.start, d.action, d.rotation, d.flip, d.recipe);
+        let mut out: Vec<GameCommand> = vec![];
+        if let Some((r, f)) = step.turn_start {
+            // Belts face the drag direction; the next belt in the hand keeps it.
+            self.build.set_transform(kind, r, f);
+            out.push(FactoryCommand::Turn { at: start.origin(), turn: Turn::To { rotation: r, flip: f }, action }.into());
+        }
+        for at in step.place {
+            out.push(FactoryCommand::Place(Placement { kind, at, rotation, flip, recipe, action }).into());
+        }
+        out
+    }
+
+    /// R (Shift + R: `back`): turn the building in the hand, else the building under the mouse.
+    pub fn rotate(&mut self, content: &Content, mouse: CellPos, back: bool) -> Vec<GameCommand> {
+        if let Some(kind) = self.building_in_hand(content) {
+            self.build.rotate(content, kind, back);
+            return vec![];
+        }
+        let mouse = self.aim_override.unwrap_or(mouse);
+        if self.building_under(mouse) {
+            let turn = if back { Turn::CounterClockwise } else { Turn::Clockwise };
+            return vec![FactoryCommand::Turn { at: mouse, turn, action: self.build.next_action() }.into()];
+        }
+        vec![]
+    }
+
+    /// F with a building in the hand: flip it. Returns false with no building in the hand (then F
+    /// is the scan key).
+    pub fn flip(&mut self, content: &Content) -> bool {
+        let Some(kind) = self.building_in_hand(content) else { return false };
+        if !self.build.flip(content, kind) {
+            self.messages.push(format!("{} cannot be flipped", content.factory.building_def(kind).name));
+        }
+        true
+    }
+
+    /// Q, the pipette (as in Factorio). On a building: take that building kind from the
+    /// inventory into the hand, with the building's rotation, flip and recipe. Elsewhere: empty
+    /// the hand.
+    pub fn pipette(&mut self, content: &Content, mouse: CellPos) -> Vec<GameCommand> {
+        let mouse = self.aim_override.unwrap_or(mouse);
+        let mut out = vec![];
+        match self.frame.hover.as_ref().filter(|h| h.rect.contains(mouse)) {
+            Some(h) => {
+                let def = content.factory.building_def(h.kind);
+                self.build.set_transform(h.kind, h.rotation, h.flip);
+                self.build.hand_recipe = h.recipe.map(|r| (h.kind, r));
+                self.spray = None;
+                out.push(FactoryCommand::PickToCursor(def.part).into());
+            }
+            None => {
+                self.action(&UiAction::ClearHand, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Ctrl + Z and Ctrl + Y.
+    pub fn undo(&mut self, redo: bool) -> Vec<GameCommand> {
+        self.build.drag = None;
+        vec![if redo { FactoryCommand::Redo } else { FactoryCommand::Undo }.into()]
     }
 
     /// Turn a UI action into factory commands. Returns false if it is not a factory action.
@@ -200,6 +322,7 @@ impl NormalMode {
             }
             UiAction::SelectHotbar(i) => match self.frame.hotbar.get(i).copied().flatten() {
                 Some(ItemRef::Part(p)) => {
+                    self.build.hand_recipe = None;
                     self.spray = None;
                     out.push(FactoryCommand::PickToCursor(p).into());
                 }
@@ -212,6 +335,7 @@ impl NormalMode {
             UiAction::SetHotbar { index, item } => out.push(FactoryCommand::SetHotbar { index, item }.into()),
             UiAction::ClearHand => {
                 self.spray = None;
+                self.build.hand_recipe = None;
                 out.push(FactoryCommand::ClearCursor.into());
             }
             UiAction::Craft { recipe, count } => out.push(FactoryCommand::Craft { recipe, count }.into()),
@@ -264,17 +388,43 @@ impl NormalMode {
         model.discovery_points = f.discovery_points;
         model.techs.clear();
         model.techs.extend(self.techs.iter().map(tech_entry));
+        // Guide texts name keys as `{key:ID}`: the player's keys go there.
+        let goals: Vec<GuideGoal> = self
+            .guide
+            .iter()
+            .map(|g| GuideGoal {
+                id: g.id.clone(),
+                tier: g.tier,
+                title: g.title.clone(),
+                text: model.settings.with_keys(&g.text),
+                done: g.done,
+                count: g.count,
+                reward_points: g.reward_points,
+            })
+            .collect();
         model.guide.clear();
-        model.guide.extend(self.guide.iter().map(|g| GuideGoal {
-            id: g.id.clone(),
-            tier: g.tier,
-            title: g.title.clone(),
-            text: g.text.clone(),
-            done: g.done,
-            count: g.count,
-            reward_points: g.reward_points,
-        }));
+        model.guide.extend(goals);
         model.building = f.building.as_ref().map(|b| building_view(&content, b, f.milestone.as_ref()));
+    }
+
+    /// More about the thing under the mouse for the hover box: the dig rules and the discovery of
+    /// a cell, or the reason and hit points of a building.
+    pub fn hover_detail(&self, content: &Content, hover: Option<&HoverView>) -> HoverDetail {
+        let f = &self.frame;
+        match hover {
+            Some(HoverView::Cell { material, .. }) => HoverDetail {
+                dig: dig_state(content, *material, f.dig_limit, &f.finished_techs),
+                undiscovered: !material.is_air()
+                    && content.materials.phase[material.index()] != Phase::Empty
+                    && !f.discovered.contains(material),
+                ..Default::default()
+            },
+            Some(HoverView::Building { id, .. }) => match f.hover.as_ref().filter(|h| h.id == *id) {
+                Some(h) => HoverDetail { reason: h.reason.clone(), hit_points: Some(h.hit_points), ..Default::default() },
+                None => HoverDetail::default(),
+            },
+            None => HoverDetail::default(),
+        }
     }
 
     /// The hover view for the building under the mouse, if there is one.
@@ -324,14 +474,23 @@ pub fn machine_status(s: Status) -> MachineStatus {
     }
 }
 
-fn tech_entry(t: &TechView) -> TechEntry {
+pub(crate) fn tech_entry(t: &TechView) -> TechEntry {
     let state = match t.state {
         FactoryTechState::Done => TechState::Done,
         FactoryTechState::Researching { .. } => TechState::Researching,
         FactoryTechState::Available => TechState::Available,
         FactoryTechState::Locked(_) => TechState::Locked,
     };
-    TechEntry { id: t.id, state, progress: t.progress, reasons: t.reasons.clone(), queue_position: t.queue_position }
+    // Locked by earlier technologies (and not by the tier): the chain can be queued.
+    let can_queue = match &t.state {
+        FactoryTechState::Locked(r) => {
+            t.queue_position.is_none()
+                && r.iter().any(|x| matches!(x, LockReason::NeedsTech(_)))
+                && !r.iter().any(|x| matches!(x, LockReason::NeedsTier { .. }))
+        }
+        _ => false,
+    };
+    TechEntry { id: t.id, state, progress: t.progress, reasons: t.reasons.clone(), queue_position: t.queue_position, can_queue }
 }
 
 /// The UI building window from the factory building view.
@@ -393,33 +552,37 @@ fn building_view(content: &Content, b: &foundry_factory::BuildingView, milestone
     }
 }
 
-/// The keys of the normal mode, for the settings screen.
-pub fn key_bindings() -> Vec<(String, String)> {
-    [
-        ("Move left / right", "A / D"),
-        ("Jump, swim up", "W or Space"),
-        ("Dig (hold)", "Left mouse"),
-        ("Spray material from the tank (hold)", "Right mouse"),
-        ("Choose the spray material", "Click a tank slot"),
-        ("Scan the material under the mouse", "F (hold)"),
-        ("Place the building in the hand", "Left mouse"),
-        ("Rotate the building in the hand", "R"),
-        ("Open a building", "Left mouse on it (empty hand)"),
-        ("Take a building back", "Right mouse on it"),
-        ("Empty the hand", "Q"),
-        ("Character screen", "E"),
-        ("Research", "T"),
-        ("Guide", "G"),
-        ("Production statistics", "P"),
-        ("Quickbar slot 1-10", "1 - 0"),
-        ("Quickbar slot 11-20", "Shift + 1 - 0"),
-        ("Pause menu / close window", "Esc"),
-        ("Zoom", "Mouse wheel"),
-        ("Debug panel", "F3"),
-    ]
-    .iter()
-    .map(|(a, k)| (a.to_string(), k.to_string()))
-    .collect()
+/// Can the robot dig a material now, by the dig rules of `tools::dig` (for the hover box).
+/// `None` for air, gas and fire. `limit` is the hardest material the drill head digs; `done` the
+/// finished technologies (the next drill head technology is named when it is too hard).
+pub fn dig_state(content: &Content, m: MaterialId, limit: u8, done: &[TechId]) -> Option<DigState> {
+    let phase = content.materials.phase[m.index()];
+    if m.is_air() || matches!(phase, Phase::Gas | Phase::Fire | Phase::Empty) {
+        return None;
+    }
+    let h = content.materials.hardness[m.index()];
+    if h == u8::MAX {
+        return Some(DigState::Never);
+    }
+    if h <= limit {
+        return Some(DigState::CanDig);
+    }
+    let levels = &crate::tools::DIG_HARDNESS;
+    let (Some(need), Some(have)) = (levels.iter().position(|&x| x >= h), levels.iter().position(|&x| x >= limit)) else {
+        return Some(DigState::Never);
+    };
+    // The drill head technologies that are not done yet, in data order; the one that reaches the
+    // needed level.
+    let techs: Vec<&str> = content
+        .factory
+        .techs
+        .iter()
+        .enumerate()
+        .filter(|(i, t)| t.effects.iter().any(|(e, _)| e == "dig_hardness") && !done.contains(&TechId(*i as u16)))
+        .map(|(_, t)| t.name.as_str())
+        .collect();
+    let needs = techs.get(need.saturating_sub(have + 1)).map_or("a better drill head".to_string(), |n| n.to_string());
+    Some(DigState::TooHard { needs })
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! The HUD: quickbar with hull and heat bars, tank summary, crafting queue, research box,
-//! guide tracker, entity info panel and alerts.
+//! guide tracker, the hover box (top center) and alerts.
 
 use super::Cx;
 use crate::action::{UiAction, WindowKind};
@@ -7,7 +7,7 @@ use crate::crafting::cancel_count;
 use crate::format;
 use crate::item;
 use foundry_content::ItemRef;
-use crate::model::{AlertKind, GuideGoal, HoverView, UiModel};
+use crate::model::{AlertKind, DigState, GuideGoal, HoverView, UiModel};
 use crate::theme::{self, color, font, font_bold, font_regular, rgba, size, text};
 use crate::tooltip::Tip;
 use crate::widgets::{self, SlotContent, SlotLook};
@@ -25,8 +25,8 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
     crafting_queue(cx, screen);
     let left_top = research(cx, st, screen);
     guide_tracker(cx, st, screen, left_top);
-    let top = perf_box(cx, screen);
-    entity_info(cx, screen, top);
+    perf_box(cx, screen);
+    hover_box(cx, screen);
     alerts(cx, screen);
 }
 
@@ -322,13 +322,13 @@ const GUIDE_PAD: f32 = 10.0;
 const GUIDE_GOALS: usize = 2;
 
 /// The height of the guide tracker: the heading, and a title line and the text for each goal.
-fn tracker_height(ctx: &egui::Context, goals: &[&GuideGoal]) -> f32 {
+fn tracker_height(ctx: &egui::Context, settings: &crate::model::Settings, goals: &[&GuideGoal]) -> f32 {
     let text_w = GUIDE_W - 2.0 * GUIDE_PAD;
     let mut h = GUIDE_PAD + 20.0;
     for g in goals {
         h += 22.0;
         if !g.text.is_empty() {
-            h += widgets::text_height(ctx, &g.text, font_regular(text::SMALL), text_w);
+            h += widgets::text_height(ctx, &settings.with_keys(&g.text), font_regular(text::SMALL), text_w);
         }
         h += 6.0;
     }
@@ -345,7 +345,7 @@ fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
     if goals.is_empty() {
         return;
     }
-    let h = tracker_height(cx.ctx, &goals);
+    let h = tracker_height(cx.ctx, &model.settings, &goals);
     let rect = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(GUIDE_W, h));
     panel_area(cx.ctx, "guide", rect, |ui| {
         let p = ui.painter().clone();
@@ -359,7 +359,8 @@ fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
         let text_w = right - x;
         let mut y = rect.top() + GUIDE_PAD;
         p.text(pos2(x, y + 8.0), Align2::LEFT_CENTER, "Guide", font_bold(text::SMALL), color::HEADING);
-        p.text(pos2(right, y + 8.0), Align2::RIGHT_CENTER, "G: all goals", font_regular(text::SMALL), color::TEXT_FAINT);
+        let all = format!("{}: all goals", model.settings.key("guide"));
+        p.text(pos2(right, y + 8.0), Align2::RIGHT_CENTER, &all, font_regular(text::SMALL), color::TEXT_FAINT);
         y += 20.0;
         for g in &goals {
             let cy = y + 10.0;
@@ -371,12 +372,14 @@ fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
             p.with_clip_rect(clip).galley(pos2(x, cy - title.size().y * 0.5), title, color::TEXT);
             y += 22.0;
             if !g.text.is_empty() {
-                y = widgets::wrapped(&p, pos2(x, y), &g.text, font_regular(text::SMALL), color::TEXT_DIM, text_w).bottom();
+                let text = model.settings.with_keys(&g.text);
+                y = widgets::wrapped(&p, pos2(x, y), &text, font_regular(text::SMALL), color::TEXT_DIM, text_w).bottom();
             }
             y += 6.0;
         }
         if resp.hovered() {
-            cx.tip(Tip::Text { title: "Guide".into(), body: "Goals for each tier, with hints. Click to see all goals (G).".into() });
+            let body = format!("Goals for each tier, with hints. Click to see all goals ({}).", model.settings.key("guide"));
+            cx.tip(Tip::Text { title: "Guide".into(), body });
         }
         if resp.clicked() {
             st.toggle(WindowKind::Guide, cx.actions);
@@ -384,75 +387,150 @@ fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
     });
 }
 
-fn info_line(p: &Painter, y: &mut f32, x: f32, w: f32, label: &str, value: &str, vc: Color32) {
-    p.text(pos2(x, *y), Align2::LEFT_TOP, label, font_regular(text::BODY), color::TEXT_DIM);
-    p.text(pos2(x + w, *y), Align2::RIGHT_TOP, value, font(text::BODY), vc);
-    *y += 21.0;
+/// Width of the hover box at the top center.
+const HOVER_W: f32 = 380.0;
+const HOVER_LINE: f32 = 19.0;
+const HOVER_TITLE: f32 = 34.0;
+const HOVER_PAD: f32 = 8.0;
+
+/// One line of the hover box.
+struct HoverLine {
+    text: String,
+    color: Color32,
+    /// A status dot before the text.
+    dot: Option<Color32>,
+    /// A progress bar under the text (0 to 1).
+    bar: Option<f32>,
 }
 
-fn entity_info(cx: &mut Cx, screen: Rect, top: f32) {
-    let Some(hover) = &cx.model.hover else { return };
-    let width = 300.0;
-    let (lines, has_bar) = match hover {
-        HoverView::Cell { .. } => (4, false),
-        HoverView::Building { recipe, temperature, power_w, .. } => {
-            (1 + recipe.is_some() as usize + temperature.is_some() as usize + power_w.is_some() as usize, recipe.is_some())
+impl HoverLine {
+    fn new(text: impl Into<String>, color: Color32) -> Self {
+        Self { text: text.into(), color, dot: None, bar: None }
+    }
+}
+
+/// The name of a phase for the hover box.
+fn phase_name(p: foundry_content::Phase) -> &'static str {
+    use foundry_content::Phase;
+    match p {
+        Phase::Empty => "Empty",
+        Phase::Solid => "Solid",
+        Phase::Powder => "Powder",
+        Phase::Liquid => "Liquid",
+        Phase::Gas => "Gas",
+        _ => "Fire",
+    }
+}
+
+/// The lines under the title of the hover box (as in the Minecraft mod WAILA).
+fn hover_lines(model: &UiModel, hover: &HoverView) -> Vec<HoverLine> {
+    let content = &*model.content;
+    let d = &model.hover_detail;
+    let mut out = vec![];
+    match hover {
+        HoverView::Cell { material, temperature, .. } => {
+            let m = material.index();
+            let phase = content.materials.phase.get(m).copied().unwrap_or_default();
+            let tc = if *temperature > 60.0 { temp_color(*temperature) } else { color::TEXT };
+            out.push(HoverLine::new(format!("{}  ·  {}", phase_name(phase), format::celsius(*temperature)), tc));
+            match &d.dig {
+                Some(DigState::CanDig) => out.push(HoverLine::new("Can dig", color::GREEN)),
+                Some(DigState::TooHard { needs }) => out.push(HoverLine::new(format!("Too hard: needs {needs}"), color::RED_TEXT)),
+                Some(DigState::Never) => out.push(HoverLine::new("Cannot be dug", color::TEXT_DIM)),
+                None => {}
+            }
+            if let Some(b) = content.materials.broken_into.get(m).filter(|b| b.index() != m && !b.is_air()) {
+                out.push(HoverLine::new(format!("Breaks into {}", content.materials.names[b.index()]), color::TEXT_DIM));
+            }
+            if d.undiscovered {
+                out.push(HoverLine::new(format!("Not discovered: scan with {} (hold)", model.settings.key("scan")), color::ORANGE));
+            }
         }
-    };
-    let h = 58.0 + lines as f32 * 21.0 + if has_bar { 22.0 } else { 0.0 } + 8.0;
-    let rect = Rect::from_min_size(pos2(screen.right() - MARGIN - width, top), vec2(width, h));
+        HoverView::Building { status, recipe, progress, temperature, .. } => {
+            let label = status.label();
+            // The reason often starts with the status ("Output full: take out ..."): then it is the whole line.
+            let text = if d.reason.is_empty() {
+                label.to_string()
+            } else if d.reason.to_lowercase().starts_with(&label.to_lowercase()) {
+                d.reason.clone()
+            } else {
+                format!("{label}: {}", d.reason)
+            };
+            out.push(HoverLine { dot: Some(widgets::status_color(status.color())), ..HoverLine::new(text, color::TEXT) });
+            if let Some(rid) = recipe {
+                let name = item::recipe(content, *rid).map(|r| r.name.as_str()).unwrap_or("?");
+                out.push(HoverLine { bar: Some(*progress), ..HoverLine::new(format!("Recipe: {name}"), color::TEXT) });
+            }
+            let mut hp = d.hit_points.map(|(h, m)| format!("Hit points {h} / {m}")).unwrap_or_default();
+            if let Some(t) = temperature {
+                if !hp.is_empty() {
+                    hp.push_str("  ·  ");
+                }
+                hp.push_str(&format::celsius(*t));
+            }
+            if !hp.is_empty() {
+                out.push(HoverLine::new(hp, color::TEXT_DIM));
+            }
+        }
+    }
+    out
+}
+
+/// Where the hover box is: at the top center, right of the boxes on the left side.
+fn hover_rect(model: &UiModel, screen: Rect) -> Option<Rect> {
+    let hover = model.hover.as_ref()?;
+    // Nothing to tell about air.
+    if matches!(hover, HoverView::Cell { material, .. } if material.is_air()) {
+        return None;
+    }
+    let lines = hover_lines(model, hover);
+    let bars = lines.iter().filter(|l| l.bar.is_some()).count() as f32;
+    let h = HOVER_PAD * 2.0 + HOVER_TITLE + lines.len() as f32 * HOVER_LINE + bars * 8.0;
+    let left_column = screen.left() + MARGIN + GUIDE_W.max(330.0) + MARGIN;
+    let x = (screen.center().x - HOVER_W * 0.5).max(left_column);
+    Some(Rect::from_min_size(pos2(x, screen.top() + MARGIN), vec2(HOVER_W, h)))
+}
+
+/// The hover box for the cell or the building under the mouse.
+fn hover_box(cx: &mut Cx, screen: Rect) {
     let model = cx.model;
+    let Some(hover) = &model.hover else { return };
+    let Some(rect) = hover_rect(model, screen) else { return };
     let content = &*model.content;
     let atlas = cx.atlas;
-    widgets::area(cx.ctx, Id::new(("hud", "entity")), Order::Middle, rect, |ui| {
+    let lines = hover_lines(model, hover);
+    widgets::area(cx.ctx, Id::new(("hud", "hover")), Order::Middle, rect, |ui| {
         let p = ui.painter().clone();
         widgets::window_frame(&p, rect);
-        let inner = rect.shrink(10.0);
-        let (it, title) = match hover {
-            HoverView::Cell { material, .. } => (Some(ItemRef::Material(*material)), item::name(content, ItemRef::Material(*material))),
-            HoverView::Building { kind, .. } => (item::building_item(content, *kind), item::building_name(content, *kind)),
+        let inner = rect.shrink(HOVER_PAD);
+        let (it, title, kind) = match hover {
+            HoverView::Cell { material, .. } => {
+                let it = ItemRef::Material(*material);
+                (Some(it), item::name(content, it), "Material")
+            }
+            HoverView::Building { kind, .. } => (item::building_item(content, *kind), item::building_name(content, *kind), "Building"),
         };
-        let icon = Rect::from_min_size(inner.min, Vec2::splat(40.0));
+        let icon = Rect::from_min_size(inner.min, Vec2::splat(HOVER_TITLE - 4.0));
         widgets::deep(&p, icon);
         if let Some(it) = it {
-            atlas.paint(&p, it, icon.shrink(4.0), Color32::WHITE);
+            atlas.paint(&p, it, icon.shrink(3.0), Color32::WHITE);
         }
-        p.text(pos2(icon.right() + 10.0, inner.top() + 1.0), Align2::LEFT_TOP, title, font_bold(text::BODY + 1.0), color::HEADING);
-        let kind_label = it.map(|x| item::kind(content, x).label()).unwrap_or("");
-        p.text(pos2(icon.right() + 10.0, inner.top() + 21.0), Align2::LEFT_TOP, kind_label, font_regular(text::SMALL), color::TEXT_DIM);
-        let mut y = icon.bottom() + 8.0;
-        let x = inner.left();
-        let w = inner.width();
-        match hover {
-            HoverView::Cell { pos, temperature, .. } => {
-                let tc = temp_color(*temperature);
-                info_line(&p, &mut y, x, w, "Temperature", &format::celsius(*temperature), tc);
-                if let Some(it) = it {
-                    for f in item::facts(content, it).iter().take(2) {
-                        info_line(&p, &mut y, x, w, &f.label, &f.value, color::TEXT);
-                    }
-                }
-                info_line(&p, &mut y, x, w, "Position", &format!("{}, {}", pos.x, pos.y), color::TEXT_DIM);
+        let tx = icon.right() + 10.0;
+        p.text(pos2(tx, icon.center().y), Align2::LEFT_CENTER, title, font_bold(text::BODY + 1.0), color::HEADING);
+        p.text(pos2(inner.right(), icon.center().y), Align2::RIGHT_CENTER, kind, font_regular(text::SMALL), color::TEXT_FAINT);
+        let mut y = inner.top() + HOVER_TITLE;
+        let clip = p.with_clip_rect(inner);
+        for l in &lines {
+            let mut x = inner.left() + 2.0;
+            if let Some(c) = l.dot {
+                widgets::status_dot(&clip, pos2(x + 5.0, y + HOVER_LINE * 0.5), c);
+                x += 16.0;
             }
-            HoverView::Building { kind, status, recipe, progress, temperature, power_w, .. } => {
-                let sc = widgets::status_color(status.color());
-                widgets::status_dot(&p, pos2(x + 6.0, y + 10.0), sc);
-                p.text(pos2(x + 18.0, y), Align2::LEFT_TOP, status.label(), font(text::BODY), color::TEXT);
-                y += 21.0;
-                if let Some(rid) = recipe {
-                    let name = item::recipe(content, *rid).map(|r| r.name.as_str()).unwrap_or("?");
-                    info_line(&p, &mut y, x, w, "Recipe", name, color::TEXT);
-                    let bar = Rect::from_min_size(pos2(x, y + 1.0), vec2(w, 14.0));
-                    widgets::bar(&p, bar, *progress, color::PROGRESS, None);
-                    y += 22.0;
-                }
-                if let Some(t) = temperature {
-                    let max = content.factory.buildings.get(kind.0 as usize).map(|b| b.max_temp as f32).unwrap_or(200.0);
-                    info_line(&p, &mut y, x, w, "Temperature", &format!("{} / {}", format::celsius(*t), format::celsius(max)), widgets::danger_color(t / max.max(1.0)));
-                }
-                if let Some(pw) = power_w {
-                    info_line(&p, &mut y, x, w, "Power", &format::watts(*pw), color::TEXT);
-                }
+            clip.text(pos2(x, y + HOVER_LINE * 0.5), Align2::LEFT_CENTER, &l.text, font_regular(text::BODY), l.color);
+            y += HOVER_LINE;
+            if let Some(v) = l.bar {
+                widgets::bar(&clip, Rect::from_min_size(pos2(inner.left() + 2.0, y), vec2(inner.width() - 4.0, 5.0)), v, color::PROGRESS, None);
+                y += 8.0;
             }
         }
     });
@@ -538,7 +616,9 @@ pub(crate) fn overlay_text(cx: &mut Cx) {
     }
     if !msg.is_empty() {
         let galley = painter.layout_no_wrap(msg.clone(), font_bold(text::BODY + 1.0), color::TEXT);
-        let r = Rect::from_center_size(pos2(screen.center().x, screen.top() + 40.0), galley.size() + vec2(28.0, 12.0));
+        // Under the hover box, so the message does not cover it.
+        let top = hover_rect(cx.model, screen).filter(|_| cx.model.state == crate::model::GameState::Playing).map_or(screen.top() + 40.0, |r| r.bottom() + 24.0);
+        let r = Rect::from_center_size(pos2(screen.center().x, top), galley.size() + vec2(28.0, 12.0));
         painter.rect_filled(r, CornerRadius::same(3), Color32::from_black_alpha(170));
         painter.galley(r.center() - galley.size() * 0.5, galley, color::TEXT);
     }

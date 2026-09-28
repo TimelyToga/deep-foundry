@@ -38,7 +38,7 @@
         id: "t0_copper_ore",
         tier: 0,
         title: "Find copper ore",
-        text: "Malachite is a green copper ore near the surface. Dig some and hold F over it to scan it. Each new material you scan gives a discovery point.",
+        text: "Malachite is a green copper ore near the surface. Dig some and hold {key:scan} over it to scan it. Each new material you scan gives a discovery point.",
         condition: Discover("malachite"),
         reward_points: 1,
     ),

@@ -94,15 +94,16 @@ fn brush_panel(ui: &mut Ui, cx: &mut Cx, r: Rect) {
     let radius = model.sandbox.map(|s| s.brush_radius).unwrap_or(0);
     p.text(pos2(x, y), Align2::LEFT_TOP, format!("Size: {} cells across", radius * 2 + 1), crate::theme::font(text::BODY), color::TEXT);
     y += 30.0;
+    let k = |id: &str| model.settings.first_key(id).to_string();
     let lines = [
-        ("Left mouse", "paint"),
-        ("Right mouse", "erase"),
-        ("[  and  ]", "brush size"),
-        ("1 - 0", "quickbar materials"),
-        ("Q", "empty the hand"),
-        ("Mouse wheel", "zoom"),
-        ("W A S D", "move the view"),
-        ("Space", "pause the simulation"),
+        ("Left mouse".to_string(), "paint"),
+        ("Right mouse".to_string(), "erase"),
+        (format!("{}  and  {}", k("brush_smaller"), k("brush_larger")), "brush size"),
+        (format!("{} - {}", k("quickbar1"), k("quickbar10")), "quickbar materials"),
+        (k("pipette"), "empty the hand"),
+        ("Mouse wheel".to_string(), "zoom"),
+        (format!("{} {} {} {}", k("camera_up"), k("camera_left"), k("camera_down"), k("camera_right")), "move the view"),
+        (k("pause"), "pause the simulation"),
     ];
     for (key, what) in lines {
         p.text(pos2(x, y), Align2::LEFT_TOP, key, crate::theme::font_bold(text::BODY), color::HEADING);
