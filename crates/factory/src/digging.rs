@@ -205,10 +205,10 @@ mod tests {
         let c = content();
         let keep = kept(&c);
         println!("Kept by default ({}): {}", keep.len(), keep.join(", "));
-        for id in ["clay", "sand", "wood", "ash", "raw_malachite", "raw_cassiterite", "raw_coal", "raw_magnetite", "raw_limestone", "raw_chalcopyrite", "charcoal"] {
+        for id in ["clay", "sand", "wood", "ash", "water", "raw_malachite", "raw_cassiterite", "raw_coal", "raw_magnetite", "raw_limestone", "raw_chalcopyrite", "charcoal"] {
             assert!(keep.contains(&id), "{id} should be kept: {keep:?}");
         }
-        for id in ["dirt", "gravel", "stone", "snow", "leaves", "water"] {
+        for id in ["dirt", "gravel", "stone", "snow", "leaves"] {
             assert!(!keep.contains(&id), "{id} should be dropped: {keep:?}");
         }
     }

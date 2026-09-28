@@ -90,8 +90,8 @@ fn only_buildings_with_a_mirror_image_flip() {
     let def = |id: &str| c.factory.building_def(c.factory.building(id).unwrap());
     // The crusher has a pipe on the left: its mirror image differs.
     assert!(can_flip(def("steam_crusher")));
-    // A crate has ports only up and down; a wall has none; belts turn with R.
-    assert!(!can_flip(def("crate")));
+    // A crate's bulk input is on the left, so its mirror image moves the port to the right.
+    assert!(can_flip(def("crate")));
     assert!(!can_flip(def("wood_wall")));
     assert!(!can_flip(def("wood_belt")));
 }
@@ -106,7 +106,7 @@ fn each_building_kind_keeps_its_rotation() {
     assert!(b.flip(&c, crusher));
     assert_eq!(b.transform(crusher), (2, true));
     assert_eq!(b.transform(workbench), (0, false), "another kind has its own rotation");
-    assert!(!b.flip(&c, c.factory.building("crate").unwrap()));
+    assert!(b.flip(&c, c.factory.building("crate").unwrap()));
     // The pipette recipe is only for its own kind.
     let r = foundry_core::RecipeId(0);
     b.hand_recipe = Some((crusher, r));
