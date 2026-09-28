@@ -16,7 +16,8 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 | Work | Where | Merge notes |
 |---|---|---|
 | Liquids: splash, fast tunable settling, particles | `.claude/worktrees/liquids` (lead/liquids) | Merge first. Touches movement.rs, particles.rs, lib.rs tests, liquid data. |
-| F2a part 2 (Opus): construction UX (ghost ports, drag lines, rotate, pipette, drag remove, undo/redo, copy settings, reach, alt mode) + 3 UI fixes | agent worktree (afd1977) | crates/game, new render files. |
+| Play-test fixes (Opus): save-menu bug, bigger tanks, crates take bulk, Factorio transfers, tank trash, Hub take-back, dig discovers, guide goal checks | agent worktree (ac372d6) | crates/factory, crates/ui, small factory_host/app edits. |
+| F2a part 2 (Opus): construction UX + key bindings (by position default, by-letter switch, Controls page, saved settings; user types Dvorak) + WAILA hover box (ghost ports, drag lines, rotate, pipette, drag remove, undo/redo, copy settings, reach, alt mode) + 3 UI fixes | agent worktree (afd1977) | crates/game, new render files. |
 
 ## Next
 1. Merge as they finish: liquids (told to port onto the new schedule.rs/save v2), construction UX.
