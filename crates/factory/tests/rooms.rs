@@ -165,12 +165,12 @@ fn a_kiln_makes_charcoal_from_wood() {
     let (c, mut sim, mut f) = setup();
     let id = kiln_plan().build(&mut f, &mut sim);
     f.set_recipe(id, c.factory.recipe("charcoal")).unwrap();
-    // Wood is a recipe input and a fuel: the input buffer (16 crafts of 32) fills first, then the
-    // fuel slot.
+    // Wood is a recipe input and a fuel: the input buffer (16 crafts of 32) and the fuel slot
+    // (400) fill to the same part of their size.
     let wood = item(&c, "wood");
-    assert_eq!(f.buildings.insert(&c, id, wood, 512 + 300), 812);
+    assert_eq!(f.buildings.insert(&c, id, wood, 456), 456);
     let v = f.building_view(id).unwrap();
-    assert_eq!((v.inputs[0].count, v.fuel.unwrap().units), (512, 300));
+    assert_eq!((v.inputs[0].count, v.fuel.unwrap().units), (256, 200));
     let (ticks, hottest) = run_until(&mut f, &mut sim, id, 60 * 60, |f, _| output_count(f, id, "charcoal") >= 48);
     println!("charcoal after {ticks} ticks, hottest {hottest} °C");
     assert!(output_count(&f, id, "charcoal") >= 48, "{:?}", f.building_view(id));
@@ -323,7 +323,8 @@ fn a_coke_oven_makes_coke_and_creosote() {
     assert!(f.buildings.room(id).unwrap().is_valid(), "{:?}", f.buildings.room(id).unwrap().problem);
     f.set_recipe(id, c.factory.recipe("coke")).unwrap();
     let coal = item(&c, "raw_coal");
-    // Coal is the recipe input and also a fuel: the input buffer (4 crafts of 32) fills first.
+    // Coal is the recipe input and also a fuel: it fills the input buffer (4 crafts of 32) and
+    // the fuel slot.
     assert_eq!(f.buildings.insert(&c, id, coal, 128 + 400), 528);
     let creosote = mat(&c, "creosote");
     let (ticks, hottest) = run_until(&mut f, &mut sim, id, 60 * 90, |f, sim| {

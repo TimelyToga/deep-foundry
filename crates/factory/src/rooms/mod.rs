@@ -58,7 +58,7 @@ pub use check::{Problem, is_room_part};
 use crate::buildings::{Building, Buildings, Logic};
 use crate::machines::{self, Conditions, Status};
 use crate::views::BuildingView;
-use foundry_content::{Building as BuildingDef, Content, Side};
+use foundry_content::{Building as BuildingDef, Content, ItemRef, Side};
 use foundry_core::{BuildingId, CellPos, TilePos};
 use foundry_sim::Simulation;
 use serde::{Deserialize, Serialize};
@@ -215,6 +215,25 @@ pub fn wall_names(content: &Content, controller: &BuildingDef) -> String {
         .map(|d| d.name.as_str())
         .collect();
     names.join(" or ")
+}
+
+/// How many of `n` units of an item go into the recipe input first, when the item is both a
+/// recipe input and a fuel of the machine (wood in a kiln that makes charcoal, coal in a coke
+/// oven). The input buffer and the fuel slot then fill to about the same part of their size, so
+/// the fire gets fuel too. For other items: all `n`.
+pub fn input_share(m: &machines::Machine, content: &Content, item: ItemRef, n: u32) -> u32 {
+    let (Some(r), Some(f), ItemRef::Material(mat)) = (m.recipe, m.fuel.as_ref(), item) else { return n };
+    let recipe = content.factory.recipe_def(r);
+    let Some(k) = recipe.inputs.iter().position(|s| s.item == item) else { return n };
+    if !machines::is_fuel(content, mat) || f.room(mat) == 0 {
+        return n;
+    }
+    let (input, input_cap) = (m.inputs[k] as u64, m.input_capacity(recipe, k).max(1) as u64);
+    let (fuel, fuel_cap) = (f.units as u64, f.capacity.max(1) as u64);
+    let n64 = n as u64;
+    // (input + a) / input_cap = (fuel + n - a) / fuel_cap, solved for a.
+    let a = ((fuel + n64) * input_cap).saturating_sub(input * fuel_cap) / (input_cap + fuel_cap);
+    a.min(n64) as u32
 }
 
 /// Run one tick of a room controller (called from `Buildings::work`). Returns the status.
