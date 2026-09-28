@@ -44,7 +44,7 @@ pub enum SimEvent {
     Exploded { at: CellPos, radius: f32, strength: f32 },
 }
 
-use chunk::{Chunk, FLAG_PARITY};
+use chunk::{Chunk, FLAG_BURNING, FLAG_PARITY};
 use foundry_content::Content;
 use foundry_core::{
     CHUNK_AREA, CHUNK_SIZE, CellPos, CellRect, ChunkImage, ChunkPos, Command, MaterialId, PaintMode, Rng, SimStats,
@@ -672,7 +672,8 @@ impl Simulation {
         c.shade[i] = shade;
         c.life[i] = life;
         c.motion[i] = 0;
-        c.flags[i] = (c.flags[i] & !FLAG_PARITY) | parity;
+        // A new cell does not burn: its life is new, and the burning state is in the life byte.
+        c.flags[i] = (c.flags[i] & !(FLAG_PARITY | FLAG_BURNING)) | parity;
         c.version = stamp;
         self.world.mark_dirty_around(p);
     }

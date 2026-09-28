@@ -24,7 +24,8 @@ pub(crate) struct MaterialInfo {
     pub glow: f32,
     /// How much a cell of this material stops light, 0 (air) to 1 (rock). See `opacity`.
     pub opacity: f32,
-    pub _pad: u32,
+    /// 1 if the material can burn (it has burn data). Only such cells show the burning flag.
+    pub burns: u32,
 }
 
 /// The number the shaders use for a phase. Keep it the same as the PHASE_ constants in common.wgsl.
@@ -64,7 +65,7 @@ pub(crate) fn build_material_info(content: &Content) -> Vec<MaterialInfo> {
             phase: phase_code(mats.phase[m]),
             glow: mats.glow[m],
             opacity: opacity(mats.phase[m], mean_alpha(&mats.colors[m])),
-            _pad: 0,
+            burns: mats.burn[m].is_some() as u32,
         })
         .collect()
 }
@@ -191,6 +192,15 @@ mod tests {
         assert_eq!(info[1].opacity, 1.0);
         assert!(info[2].opacity > 0.0 && info[2].opacity < 0.1);
         assert_eq!(build_sky_blockers(&content()), vec![false, true, false]);
+    }
+
+    #[test]
+    fn only_burnable_materials_show_the_burning_flag() {
+        let c = Content::load_default().unwrap();
+        let info = build_material_info(&c);
+        assert_eq!(info[c.expect_material("wood").index()].burns, 1);
+        assert_eq!(info[c.expect_material("air").index()].burns, 0);
+        assert_eq!(info[c.expect_material("stone").index()].burns, 0);
     }
 
     #[test]

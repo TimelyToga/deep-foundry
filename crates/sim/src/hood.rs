@@ -13,7 +13,7 @@ use crate::particles::Spawn;
 use crate::react::ReactTable;
 use crate::schedule::PassInput;
 use crate::{SimEvent, SimSettings};
-use crate::chunk::{Chunk, FLAG_PARITY, LocalRect, MOTION_SPEED};
+use crate::chunk::{Chunk, FLAG_BURNING, FLAG_PARITY, LocalRect, MOTION_SPEED};
 use foundry_content::{MaterialTable, Phase};
 use foundry_core::{CHUNK_MASK, CHUNK_SHIFT, CellPos, MAX_CELL_MOVE, MaterialId, Rng};
 use std::ptr::{addr_of, addr_of_mut};
@@ -426,6 +426,8 @@ impl<'a> Hood<'a> {
         unsafe {
             *addr_of_mut!((*p).mat).cast::<u16>().add(i) = m.0;
             *addr_of_mut!((*p).life).cast::<u8>().add(i) = life;
+            // The new cell does not burn (the burning state is in `life`).
+            *addr_of_mut!((*p).flags).cast::<u8>().add(i) &= !FLAG_BURNING;
             if let Some(t) = temp {
                 *addr_of_mut!((*p).temp).cast::<i16>().add(i) = t;
             }
