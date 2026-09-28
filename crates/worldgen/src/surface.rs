@@ -615,7 +615,7 @@ impl<'a> Ctx<'a> {
         match biome {
             Biome::Temperate => {
                 c.soil = 12 + (6.0 * (soil_noise + 1.0)) as i32;
-                c.grass = 1 + (hash1(self.sd.get(sd::GRASS), x) % 4 == 0) as i32;
+                c.grass = 1 + hash1(self.sd.get(sd::GRASS), x).is_multiple_of(4) as i32;
             }
             Biome::Desert => {
                 c.soil = 16 + gr.dune.round() as i32 + (4.0 * (soil_noise + 1.0)) as i32;

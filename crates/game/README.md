@@ -14,6 +14,13 @@ The world has no limit to the left and right. The hills go on without end, and t
 lava pocket and posts repeat every 2048 cells. New chunks are made when the view comes near them.
 Only chunks near the view update; far chunks wait until the view comes back.
 
+`--world gen` makes new games with the world generator (`crates/worldgen`) in place of the demo
+world: a temperate start area at x = 0 (the Hub stands on flat ground there), a desert to the
+right, a tundra to the left, other biomes further out, and the surface layer and the upper stone
+layer below with caves, ores, water pockets and methane pockets. For example
+`cargo run -p deep_foundry --release -- --world gen --mode normal --ui-state playing`. Saved
+generated worlds load again with or without the option.
+
 The simulation runs on its own thread at 60 ticks per second. The window draws at the display
 refresh rate.
 

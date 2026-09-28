@@ -95,7 +95,8 @@ fn the_order_of_calls_does_not_change_the_result() {
     let backward: Vec<_> = list.iter().rev().map(|&p| chunk(&wg, 3, p)).collect();
     assert!(forward.iter().eq(backward.iter().rev()));
     // On four threads at once, each taking every fourth chunk.
-    let parallel: Vec<Vec<(usize, (Vec<u16>, Vec<i16>))>> = std::thread::scope(|s| {
+    type Made = Vec<(usize, (Vec<u16>, Vec<i16>))>;
+    let parallel: Vec<Made> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..4)
             .map(|t| {
                 let (wg, list) = (&wg, &list);
@@ -204,7 +205,7 @@ fn no_seams_at_chunk_borders() {
         let v = a.at(x, g);
         assert!(v != 0 && c.materials.phase[v as usize] != Phase::Liquid, "column {x}: no ground at row {g}");
         let above = a.at(x, g - 1);
-        let top = wg.water_y(seed, x).map_or(g, |w| w);
+        let top = wg.water_y(seed, x).unwrap_or(g);
         assert!(
             above == 0 || above == wood || above == leaves || above == stone || top < g,
             "column {x}: {} above the ground",
