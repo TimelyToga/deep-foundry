@@ -149,7 +149,7 @@ fn jetpack_push_grows_smoothly() {
 fn fuel_refills_after_a_wait() {
     let sim = world();
     let mut r = standing(&sim, 96);
-    run(&mut r, &sim, JUMP, 60);
+    run(&mut r, &sim, JUMP, (JET_FUEL * 1.2) as u32);
     assert!(r.fuel < JET_FUEL * 0.5, "used fuel: {}", r.fuel);
     run(&mut r, &sim, MoveInput::default(), 200);
     assert!(r.on_ground);
