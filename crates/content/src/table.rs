@@ -11,6 +11,9 @@ pub struct Change {
     pub into: MaterialId,
 }
 
+/// Most gases one burning material can make (`Burn::gases`).
+pub const MAX_BURN_GASES: usize = 4;
+
 /// Burn data after loading.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Burn {
@@ -22,6 +25,21 @@ pub struct Burn {
     pub fire: MaterialId,
     pub smoke: Option<MaterialId>,
     pub smoke_chance: f32,
+    /// All gases it makes while it burns, with a chance per tick: `smoke` first, then the
+    /// `gases` list of the data file. Unused entries are `None`.
+    pub gases: [Option<(MaterialId, f32)>; MAX_BURN_GASES],
+    /// Charring: what it becomes when it is hot with no air next to it for `char_ticks` ticks.
+    pub char_into: Option<MaterialId>,
+    pub char_ticks: u32,
+}
+
+/// A slow change after a time, after loading.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Timer {
+    pub ticks: u32,
+    pub into: MaterialId,
+    /// The time counts only while an air cell is next to it.
+    pub needs_air: bool,
 }
 
 /// Material properties as flat arrays (structure of arrays).
@@ -53,6 +71,7 @@ pub struct MaterialTable {
     pub broken_into: Vec<MaterialId>,
     pub life: Vec<Option<(u8, u8)>>,
     pub decay_into: Vec<MaterialId>,
+    pub timer: Vec<Option<Timer>>,
     pub drag_limit: Vec<f32>,
     pub glow: Vec<f32>,
     /// One bit for each tag. See `TagTable`.
@@ -128,6 +147,50 @@ impl Matcher {
     }
 }
 
+/// A result that depends on the matched material (the `"$freeze"` words in the data).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnChange {
+    Freeze,
+    Melt,
+    Boil,
+    Condense,
+    Broken,
+}
+
+impl OwnChange {
+    /// The word in the data files for this result, for example `"$freeze"`.
+    pub fn from_word(word: &str) -> Option<OwnChange> {
+        Some(match word {
+            "$freeze" => OwnChange::Freeze,
+            "$melt" => OwnChange::Melt,
+            "$boil" => OwnChange::Boil,
+            "$condense" => OwnChange::Condense,
+            "$broken" => OwnChange::Broken,
+            _ => return None,
+        })
+    }
+
+    /// The material that `m` becomes, if `m` has this data.
+    pub fn of(self, m: MaterialId, table: &MaterialTable) -> Option<MaterialId> {
+        let i = m.index();
+        match self {
+            OwnChange::Freeze => table.freeze[i].map(|c| c.into),
+            OwnChange::Melt => table.melt[i].map(|c| c.into),
+            OwnChange::Boil => table.boil[i].map(|c| c.into),
+            OwnChange::Condense => table.condense[i].map(|c| c.into),
+            OwnChange::Broken => (table.broken_into[i] != m).then_some(table.broken_into[i]),
+        }
+    }
+}
+
+/// The second outcome of a reaction, after loading.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Alt {
+    pub chance: f32,
+    pub into_a: Option<MaterialId>,
+    pub into_b: Option<MaterialId>,
+}
+
 /// A reaction after loading.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reaction {
@@ -138,9 +201,17 @@ pub struct Reaction {
     pub min_temp: i16,
     /// `i16::MAX` if there is no upper limit.
     pub max_temp: i16,
+    /// `None` also when `into_a_own` is set.
     pub into_a: Option<MaterialId>,
     pub into_b: Option<MaterialId>,
+    /// A result from the matched material's own data (`"$freeze"`, ...), in place of `into_a`.
+    pub into_a_own: Option<OwnChange>,
+    pub into_b_own: Option<OwnChange>,
     pub heat: i16,
     pub needs_air: bool,
+    /// One of `defs::REACTION_EVENTS`.
     pub event: Option<String>,
+    /// Extra results (material, chance) that go into free neighbor cells of A.
+    pub extra: Vec<(MaterialId, f32)>,
+    pub alt: Option<Alt>,
 }

@@ -1,34 +1,35 @@
 // Ore roasting and smelting. See docs/design/02-content.md section 3, rules 28-35.
 // Real smelting also makes slag from the waste rock in the ore, together with the metal and
-// CO2. A reaction can only change two cells (A and B), so we keep the CO2 output and drop the
-// separate slag output here. See requests/content-data.md.
+// CO2. `extra` puts the slag into a free cell next to the ore. Raw ore has the most waste rock,
+// washed ore the least.
 [
-    // Rule 28: cassiterite (any stage) + charcoal or coke, >= 900 C, makes molten tin.
-    Reaction(a: "raw_cassiterite", b: "tag:carbon", min_temp: Some(900), chance: 0.05, into_a: Some("molten_tin"), into_b: Some("carbon_dioxide")),
-    Reaction(a: "crushed_cassiterite", b: "tag:carbon", min_temp: Some(900), chance: 0.08, into_a: Some("molten_tin"), into_b: Some("carbon_dioxide")),
+    // Rule 28: cassiterite (any stage) + charcoal or coke, >= 900 C, makes molten tin (+ slag from raw ore).
+    Reaction(a: "raw_cassiterite", b: "tag:carbon", min_temp: Some(900), chance: 0.05, into_a: Some("molten_tin"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.5)]),
+    Reaction(a: "crushed_cassiterite", b: "tag:carbon", min_temp: Some(900), chance: 0.08, into_a: Some("molten_tin"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.2)]),
     Reaction(a: "washed_cassiterite", b: "tag:carbon", min_temp: Some(900), chance: 0.1, into_a: Some("molten_tin"), into_b: Some("carbon_dioxide")),
 
     // Rule 29: malachite (any stage) + charcoal or coke, >= 1100 C, makes molten copper.
-    Reaction(a: "raw_malachite", b: "tag:carbon", min_temp: Some(1100), chance: 0.05, into_a: Some("molten_copper"), into_b: Some("carbon_dioxide")),
-    Reaction(a: "crushed_malachite", b: "tag:carbon", min_temp: Some(1100), chance: 0.08, into_a: Some("molten_copper"), into_b: Some("carbon_dioxide")),
+    Reaction(a: "raw_malachite", b: "tag:carbon", min_temp: Some(1100), chance: 0.05, into_a: Some("molten_copper"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.3)]),
+    Reaction(a: "crushed_malachite", b: "tag:carbon", min_temp: Some(1100), chance: 0.08, into_a: Some("molten_copper"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.1)]),
     Reaction(a: "washed_malachite", b: "tag:carbon", min_temp: Some(1100), chance: 0.1, into_a: Some("molten_copper"), into_b: Some("carbon_dioxide")),
 
-    // Rule 30: magnetite or hematite (any stage) + coke, >= 1400 C, makes molten pig iron.
+    // Rule 30: magnetite or hematite (any stage) + coke, >= 1400 C, makes molten pig iron
+    // (+ slag; with no flux there is more slag).
     // Charcoal fire only reaches about 1100 C (see its `burn` field), so in practice this
     // needs coke, without a material-specific check in the reaction itself.
-    Reaction(a: "raw_magnetite", b: "tag:carbon", min_temp: Some(1400), chance: 0.04, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide")),
-    Reaction(a: "crushed_magnetite", b: "tag:carbon", min_temp: Some(1400), chance: 0.06, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide")),
-    Reaction(a: "washed_magnetite", b: "tag:carbon", min_temp: Some(1400), chance: 0.08, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide")),
-    Reaction(a: "raw_hematite", b: "tag:carbon", min_temp: Some(1400), chance: 0.04, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide")),
-    Reaction(a: "crushed_hematite", b: "tag:carbon", min_temp: Some(1400), chance: 0.06, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide")),
-    Reaction(a: "washed_hematite", b: "tag:carbon", min_temp: Some(1400), chance: 0.08, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide")),
+    Reaction(a: "raw_magnetite", b: "tag:carbon", min_temp: Some(1400), chance: 0.04, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.5)]),
+    Reaction(a: "crushed_magnetite", b: "tag:carbon", min_temp: Some(1400), chance: 0.06, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.3)]),
+    Reaction(a: "washed_magnetite", b: "tag:carbon", min_temp: Some(1400), chance: 0.08, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.1)]),
+    Reaction(a: "raw_hematite", b: "tag:carbon", min_temp: Some(1400), chance: 0.04, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.5)]),
+    Reaction(a: "crushed_hematite", b: "tag:carbon", min_temp: Some(1400), chance: 0.06, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.3)]),
+    Reaction(a: "washed_hematite", b: "tag:carbon", min_temp: Some(1400), chance: 0.08, into_a: Some("molten_pig_iron"), into_b: Some("carbon_dioxide"), extra: [("molten_slag", 0.1)]),
 
-    // Rule 32-33: chalcopyrite is roasted in air first, then smelted.
-    // The iron dust byproduct of rule 33 is dropped for the same two-output reason as above.
+    // Rule 32-33: chalcopyrite is roasted in air first, then smelted. Smelting also frees the
+    // iron of the ore as iron dust.
     Reaction(a: "raw_chalcopyrite", b: "air", min_temp: Some(600), chance: 0.03, into_a: Some("roasted_chalcopyrite"), into_b: Some("sulfur_dioxide"), needs_air: true),
     Reaction(a: "crushed_chalcopyrite", b: "air", min_temp: Some(600), chance: 0.05, into_a: Some("roasted_chalcopyrite"), into_b: Some("sulfur_dioxide"), needs_air: true),
     Reaction(a: "washed_chalcopyrite", b: "air", min_temp: Some(600), chance: 0.06, into_a: Some("roasted_chalcopyrite"), into_b: Some("sulfur_dioxide"), needs_air: true),
-    Reaction(a: "roasted_chalcopyrite", b: "tag:carbon", min_temp: Some(1200), chance: 0.08, into_a: Some("molten_copper"), into_b: Some("carbon_dioxide")),
+    Reaction(a: "roasted_chalcopyrite", b: "tag:carbon", min_temp: Some(1200), chance: 0.08, into_a: Some("molten_copper"), into_b: Some("carbon_dioxide"), extra: [("pig_iron_dust", 0.5)]),
 
     // Metal dust smelts fast: each metal dust already melts on its own at its metal's melting
     // point (see its `melt` field), which is far below these ore-smelting temperatures.

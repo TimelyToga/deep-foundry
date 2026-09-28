@@ -1,9 +1,10 @@
-// Lava and water flow toward each other. Where they touch, stone and steam appear.
+// Lava and water flow toward each other. Where they touch, obsidian and steam appear
+// (reactions/water_heat.ron, rule 5). When heat works, lava that cools below 800 °C also
+// becomes stone.
 // Picture (100 x 60): open stone box, inside x 4..96, walls from y 20, floor at y 56.
 // Lava x 4..40 and water x 60..96, both y 36..56 (720 cells each).
-// The box is stone, so the stone count uses only the inside of the box.
 Scene(
-    note: "Lava meets water: stone and steam appear.",
+    note: "Lava meets water: obsidian and steam appear.",
     legend: {
         "#ff5a1a": "lava",
         "#2f6fd6": "water",
@@ -11,8 +12,8 @@ Scene(
     },
     ticks: 400,
     checks: [
-        // Pending until reactions (task 1C) work.
-        Count(material: "stone", rect: (x: 4, y: 20, w: 92, h: 36), min: 20, pending: true),
-        Total(material: "steam", min: 10, pending: true),
+        Count(material: "obsidian", rect: (x: 4, y: 20, w: 92, h: 36), min: 20),
+        Total(material: "steam", min: 10),
+        Deterministic(every: 200),
     ],
 )

@@ -378,11 +378,14 @@ fn digging_an_ore_discovers_it_like_a_scan() {
 fn digging_keeps_the_ore_and_throws_the_dirt_out() {
     let mut p = Player::new();
     let dirt = p.content.expect_material("dirt");
+    // Dirt next to water becomes mud (a reaction), so count both.
+    let mud = p.content.expect_material("mud");
     let area = CellRect::new(p.start.x - 700, p.start.y - 300, p.start.x + 700, p.start.y + 300);
-    let before = p.sim.count_material(area, dirt);
+    let before = p.sim.count_material(area, dirt) + p.sim.count_material(area, mud);
     p.dig("malachite", |p| p.count("raw_malachite") >= 30).unwrap();
     assert_eq!(p.count("dirt"), 0, "no dirt in the tanks");
     p.ticks(240);
     assert_eq!(p.sim.particles().count_material(dirt), 0, "the thrown dirt landed");
-    assert_eq!(p.sim.count_material(area, dirt), before, "no dirt was lost");
+    let after = p.sim.count_material(area, dirt) + p.sim.count_material(area, mud);
+    assert_eq!(after, before, "no dirt was lost");
 }

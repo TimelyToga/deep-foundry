@@ -11,7 +11,7 @@
         grain: Medium,
         heat_capacity: 0.5,
         conductivity: 0.1,
-        burn: Some((ignite_at: 350, fire_temp: 1100, chance: 0.02, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.02)),
+        burn: Some((ignite_at: 350, fire_temp: 1100, chance: 0.02, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.02, gases: [("carbon_dioxide", 0.05)])),
         tags: ["fuel", "carbon", "flammable"],
     ),
     Material(
@@ -24,7 +24,7 @@
         grain: Medium,
         heat_capacity: 0.5,
         conductivity: 0.15,
-        burn: Some((ignite_at: 500, fire_temp: 1300, chance: 0.02, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.01)),
+        burn: Some((ignite_at: 500, fire_temp: 1300, chance: 0.02, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.01, gases: [("carbon_dioxide", 0.08)])),
         tags: ["fuel", "carbon", "flammable"],
     ),
     Material(
@@ -99,7 +99,7 @@
         heat_capacity: 0.7,
         conductivity: 0.1,
         melt: Some((at: 115, into: "molten_sulfur")),
-        burn: Some((ignite_at: 230, fire_temp: 900, chance: 0.05, into: Some("air"), smoke: Some("sulfur_dioxide"), smoke_chance: 1.0)),
+        burn: Some((ignite_at: 230, fire_temp: 900, chance: 0.05, into: Some("air"), smoke: Some("sulfur_dioxide"), smoke_chance: 0.3)),
         tags: ["flammable"],
     ),
     Material(

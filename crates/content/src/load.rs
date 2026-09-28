@@ -3,7 +3,8 @@
 use crate::defs::{MaterialDef, Phase, PhaseChange, ReactionDef};
 use crate::factory::FactoryContent;
 use crate::factory_defs::{BuildingDef, MilestoneDef, PartDef, RecipeDef, TechDef};
-use crate::table::{Burn, Change, Matcher, MaterialTable, Reaction, TagTable};
+use crate::defs::REACTION_EVENTS;
+use crate::table::{Alt, Burn, Change, MAX_BURN_GASES, Matcher, MaterialTable, OwnChange, Reaction, TagTable, Timer};
 use crate::Content;
 use foundry_core::{DEFAULT_TEMPERATURE, MaterialId};
 use std::collections::HashMap;
@@ -141,6 +142,26 @@ impl Content {
             if d.colors.is_empty() {
                 errors.push(format!("`{}`: needs at least one color", d.id));
             }
+            // The reaction code keeps the burning state, the charring time and the timer in the
+            // cell's life byte, so these cannot be used together with `life`.
+            if d.life.is_some() && (d.burn.is_some() || d.timer.is_some()) {
+                errors.push(format!("`{}`: a material with `life` cannot have `burn` or `timer`", d.id));
+            }
+            if let Some(b) = &d.burn {
+                if b.smoke.iter().count() + b.gases.len() > MAX_BURN_GASES {
+                    errors.push(format!("`{}`: burn makes at most {MAX_BURN_GASES} gases (smoke included)", d.id));
+                }
+                if b.gases.iter().any(|(_, c)| !(0.0..=1.0).contains(c)) || !(0.0..=1.0).contains(&b.chance) {
+                    errors.push(format!("`{}`: burn chances must be in 0..=1", d.id));
+                }
+                if b.char_into.is_some() && (b.char_ticks == 0 || d.timer.is_some()) {
+                    errors.push(format!("`{}`: charring needs char_ticks above 0 and no timer", d.id));
+                }
+            }
+            if let Some(t) = &d.timer
+                && t.ticks == 0 {
+                    errors.push(format!("`{}`: timer ticks must be above 0", d.id));
+                }
             for c in &d.colors {
                 if parse_color(c).is_none() {
                     errors.push(format!("`{}`: color `{c}` is not #rrggbb or #rrggbbaa", d.id));
@@ -208,19 +229,35 @@ impl Content {
             t.freeze.push(change(&d.freeze, &d.id, &mut errors));
             t.boil.push(change(&d.boil, &d.id, &mut errors));
             t.condense.push(change(&d.condense, &d.id, &mut errors));
-            t.burn.push(d.burn.as_ref().map(|b| Burn {
-                ignite_at: b.ignite_at,
-                needs_air: b.needs_air,
-                fire_temp: b.fire_temp,
-                chance: b.chance,
-                into: b.into.as_deref().map_or(MaterialId::AIR, |n| resolve(n, &d.id, &mut errors)),
-                fire: resolve(b.fire.as_deref().unwrap_or("fire"), &d.id, &mut errors),
-                smoke: b.smoke.as_deref().map(|n| resolve(n, &d.id, &mut errors)),
-                smoke_chance: b.smoke_chance,
+            t.burn.push(d.burn.as_ref().map(|b| {
+                let smoke = b.smoke.as_deref().map(|n| resolve(n, &d.id, &mut errors));
+                let more: Vec<(MaterialId, f32)> = b.gases.iter().map(|(n, c)| (resolve(n, &d.id, &mut errors), *c)).collect();
+                let mut gases = [None; MAX_BURN_GASES];
+                for (slot, g) in gases.iter_mut().zip(smoke.map(|m| (m, b.smoke_chance)).into_iter().chain(more)) {
+                    *slot = Some(g);
+                }
+                Burn {
+                    ignite_at: b.ignite_at,
+                    needs_air: b.needs_air,
+                    fire_temp: b.fire_temp,
+                    chance: b.chance,
+                    into: b.into.as_deref().map_or(MaterialId::AIR, |n| resolve(n, &d.id, &mut errors)),
+                    fire: resolve(b.fire.as_deref().unwrap_or("fire"), &d.id, &mut errors),
+                    smoke,
+                    smoke_chance: b.smoke_chance,
+                    gases,
+                    char_into: b.char_into.as_deref().map(|n| resolve(n, &d.id, &mut errors)),
+                    char_ticks: b.char_ticks,
+                }
             }));
             t.broken_into.push(d.broken_into.as_deref().map_or(own, |n| resolve(n, &d.id, &mut errors)));
             t.life.push(d.life);
             t.decay_into.push(d.decay_into.as_deref().map_or(MaterialId::AIR, |n| resolve(n, &d.id, &mut errors)));
+            t.timer.push(d.timer.as_ref().map(|tm| Timer {
+                ticks: tm.ticks,
+                into: resolve(&tm.into, &d.id, &mut errors),
+                needs_air: tm.needs_air,
+            }));
             t.drag_limit.push(d.drag_limit);
             t.glow.push(d.glow);
             t.tags.push(d.tags.iter().filter_map(|n| tags.bit(n)).fold(0u64, |acc, b| acc | (1u64 << b)));
@@ -241,22 +278,57 @@ impl Content {
         };
         let mut reactions = vec![];
         for r in &reaction_defs {
-            if !(0.0..=1.0).contains(&r.chance) {
-                errors.push(format!("reaction {} + {}: chance must be in 0..=1", r.a, r.b));
-            }
             let owner = format!("reaction {} + {}", r.a, r.b);
+            if !(0.0..=1.0).contains(&r.chance) {
+                errors.push(format!("{owner}: chance must be in 0..=1"));
+            }
+            if let Some(e) = &r.event
+                && !REACTION_EVENTS.contains(&e.as_str()) {
+                    errors.push(format!("{owner}: unknown event `{e}` (use one of {REACTION_EVENTS:?})"));
+                }
+            if r.extra.iter().any(|(_, c)| !(0.0..=1.0).contains(c)) || r.alt.as_ref().is_some_and(|a| !(0.0..=1.0).contains(&a.chance)) {
+                errors.push(format!("{owner}: extra and alt chances must be in 0..=1"));
+            }
+            // A result is a material id, or a word such as "$freeze" (see `OwnChange`).
+            let output = |s: &Option<String>, errors: &mut Vec<String>| -> (Option<MaterialId>, Option<OwnChange>) {
+                match s.as_deref() {
+                    None => (None, None),
+                    Some(w) if w.starts_with('$') => match OwnChange::from_word(w) {
+                        Some(o) => (None, Some(o)),
+                        None => {
+                            errors.push(format!("{owner}: unknown result word `{w}`"));
+                            (None, None)
+                        }
+                    },
+                    Some(n) => (Some(resolve(n, &owner, errors)), None),
+                }
+            };
+            let (into_a, into_a_own) = output(&r.into_a, &mut errors);
+            let (into_b, into_b_own) = output(&r.into_b, &mut errors);
+            let alt = r.alt.as_ref().map(|a| Alt {
+                chance: a.chance,
+                into_a: a.into_a.as_deref().map(|n| resolve(n, &owner, &mut errors)),
+                into_b: a.into_b.as_deref().map(|n| resolve(n, &owner, &mut errors)),
+            });
             reactions.push(Reaction {
                 a: matcher(&r.a, &mut errors),
                 b: matcher(&r.b, &mut errors),
                 chance: r.chance,
                 min_temp: r.min_temp.unwrap_or(i16::MIN),
                 max_temp: r.max_temp.unwrap_or(i16::MAX),
-                into_a: r.into_a.as_deref().map(|n| resolve(n, &owner, &mut errors)),
-                into_b: r.into_b.as_deref().map(|n| resolve(n, &owner, &mut errors)),
+                into_a,
+                into_b,
+                into_a_own,
+                into_b_own,
                 heat: r.heat,
                 needs_air: r.needs_air,
                 event: r.event.clone(),
+                extra: r.extra.iter().map(|(n, c)| (resolve(n, &owner, &mut errors), *c)).collect(),
+                alt,
             });
+        }
+        if reactions.len() > u16::MAX as usize {
+            errors.push("too many reactions".to_string());
         }
 
         if errors.is_empty() {
@@ -325,6 +397,57 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("wter"), "{err}");
+    }
+
+    #[test]
+    fn new_reaction_fields_load() {
+        let mats = r##"[
+            Material(id: "air", name: "Air", phase: Empty, colors: ["#000000"]),
+            Material(id: "water", name: "Water", phase: Liquid, colors: ["#0000ff"], density: 1000, flow: 4),
+            Material(id: "steam", name: "Steam", phase: Gas, colors: ["#ffffff"], density: 0.6),
+            Material(id: "slag", name: "Slag", phase: Powder, colors: ["#555555"], density: 2000),
+            Material(id: "block", name: "Block", phase: Solid, colors: ["#aaaaaa"], melt: Some((at: 1000, into: "molten"))),
+            Material(id: "molten", name: "Molten", phase: Liquid, colors: ["#ff8800"], density: 7000, flow: 3,
+                freeze: Some((at: 990, into: "block")), tags: ["metal"]),
+            Material(id: "wood", name: "Wood", phase: Solid, colors: ["#885522"],
+                burn: Some((ignite_at: 300, fire_temp: 800, smoke: Some("steam"), smoke_chance: 0.1,
+                    gases: [("slag", 0.05)], char_into: Some("slag")))),
+            Material(id: "wet", name: "Wet", phase: Liquid, colors: ["#888888"], density: 2000, flow: 1,
+                timer: Some((ticks: 1800, into: "block"))),
+            Material(id: "fire", name: "Fire", phase: Fire, colors: ["#ff0000"], density: 0.5, life: Some((5, 10))),
+        ]"##;
+        let reactions = r##"[
+            Reaction(a: "tag:metal", b: "water", into_a: Some("$freeze"), into_b: Some("steam"), event: Some("explosion_small"),
+                extra: [("slag", 0.5)], alt: Some((chance: 0.25, into_b: Some("water")))),
+        ]"##;
+        let c = Content::from_ron(&[mats], &[reactions]).expect("loads");
+        let r = &c.reactions[0];
+        assert_eq!(r.into_a, None);
+        assert_eq!(r.into_a_own, Some(OwnChange::Freeze));
+        assert_eq!(OwnChange::Freeze.of(c.expect_material("molten"), &c.materials), Some(c.expect_material("block")));
+        assert_eq!(OwnChange::Freeze.of(c.expect_material("block"), &c.materials), None);
+        assert_eq!(r.extra, vec![(c.expect_material("slag"), 0.5)]);
+        assert_eq!(r.alt.unwrap().into_b, Some(c.expect_material("water")));
+        let b = c.materials.burn[c.expect_material("wood").index()].unwrap();
+        assert_eq!(b.gases[0], Some((c.expect_material("steam"), 0.1)));
+        assert_eq!(b.gases[1], Some((c.expect_material("slag"), 0.05)));
+        assert_eq!(b.gases[2], None);
+        assert_eq!((b.char_into, b.char_ticks), (Some(c.expect_material("slag")), 600));
+        let t = c.materials.timer[c.expect_material("wet").index()].unwrap();
+        assert_eq!((t.ticks, t.into, t.needs_air), (1800, c.expect_material("block"), false));
+    }
+
+    #[test]
+    fn bad_reaction_words_are_reported() {
+        let mats = r##"[Material(id: "air", name: "Air", phase: Empty, colors: ["#000000"]),
+                        Material(id: "fire", name: "Fire", phase: Fire, colors: ["#ff0000"], density: 0.5, life: Some((5, 10)),
+                            burn: Some((ignite_at: 1, fire_temp: 1)))]"##;
+        let err = Content::from_ron(&[mats], &[r#"[Reaction(a: "fire", b: "air", into_a: Some("$frieze"), event: Some("boom"))]"#])
+            .unwrap_err()
+            .to_string();
+        for needle in ["$frieze", "boom", "cannot have `burn`"] {
+            assert!(err.contains(needle), "missing `{needle}` in: {err}");
+        }
     }
 
     #[test]

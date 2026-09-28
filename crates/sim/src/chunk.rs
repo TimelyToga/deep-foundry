@@ -8,6 +8,11 @@ use foundry_core::{CHUNK_AREA, CHUNK_SIZE, DEFAULT_TEMPERATURE};
 pub const FLAG_PARITY: u8 = 1 << 0;
 /// Cell flag: the cell is part of a building body (used from Milestone 3).
 pub const FLAG_BUILDING: u8 = 1 << 1;
+/// Cell flag: the cell burns (set by `react.rs`, for the renderer). Flags do not move with a cell,
+/// so the flag can stay behind for a short time when a burning liquid or powder moves, or when
+/// other code replaces a burning cell. Use it only on materials that have burn data, and never on
+/// air. The burning state itself is in the cell's life byte (see `react.rs`).
+pub const FLAG_BURNING: u8 = 1 << 2;
 
 /// `motion` bits 0-4: fall speed (0 to 31).
 pub const MOTION_SPEED: u8 = 0x1f;
