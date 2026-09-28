@@ -161,12 +161,14 @@ impl SimPerf {
         }
     }
 
-    /// Count the chunks and the parts of the cell update of a snapshot.
-    pub fn snapshot(&mut self, s: &foundry_core::Snapshot, ticked: bool) {
+    /// Count the chunks and the parts of the cell update of a snapshot. `parallel`: the tick used
+    /// the `crew` pool.
+    pub fn snapshot(&mut self, s: &foundry_core::Snapshot, ticked: bool, parallel: bool) {
         if self.parts.is_none() {
             return;
         }
         self.chunks += s.chunks.len();
+        self.parallel += (ticked && parallel) as u32;
         if !ticked {
             return;
         }
@@ -194,10 +196,9 @@ impl SimPerf {
         self.lost_ms += d.as_secs_f64() * 1000.0;
     }
 
-    /// Print two lines once per second. `parallel`: the last tick used the `crew` pool.
-    pub fn print_each_second(&mut self, parallel: bool) {
+    /// Print two lines once per second.
+    pub fn print_each_second(&mut self) {
         let Some(p) = self.parts.as_mut() else { return };
-        self.parallel += parallel as u32;
         if self.since.elapsed().as_secs_f64() < 1.0 {
             return;
         }

@@ -131,7 +131,10 @@ fn run(
                         factory_host::save_side(host.as_ref(), &path, &mut notices);
                     }
                     Ok(GameCommand::Sim(Command::LoadWorld { path })) => notices.push(workers.big(true, || load_world(&mut sim, &path))),
-                    Ok(GameCommand::Sim(cmd)) => sim.apply(cmd),
+                    Ok(GameCommand::Sim(cmd)) => {
+                        workers.note(&cmd, sim.view());
+                        sim.apply(cmd);
+                    }
                     Ok(GameCommand::Factory(cmd)) => {
                         if let Some(h) = host.as_mut() {
                             h.apply(cmd, &mut sim);
@@ -155,7 +158,7 @@ fn run(
             perf.mark();
             let frame = host.as_mut().map(|h| h.frame(&sim, snapshot.tick));
             perf.mark();
-            perf.snapshot(&snapshot, ticked);
+            perf.snapshot(&snapshot, ticked, workers.parallel());
             if let Some(f) = frame {
                 factory.publish(f);
             }
@@ -171,7 +174,7 @@ fn run(
             perf.lost(now.duration_since(next));
             next = now;
         }
-        perf.print_each_second(workers.parallel());
+        perf.print_each_second();
         let since = now.duration_since(count_start);
         if since >= Duration::from_secs(1) {
             tps.store((count as f32 / since.as_secs_f32()).to_bits(), Ordering::Relaxed);
