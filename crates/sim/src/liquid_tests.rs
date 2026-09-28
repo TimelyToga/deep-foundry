@@ -442,3 +442,27 @@ fn liquid_frames() {
         println!("{name}: {out:?}, surface rows {range:?}, {ms:.3} ms per tick");
     }
 }
+
+/// Water streams fall along the left and right edges of chunks (x = 63, 64, 127 and 128). The
+/// fall pass runs one job per chunk column at the same time, so its jobs must not read cells of
+/// the next chunk column. The debug check in `Hood` fails the test if a job does. The result must
+/// be the same for 1 and 4 threads.
+#[test]
+fn falling_streams_on_chunk_edges_do_not_depend_on_thread_count() {
+    let build = |threads: usize| {
+        let mut s = scene("edges", 4, 4, &["water"]);
+        s.sim.set_threads(threads);
+        s.tank(20, 10, 200, 60, 62, 66, "water");
+        s.fill(126, 60, 130, 63, "air");
+        s
+    };
+    let (mut a, mut b) = (build(1), build(4));
+    let water = a.mat("water");
+    let total = a.total(water);
+    for t in 0..600 {
+        a.sim.tick();
+        b.sim.tick();
+        assert_eq!(a.sim.world_hash(), b.sim.world_hash(), "tick {t}");
+    }
+    assert_eq!(a.total(water), total, "no water is lost");
+}
