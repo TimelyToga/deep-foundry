@@ -82,7 +82,7 @@
 //!    for any number of threads.
 //! 3. The dirty marks of all jobs are added to the chunks, in the order of the work list.
 
-use crate::chunk::{Chunk, FLAG_PARITY, LocalRect};
+use crate::chunk::{Chunk, FLAG_BUILDING, FLAG_PARITY, LocalRect};
 use crate::react::ReactTable;
 use crate::world::World;
 use foundry_content::{MaterialTable, Phase};
@@ -653,8 +653,9 @@ impl ChunkJob<'_> {
             (*addr_of_mut!((*p).life))[i] = life;
             (*addr_of_mut!((*p).motion))[i] = 0;
             let flags = &mut (*addr_of_mut!((*p).flags))[i];
-            // The cell counts as not updated in the next tick, so it can move at once.
-            *flags = (*flags & !FLAG_PARITY) | self.parity;
+            // The cell counts as not updated in the next tick, so it can move at once. The new
+            // material is not part of a building.
+            *flags = (*flags & !(FLAG_PARITY | FLAG_BUILDING)) | self.parity;
             *addr_of_mut!((*p).version) = self.stamp;
         }
         out.phase_changes += 1;

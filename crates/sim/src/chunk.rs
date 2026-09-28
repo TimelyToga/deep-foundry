@@ -6,7 +6,10 @@ use foundry_core::{CHUNK_AREA, CHUNK_SIZE, DEFAULT_TEMPERATURE};
 /// Cells that did not move for a while keep an old bit, so a match can be stale. The update loop
 /// handles this by checking such a cell again in the next tick.
 pub const FLAG_PARITY: u8 = 1 << 0;
-/// Cell flag: the cell is part of a building body (used from Milestone 3).
+/// Cell flag: the cell is part of a building body (`Simulation::set_building_flag`). Explosions
+/// do not break such cells, and the renderer lets them stop only a little light. Writing a new
+/// cell (`set_cell`, `Hood::replace`, a phase change) clears the flag. Building cells are solid,
+/// so they do not move.
 pub const FLAG_BUILDING: u8 = 1 << 1;
 /// Cell flag: the cell burns (set by `react.rs`, for the renderer). Flags do not move with a cell,
 /// so the flag can stay behind for a short time when a burning liquid or powder moves, or when
