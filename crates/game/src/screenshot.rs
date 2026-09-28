@@ -216,7 +216,9 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             | UiState::Remove
             | UiState::Tanks
             | UiState::Campfire
-            | UiState::OreLine => {
+            | UiState::OreLine
+            | UiState::Kiln
+            | UiState::KilnHole => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
@@ -697,6 +699,43 @@ fn setup_normal_screen(
             h.apply(FactoryCommand::OpenAt(crate_at.origin()), sim);
             let _ = hopper;
         }
+        UiState::Kiln | UiState::KilnHole => {
+            // A kiln right of the robot: a room of 3 x 2 tiles with clay brick walls, the
+            // controller in the left wall and a hatch in the roof. Charcoal burns in it and it
+            // fires raw clay bricks.
+            if let Some(at) = h.free_place(kind("clay_brick_wall"), sim) {
+                let (x0, y0) = (at.x + 1, at.y - 3);
+                let rect = foundry_core::CellRect::new(x0 * TILE_SIZE, y0 * TILE_SIZE, (x0 + 5) * TILE_SIZE, (y0 + 4) * TILE_SIZE);
+                for y in rect.y0..rect.y1 {
+                    for x in rect.x0..rect.x1 {
+                        sim.set_cell(foundry_core::CellPos::new(x, y), foundry_core::MaterialId::AIR, None);
+                    }
+                }
+                let t = |x: i32, y: i32| foundry_core::TilePos::new(x0 + x, y0 + y);
+                let ctrl = h.factory.place(kind("kiln_controller"), t(0, 2), 0, false, sim).ok();
+                let _ = h.factory.place(kind("kiln_hatch"), t(2, 0), 0, false, sim);
+                for y in 0..4 {
+                    for x in 0..5 {
+                        let ring = x == 0 || x == 4 || y == 0 || y == 3;
+                        let hole = state == UiState::KilnHole && (x, y) == (4, 1);
+                        if ring && !hole {
+                            let _ = h.factory.place(kind("clay_brick_wall"), t(x, y), 0, false, sim);
+                        }
+                    }
+                }
+                if let Some(id) = ctrl {
+                    let _ = h.factory.set_recipe(id, content.factory.recipe("clay_brick"));
+                    h.factory.buildings.insert(&content, id, ItemRef::Part(part("raw_clay_brick")), 16);
+                    h.factory.buildings.insert(&content, id, mat("charcoal"), 400);
+                    for _ in 0..8 * 60 {
+                        sim.tick();
+                        h.tick(sim);
+                    }
+                    h.apply(FactoryCommand::OpenAt(t(0, 2).origin().offset(3, 3)), sim);
+                }
+            }
+            give(h, mat("charcoal"), 400);
+        }
         UiState::GuideWorkbench | UiState::GuideDone => {
             // The goals up to the workbench and the two ores are done.
             give(h, mat("sand"), 100);
@@ -713,7 +752,8 @@ fn setup_normal_screen(
             };
             place(h, sim, "workbench");
             if state == UiState::GuideDone {
-                // Every goal that the game can do is done: research, bricks, campfire, sluice.
+                // Every goal that the game can do is done: research, bricks, campfire, sluice,
+                // kiln, charcoal.
                 for tech in ["bronze", "research"] {
                     h.apply(FactoryCommand::StartResearch(content.factory.tech(tech).expect("tech")), sim);
                     for _ in 0..60 {
@@ -724,6 +764,8 @@ fn setup_normal_screen(
                 give(h, ItemRef::Part(part("clay_brick")), 8);
                 place(h, sim, "campfire");
                 place(h, sim, "sluice");
+                place(h, sim, "kiln_controller");
+                give(h, mat("charcoal"), 32);
             }
             h.factory.update_guide();
             h.apply(FactoryCommand::Windows { research: false, guide: true }, sim);

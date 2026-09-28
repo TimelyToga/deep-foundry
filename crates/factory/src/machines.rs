@@ -42,6 +42,8 @@ pub enum Status {
     TooHot,
     /// Hit points are at 0.
     Broken,
+    /// A room machine controller whose room is not closed or not correct (see `rooms`).
+    NoRoom,
 }
 
 impl Status {
@@ -59,6 +61,7 @@ impl Status {
             Status::TooCold => "Too cold",
             Status::TooHot => "Too hot",
             Status::Broken => "Broken",
+            Status::NoRoom => "Room not valid",
         }
     }
 

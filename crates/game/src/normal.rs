@@ -14,7 +14,7 @@ use foundry_factory::progress::{GoalView, LockReason, TechState as FactoryTechSt
 use foundry_factory::{Click, Status};
 use foundry_ui::{
     BuildingSlot, BuildingSlots, BuildingView, ClickButton, CraftJobView, Delivery, DigRule, DigState, GuideGoal, HoverDetail, HoverView, MachineStatus, MaterialBuffer,
-    MilestoneView, ResearchView, SlotClick, SlotRef, TankSlot, TechEntry, TechState, UiAction, UiModel, WindowKind,
+    MilestoneView, ResearchView, RoomPanel, SlotClick, SlotRef, TankSlot, TechEntry, TechState, UiAction, UiModel, WindowKind,
 };
 use std::time::Instant;
 
@@ -502,6 +502,7 @@ pub fn machine_status(s: Status) -> MachineStatus {
         Status::TooCold => MachineStatus::TooCold,
         Status::TooHot => MachineStatus::TooHot,
         Status::Broken => MachineStatus::Broken,
+        Status::NoRoom => MachineStatus::RoomNotValid,
     }
 }
 
@@ -577,11 +578,31 @@ fn building_view(
             .collect(),
         buffers,
         progress: b.progress,
-        speed: 1.0,
+        // A room machine works faster in a bigger room.
+        speed: b.room.as_ref().map_or(1.0, |r| r.speed),
         power: None,
         temperature: Some(b.temperature as f32),
         milestone: milestone.map(milestone_view),
         later_stages: later.iter().map(milestone_view).collect(),
+        room: b.room.as_ref().map(room_panel),
+    }
+}
+
+/// The room panel of a room machine controller.
+fn room_panel(r: &foundry_factory::rooms::RoomView) -> RoomPanel {
+    RoomPanel {
+        valid: r.valid,
+        problem: r.problem.clone(),
+        temperature: r.temperature.map(f32::from),
+        needs: r.needs.map(f32::from),
+        tiles: r.tiles,
+        max_tiles: r.max_tiles,
+        hatches: r.hatches,
+        fuel_cells: r.fuel_cells,
+        burning: r.hot_fuel_cells,
+        ash: r.ash,
+        blast: r.blast as f32,
+        walls: r.walls.clone(),
     }
 }
 

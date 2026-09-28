@@ -1062,7 +1062,7 @@ impl FactoryHost {
         });
         let view = self.input.view;
         let alt = self.input.alt;
-        let marks = f
+        let mut marks: Vec<BuildingMark> = f
             .buildings
             .iter()
             .filter(|(_, b)| !b.cell_rect().intersect(&view).is_empty())
@@ -1080,6 +1080,16 @@ impl FactoryHost {
                 })
             })
             .collect();
+        // The hole or the wrong wall block of a room: a red mark on that tile.
+        for (_, b) in f.buildings.iter() {
+            let tile = b.room.as_deref().and_then(|r| r.problem.as_ref()).and_then(|p| p.tile());
+            if let Some(t) = tile {
+                let rect = CellRect::new(t.x * TILE_SIZE, t.y * TILE_SIZE, (t.x + 1) * TILE_SIZE, (t.y + 1) * TILE_SIZE);
+                if !rect.intersect(&view).is_empty() {
+                    marks.push(BuildingMark { rect, status: Status::NoRoom, output: None, belt: 0 });
+                }
+            }
+        }
         let labels = f
             .buildings
             .iter()

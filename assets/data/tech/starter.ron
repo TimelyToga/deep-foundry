@@ -64,7 +64,7 @@
         requires: ["ore_processing"],
         kits: [("bronze_kit", 2)],
         units: 30,
-        unlocks: ["coke_oven_controller", "coke_oven_hatch", "coke", "firebrick_wall", "blast_furnace_controller", "blast_furnace_hatch", "pig_iron_smelting"],
+        unlocks: ["coke_oven_controller", "coke_oven_hatch", "coke", "firebrick_wall", "blast_furnace_controller", "blast_furnace_hatch", "pig_iron_smelting", "pig_iron_from_hematite"],
     ),
     Tech(
         id: "steel_making",

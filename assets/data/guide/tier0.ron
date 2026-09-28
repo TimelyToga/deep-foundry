@@ -113,25 +113,24 @@
         reward_points: 1,
     ),
 
-    // --- The goals below need machines that are not in the game yet. ---
     Goal(
         id: "t0_kiln",
         tier: 0,
         title: "Build a kiln",
-        text: "Build a closed room from clay brick walls. Put a kiln controller in the wall. The controller marks wrong walls in red. A kiln gets much hotter than a campfire.",
+        text: "A kiln is a closed room of clay brick walls. It needs 24 clay bricks: fire more in the campfire. Press {key:character} and craft a kiln controller and a kiln hatch (Production tab) and 6 clay brick walls (Logistics tab). Place them as a ring of 3 by 3 tiles: the controller in a side wall, the hatch in the roof, the walls on the other 6 tiles. The middle tile stays empty: that is the room. Left click the controller: its window says if the room is closed, or where it has a hole.",
         condition: Build("kiln_controller", 1),
         reward_points: 2,
-        waits_for: Some("the kiln"),
     ),
     Goal(
         id: "t0_charcoal",
         tier: 0,
         title: "Make charcoal",
-        text: "Heat wood in the closed kiln with no air. The wood turns into charcoal. You need charcoal to smelt ore.",
+        text: "Left click the kiln controller. Click the recipe slot and choose Charcoal. Click your wood tank on the bar at the bottom: the wood goes into the input and into the fuel slot. The fuel burns on the floor of the room and heats it. Charcoal needs 300 °C; a wood fire makes about 700 °C. Click the output slot to take the charcoal. Have 32 charcoal.",
         condition: HaveItem("charcoal", 32),
         reward_points: 1,
-        waits_for: Some("the kiln"),
     ),
+
+    // --- The goals below need machines that are not in the game yet. ---
     Goal(
         id: "t0_tin",
         tier: 0,

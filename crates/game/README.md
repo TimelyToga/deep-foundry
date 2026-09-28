@@ -199,7 +199,7 @@ the newest save.
 --ui-state STATE       Start screen: menu, newgame, load, settings, pause, save, playing, inventory, debug;
                        normal mode only: building, ghost, hub, research, guide,
                        ghost-red, drag, alt, remove, tanks, guide-workbench,
-                       guide-done, campfire
+                       guide-done, campfire, kiln, kiln-hole
 --mode MODE            Mode of a world that --ui-state starts: sandbox (default) or normal
 --ui-scale S           Size of the UI, 0.75 to 2 (wins over the settings file)
 --settings FILE        The settings file (default: settings.ron in the app data folder)
@@ -235,9 +235,10 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
   shows them. `--zoom 8` shows the construction shapes well.
   `--walk N` lets the robot walk N ticks first (N < 0: to the left).
   `guide-workbench` shows the guide after the first goals (up to the workbench and the two
-  ores), `guide-done` the guide when every goal that the game can do is done ("Next: the kiln.
-  It comes in a later update."), `campfire` a campfire window that fires clay bricks, and
-  `ore-line` a working hopper, stamp mill, belt, sluice and crate line.
+  ores), `guide-done` the guide with completed early goals, `campfire` a campfire window that
+  fires clay bricks, and `ore-line` a working hopper, stamp mill, belt, sluice and crate line.
+  `kiln` shows a heated kiln room and controller; `kiln-hole` shows the same room with a hole
+  in its right wall and a marked problem location.
 - `--pose NAME[:FRAME]` (normal mode) makes the robot act for the picture: `idle`, `walk`,
   `jump`, `fall`, `land`, `fly`, `wade` show that animation (FRAME picks one frame; `fall` and
   `land` first use up the jetpack fuel, so the fuel bar shows). `dig`, `spray` and `scan` use
