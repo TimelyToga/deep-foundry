@@ -1,0 +1,17 @@
+// Steam in a cold closed box condenses into water.
+// Picture (96 x 96): a closed box of stone at 5 °C, 4 cells thick, full of steam at 110 °C
+// (x 4..92, y 4..92: 7744 cells).
+Scene(
+    note: "Steam in a cold box cools below 95 °C and condenses into water.",
+    legend: {
+        "#5a6b80": (material: "stone", temperature: 5),
+        "#e8eef5": "steam",
+    },
+    ticks: 900,
+    checks: [
+        Total(material: "steam", max: 5000),
+        Total(material: "water", min: 2500),
+        // The water collects at the bottom of the box.
+        Count(material: "water", rect: (x: 4, y: 60, w: 88, h: 32), min: 2000),
+    ],
+)

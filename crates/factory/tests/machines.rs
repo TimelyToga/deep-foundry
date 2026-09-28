@@ -102,9 +102,12 @@ fn min_temp_is_read_from_the_heat_port() {
     let v = f.building_view(id).unwrap();
     assert_eq!(v.status, Status::TooCold);
     assert_eq!(v.reason, "Too cold: 20 °C, needs 500 °C");
-    // Hot stone under the oven.
-    fill(&mut sim, CellRect::new(40, GROUND, 48, GROUND + 1), mat(&c, "stone"), Some(900));
-    run(&mut f, &mut sim, 90);
+    // Hot stone under the oven. Heat flows away from it into the ground and the oven, so it is
+    // made hot again in each tick, like a heat source.
+    for _ in 0..90 {
+        fill(&mut sim, CellRect::new(40, GROUND, 48, GROUND + 1), mat(&c, "stone"), Some(900));
+        run(&mut f, &mut sim, 1);
+    }
     let v = f.building_view(id).unwrap();
     assert_eq!(v.outputs[0].count, 4, "status {:?}", v.status);
 }
@@ -267,7 +270,12 @@ fn a_recipe_of_another_category_or_a_higher_tier_is_refused() {
 
 #[test]
 fn fluid_ports_take_water_and_give_steam() {
-    let c = content();
+    // This test is about the fluid ports. The steam of the boiler (110 °C) would cool in the 20 °C
+    // air and condense into water, so steam does not condense in this test.
+    let mut changed = (*content()).clone();
+    let steam_id = changed.expect_material("steam");
+    changed.materials.condense[steam_id.index()] = None;
+    let c = std::sync::Arc::new(changed);
     let mut sim = world(&c, Some(GROUND));
     let mut f = Factory::new(c.clone());
     let (water, steam, stone) = (mat(&c, "water"), mat(&c, "steam"), mat(&c, "stone"));
@@ -307,9 +315,12 @@ fn a_burner_heats_the_oven_above_it() {
     assert_eq!(f.building_view(fire).unwrap().status, Status::Working);
     let v = f.building_view(oven).unwrap();
     assert_eq!(v.outputs[0].count, 4, "{v:?}");
-    // The burner heated the cells on both sides of its heat port to its heat temperature.
-    assert_eq!(sim.cell(CellPos::new(44, 87)).temperature, 800);
-    assert_eq!(sim.cell(CellPos::new(44, 88)).temperature, 800);
+    // The burner heated the cells on both sides of its heat port to its heat temperature. (Then
+    // the heat pass of the same tick moved a little of that heat away.)
+    for p in [CellPos::new(44, 87), CellPos::new(44, 88)] {
+        let t = sim.cell(p).temperature;
+        assert!((780..=800).contains(&t), "{p:?}: {t} °C");
+    }
 }
 
 #[test]

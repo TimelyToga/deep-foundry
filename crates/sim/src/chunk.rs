@@ -82,6 +82,22 @@ pub struct Chunk {
     /// looks only at these rows (see `schedule.rs`). A bit that is set with no falling cell in the
     /// row only costs a look; a new chunk has all bits set.
     pub falling_rows: u64,
+    /// Heat: the stamp of the last tick in which the heat pass worked on this chunk. In that tick,
+    /// `heat_edge_temp` and `heat_edge_mat` hold the edge cells as they were before the pass.
+    /// See `heat.rs`.
+    pub heat_stamp: u64,
+    /// Heat: the temperatures of the 4 edges at the start of the heat pass of tick `heat_stamp`.
+    /// Order: top row (y = 0), bottom row (y = 63), left column (x = 0), right column (x = 63),
+    /// 64 cells each.
+    pub heat_edge_temp: [i16; 256],
+    /// Heat: the materials of the same edge cells.
+    pub heat_edge_mat: [u16; 256],
+    /// Heat: ticks since a temperature in this chunk last changed, at most `heat::QUIET_TICKS`.
+    /// At `heat::QUIET_TICKS` the chunk is at rest for heat.
+    pub heat_quiet: u8,
+    /// Heat: how much the temperatures of glowing cells may have changed since `version` last
+    /// changed (°C). The heat pass sets a new version when it gets large (see `heat.rs`).
+    pub glow_drift: u16,
 }
 
 /// The version of a chunk that the chunk source made and that did not change since.
@@ -103,6 +119,11 @@ impl Chunk {
             pristine: true,
             queued: false,
             falling_rows: u64::MAX,
+            heat_stamp: 0,
+            heat_edge_temp: [0; 256],
+            heat_edge_mat: [0; 256],
+            heat_quiet: crate::heat::QUIET_TICKS,
+            glow_drift: 0,
         })
     }
 
