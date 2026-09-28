@@ -92,6 +92,7 @@ pub struct Particles {
     visual: usize,
     /// Particles that landed in this step (indices), kept to reuse the memory.
     landing: Vec<u32>,
+    search: Search,
 }
 
 impl Particles {
@@ -138,9 +139,10 @@ impl Particles {
     /// Move all particles one tick. Material particles that hit something become cells.
     ///
     /// A material particle is never lost and never stays stuck: if the grid filled up around it
-    /// (for example a pool rose over it), it becomes a cell at the nearest free cell above it.
-    /// Only if there is no air nearby at all does it stay a particle; it then moves up one cell
-    /// per tick until it finds air.
+    /// (for example a pool rose over it), it becomes a cell at the nearest free cell above it, or
+    /// else at the nearest air cell it can reach (see `free_spot`). Only if there is no air nearby
+    /// at all does it stay a particle; it then moves up one cell per tick (if it can) until it
+    /// finds air.
     pub fn step(&mut self, world: &mut World, mats: &MaterialTable, settings: &SimSettings, tick: u64, stamp: u64) {
         let mut grid = Grid::default();
         let mut landing = std::mem::take(&mut self.landing);
@@ -253,7 +255,7 @@ impl Particles {
     fn land(&mut self, i: usize, world: &mut World, mats: &MaterialTable, parity: u8, stamp: u64) {
         let at = CellPos::new(self.x[i].floor() as i32, self.y[i].floor() as i32);
         let mut grid = Grid::default();
-        if let Some(spot) = free_spot(&mut grid, world, mats, at) {
+        if let Some(spot) = free_spot(&mut grid, world, mats, at, &mut self.search) {
             let cell = Landing {
                 material: MaterialId(self.mat[i]),
                 temp: self.temp[i],
@@ -463,34 +465,8 @@ enum Flight {
 
 /// Follow the line from (x, y) to (x + vx, y + vy) through the grid, cell by cell, and stop at
 /// the first cell that is not air, gas or fire (or that is in a chunk that does not update).
-/// The cells are visited in the order the line crosses them, so the line never skips a cell.
 fn fly(grid: &mut Grid, world: &mut World, mats: &MaterialTable, x: f32, y: f32, vx: f32, vy: f32) -> Flight {
-    let (mut cx, mut cy) = (x.floor() as i32, y.floor() as i32);
-    let (ex, ey) = ((x + vx).floor() as i32, (y + vy).floor() as i32);
-    let (sx, sy) = ((ex - cx).signum(), (ey - cy).signum());
-    let (mut nx, mut ny) = ((ex - cx).abs(), (ey - cy).abs());
-    // Line time between two x borders (and y borders), and the time of the next border.
-    let dtx = if vx != 0.0 { 1.0 / vx.abs() } else { f32::INFINITY };
-    let dty = if vy != 0.0 { 1.0 / vy.abs() } else { f32::INFINITY };
-    let mut tx = if sx > 0 { (cx as f32 + 1.0 - x) * dtx } else { (x - cx as f32) * dtx };
-    let mut ty = if sy > 0 { (cy as f32 + 1.0 - y) * dty } else { (y - cy as f32) * dty };
-    while nx + ny > 0 {
-        let last = CellPos::new(cx, cy);
-        // Step in x or y, whichever border comes first. The counts make sure that the line ends in
-        // the right cell also with rounding errors.
-        let t;
-        if ny == 0 || (nx > 0 && tx < ty) {
-            t = tx;
-            cx += sx;
-            nx -= 1;
-            tx += dtx;
-        } else {
-            t = ty;
-            cy += sy;
-            ny -= 1;
-            ty += dty;
-        }
-        let c = CellPos::new(cx, cy);
+    for (last, c, t) in LineCells::new(x, y, vx, vy) {
         match grid.look(world, c) {
             Look::Cell(m) if passable(m, mats) => {}
             Look::Cell(_) | Look::Paused(_) | Look::Wall => return Flight::Hit { last, t },
@@ -499,6 +475,66 @@ fn fly(grid: &mut Grid, world: &mut World, mats: &MaterialTable, x: f32, y: f32,
         }
     }
     Flight::Free
+}
+
+/// The cells that the line from (x, y) to (x + vx, y + vy) crosses, in the order it crosses them,
+/// without the start cell. Each item is (the cell before, the cell, the line time 0 to 1 at which
+/// the line enters the cell). Two cells in a row always share a side, so the line never skips a
+/// cell, also not at a corner.
+struct LineCells {
+    cx: i32,
+    cy: i32,
+    sx: i32,
+    sy: i32,
+    /// Steps left in x and in y.
+    nx: i32,
+    ny: i32,
+    /// Line time between two x borders (and y borders), and the time of the next border.
+    dtx: f32,
+    dty: f32,
+    tx: f32,
+    ty: f32,
+}
+
+impl LineCells {
+    #[inline]
+    fn new(x: f32, y: f32, vx: f32, vy: f32) -> Self {
+        let (cx, cy) = (x.floor() as i32, y.floor() as i32);
+        let (ex, ey) = ((x + vx).floor() as i32, (y + vy).floor() as i32);
+        let (sx, sy) = ((ex - cx).signum(), (ey - cy).signum());
+        let dtx = if vx != 0.0 { 1.0 / vx.abs() } else { f32::INFINITY };
+        let dty = if vy != 0.0 { 1.0 / vy.abs() } else { f32::INFINITY };
+        let tx = if sx > 0 { (cx as f32 + 1.0 - x) * dtx } else { (x - cx as f32) * dtx };
+        let ty = if sy > 0 { (cy as f32 + 1.0 - y) * dty } else { (y - cy as f32) * dty };
+        Self { cx, cy, sx, sy, nx: (ex - cx).abs(), ny: (ey - cy).abs(), dtx, dty, tx, ty }
+    }
+}
+
+impl Iterator for LineCells {
+    type Item = (CellPos, CellPos, f32);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.nx + self.ny == 0 {
+            return None;
+        }
+        let last = CellPos::new(self.cx, self.cy);
+        // Step in x or y, whichever border comes first. The step counts make sure that the line
+        // ends in the right cell also with rounding errors.
+        let t;
+        if self.ny == 0 || (self.nx > 0 && self.tx < self.ty) {
+            t = self.tx;
+            self.cx += self.sx;
+            self.nx -= 1;
+            self.tx += self.dtx;
+        } else {
+            t = self.ty;
+            self.cy += self.sy;
+            self.ny -= 1;
+            self.ty += self.dty;
+        }
+        Some((last, CellPos::new(self.cx, self.cy), t))
+    }
 }
 
 /// The point on the line at time `t`, moved inside cell `c` (so rounding cannot put it into the
@@ -516,18 +552,34 @@ fn passable(m: MaterialId, mats: &MaterialTable) -> bool {
 
 /// How far up a landing particle looks for air (through liquid, powder and gas).
 const SEARCH_UP: i32 = 64;
-/// How far to the sides a landing particle looks for air when the way up is closed.
-const SEARCH_AROUND: i32 = 8;
+/// A landing particle that finds no air straight up looks for air in the square of cells with
+/// this distance around it.
+const SEARCH_AROUND: i32 = 24;
+const SEARCH_SIDE: i32 = 2 * SEARCH_AROUND + 1;
+
+/// Memory for the search of `free_spot`, kept to reuse it.
+#[derive(Default)]
+struct Search {
+    /// One bit for each cell of the search square: the cell was seen.
+    seen: Vec<u64>,
+    queue: Vec<CellPos>,
+}
 
 /// The cell where a landing particle becomes a grid cell: `at` if it is air or gas; else the
 /// first air cell straight up (through liquid, powder and gas, not through solids); else the
-/// nearest air cell around (upper cells first). Only cells in live chunks count.
-fn free_spot(grid: &mut Grid, world: &mut World, mats: &MaterialTable, at: CellPos) -> Option<CellPos> {
-    if let Look::Cell(m) | Look::Paused(m) = grid.look(world, at)
+/// nearest air cell that it can reach through cells that are not solid (so never through a wall),
+/// within `SEARCH_AROUND` cells. A particle inside a solid searches through solids too.
+/// Only cells in live chunks count.
+fn free_spot(grid: &mut Grid, world: &mut World, mats: &MaterialTable, at: CellPos, search: &mut Search) -> Option<CellPos> {
+    let here = grid.look(world, at);
+    if let Look::Cell(m) | Look::Paused(m) = here
         && passable(m, mats)
     {
         return Some(at);
     }
+    // A particle inside a solid (for example one made inside a wall) may search through solids,
+    // so that it gets out.
+    let in_solid = matches!(here, Look::Cell(m) | Look::Paused(m) if mats.phase[m.index()] == Phase::Solid);
     for k in 1..=SEARCH_UP {
         let p = at.offset(0, -k);
         match grid.look(world, p) {
@@ -536,18 +588,32 @@ fn free_spot(grid: &mut Grid, world: &mut World, mats: &MaterialTable, at: CellP
             _ => break,
         }
     }
-    for r in 1..=SEARCH_AROUND {
-        for dy in -r..=r {
-            for dx in -r..=r {
-                if dx.abs().max(dy.abs()) != r {
-                    continue;
-                }
-                let p = at.offset(dx, dy);
-                if let Look::Cell(m) | Look::Paused(m) = grid.look(world, p)
-                    && m.is_air()
-                {
-                    return Some(p);
-                }
+    // Nearest first (by steps to a side neighbor); upper cells first at the same distance.
+    search.seen.clear();
+    search.seen.resize((SEARCH_SIDE * SEARCH_SIDE) as usize / 64 + 1, 0);
+    search.queue.clear();
+    search.queue.push(at);
+    let center = (SEARCH_AROUND * SEARCH_SIDE + SEARCH_AROUND) as usize;
+    search.seen[center / 64] |= 1 << (center % 64);
+    let mut head = 0;
+    while head < search.queue.len() {
+        let p = search.queue[head];
+        head += 1;
+        for (dx, dy) in [(0, -1), (-1, 0), (1, 0), (0, 1)] {
+            let q = p.offset(dx, dy);
+            let (sx, sy) = (q.x - at.x + SEARCH_AROUND, q.y - at.y + SEARCH_AROUND);
+            if !(0..SEARCH_SIDE).contains(&sx) || !(0..SEARCH_SIDE).contains(&sy) {
+                continue;
+            }
+            let bit = (sy * SEARCH_SIDE + sx) as usize;
+            if search.seen[bit / 64] & (1 << (bit % 64)) != 0 {
+                continue;
+            }
+            search.seen[bit / 64] |= 1 << (bit % 64);
+            match grid.look(world, q) {
+                Look::Cell(m) | Look::Paused(m) if m.is_air() => return Some(q),
+                Look::Cell(m) | Look::Paused(m) if in_solid || mats.phase[m.index()] != Phase::Solid => search.queue.push(q),
+                _ => {}
             }
         }
     }
