@@ -16,17 +16,20 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 
 - play-test fixes round 1: save-menu layer bug, tanks 8 x 6,000 + "Tanks full" box, crates (8 slots, no liquids) and barrels (liquids), click/right/ctrl/shift transfers (crates/factory/src/transfer.rs), tank trash, Hub takes only needed items and gives back, first dig discovers, guide `waits_for` (11 of 22 T0 goals wait for machines), menu click tests (crates/ui/tests/menus.rs). 346 tests pass.
   - Open: clay-brick loop (clay bricks come only from the kiln; the kiln needs 8). Lead decision: a campfire fires raw clay bricks slowly (pit firing). Goal texts describe the demo world; redo them after worldgen.
+- character: robot sprite sheet 16x20 (tools/sprites/make_robot.py -> assets/sprites/robot.png/.ron), animations, tool arm in 16 directions, sprite pass crates/render/src/sprite.rs (drawn into the world texture before the scale pass), movement tuning block in player.rs (steps 1-3 cells, jump buffer, coyote time, stuck fixes), jetpack fuel 50 ticks + gauge next to the robot, screenshot --pose/--face/--robot. 373 tests pass.
+  - Open: no jetpack bar in the crates/ui HUD. When wave B (light) merges: the robot must be lit by the light map; flame/beam/sparks not darkened; visor glow mask.
+- stutter fix: sim loop on its own 1-thread pool, big ticks on an 8-thread pool (sim_pool.rs); dig circle and sprite beam use this frame's mouse (overlay::aim_point); robot drawn 1.25 ticks behind a steady clock (motion.rs); DEEP_FOUNDRY_PERF=1, DEEP_FOUNDRY_DIG_SCRIPT=1, dig_perf tests (--ignored). Worst dig tick 24-31 ms -> 0.5-2 ms under heavy load. 379 tests pass.
+  - Open: hover box shows the cell for 1-2 ticks before building data arrives; 60 Hz fix checked only by the clock-model test.
 
 ## Running (branch or worktree)
 | Work | Where | Merge notes |
 |---|---|---|
-| Character (Opus): new robot sprites (user's image skill), animations, sprite pass in crates/render, smoother movement | agent worktree | crates/game player.rs + drawing, new crates/render sprite file, assets/sprites, tools/sprites. |
-| Stutter when mining (Opus): measure sim vs main thread while digging; pointer/dig target must follow the mouse every frame | agent worktree | Small changes in crates/game; may touch app.rs, sim_thread.rs, factory_host.rs. |
+| Play-test round 2 (Opus): keep/drop per material when digging, HUD bar transfers with a building window open, guide texts after the workbench, campfire fires raw clay bricks | agent worktree | crates/factory, crates/ui, guide data, small crates/game edits. |
 | Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
 
 ## Next
 1. Play-test fixes merged (tell the user: test point).
-   Then launch play-test round 2 (Opus, new agent), from the user's second play-test:
+   Play-test round 2 is RUNNING (list below is its task):
    - Digging fills the tank with dirt and stone. Make digging useful: common materials (dirt, stone, sand...) are knocked loose or dropped instead of stored, ores and wanted materials are kept; the player can set keep/drop per material in the tank UI.
    - Move resources between the HUD quickbar and the tanks (both ways) without opening the inventory: drag, click and shift-click like Factorio.
    - Guide: after the workbench the user did not know what to do. Check the whole path from spawn to the kiln step: each step says what to do, where, and with which key; the guide advances on every goal. Check the play-test fixes (dig discovers, crate storage) on the merged build.
