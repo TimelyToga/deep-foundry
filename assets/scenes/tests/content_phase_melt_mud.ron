@@ -1,0 +1,13 @@
+// Generated content scene: melt of mud into dirt at 60C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "mud melts into dirt.",
+    legend: {
+        "#4a3722": (material: "mud", temperature: 140),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "dirt", min: 1, pending: true),
+    ],
+)

@@ -1,0 +1,13 @@
+// Generated content scene: melt of stone into lava at 1200C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "stone melts into lava.",
+    legend: {
+        "#6b6a70": (material: "stone", temperature: 1280),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "lava", min: 1, pending: true),
+    ],
+)

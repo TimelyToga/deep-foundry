@@ -1,0 +1,13 @@
+// Generated content scene: raw_cassiterite falls from the air onto the floor.
+Scene(
+    note: "raw_cassiterite falls and settles at the bottom.",
+    legend: {
+        "#2b1f1c": "raw_cassiterite",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "raw_cassiterite"),
+        Count(material: "raw_cassiterite", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

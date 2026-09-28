@@ -1,0 +1,13 @@
+// Generated content scene: melt of pig_iron_dust into molten_pig_iron at 1150C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "pig_iron_dust melts into molten_pig_iron.",
+    legend: {
+        "#4a4a4d": (material: "pig_iron_dust", temperature: 1230),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_pig_iron", min: 1, pending: true),
+    ],
+)

@@ -1,0 +1,13 @@
+// Generated content scene: freeze of molten_pig_iron into pig_iron_block at 1140C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "molten_pig_iron freezes into pig_iron_block.",
+    legend: {
+        "#ffb060": (material: "molten_pig_iron", temperature: 1060),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "pig_iron_block", min: 1, pending: true),
+    ],
+)

@@ -1,0 +1,13 @@
+// Generated content scene: oil falls from the air onto the floor.
+Scene(
+    note: "oil falls and settles at the bottom.",
+    legend: {
+        "#2a2118": "oil",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "oil"),
+        Count(material: "oil", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

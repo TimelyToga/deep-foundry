@@ -1,0 +1,13 @@
+// Generated content scene: melt of tin_block into molten_tin at 232C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "tin_block melts into molten_tin.",
+    legend: {
+        "#c9cdd1": (material: "tin_block", temperature: 312),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_tin", min: 1, pending: true),
+    ],
+)

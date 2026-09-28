@@ -1,0 +1,15 @@
+// Generated content scene: reaction #5 (sulfur_dioxide + water).
+// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+Scene(
+    note: "Reaction: sulfur_dioxide + water.",
+    legend: {
+        "#d8d090": "sulfur_dioxide",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "air", min: 1, pending: true),
+        Total(material: "sulfuric_acid", min: 1, pending: true),
+    ],
+)

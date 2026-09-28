@@ -1,0 +1,13 @@
+// Generated content scene: melt of clay into terracotta at 900C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "clay melts into terracotta.",
+    legend: {
+        "#8a7863": (material: "clay", temperature: 980),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "terracotta", min: 1, pending: true),
+    ],
+)

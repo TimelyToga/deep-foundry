@@ -1,0 +1,15 @@
+// Generated content scene: reaction #26 (roasted_chalcopyrite + coal).
+// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+Scene(
+    note: "Reaction: roasted_chalcopyrite + coal.",
+    legend: {
+        "#5c4a1e": (material: "roasted_chalcopyrite", temperature: 1280),
+        "#181818": "coal",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_copper", min: 1, pending: true),
+        Total(material: "carbon_dioxide", min: 1, pending: true),
+    ],
+)

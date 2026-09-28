@@ -1,0 +1,13 @@
+// Generated content scene: boil of brine into steam at 105C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "brine boils into steam.",
+    legend: {
+        "#3a78c9": (material: "brine", temperature: 185),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "steam", min: 1, pending: true),
+    ],
+)
