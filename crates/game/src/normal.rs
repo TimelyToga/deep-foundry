@@ -7,6 +7,7 @@
 use crate::construct::{BuildView, Construct, DragLine, LocalGhost, Mods, footprint_at, turned_size};
 use crate::factory_host::{FactoryCommand, FactoryFrame, GameCommand, GhostRequest, Placement, PlayerInput, SlotGroup, SlotTarget, Turn};
 use crate::player::MoveInput;
+use crate::robot_sprite::{ToolKind, ToolUse};
 use foundry_content::{Content, ItemRef, Phase, Stack};
 use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId, TechId};
 use foundry_factory::progress::{GoalView, LockReason, TechState as FactoryTechState, TechView};
@@ -91,6 +92,22 @@ impl NormalMode {
         }
         let t = (now.saturating_duration_since(at).as_secs_f32() / foundry_core::TICK_SECONDS as f32).clamp(0.0, 1.0);
         Some((prev.0 + (cur.0 - prev.0) * t, prev.1 + (cur.1 - prev.1) * t))
+    }
+
+    /// The tool the robot uses now (a held mouse button or the scan key), for its picture.
+    pub fn tool_use(&self, content: &Content) -> Option<ToolUse> {
+        let (h, f) = (self.held, &self.frame);
+        let (kind, working, material) = if h.dig {
+            (ToolKind::Dig, f.digging, f.dug_material)
+        } else if h.spray {
+            (ToolKind::Spray, f.spraying, self.spray_material())
+        } else if h.scan {
+            (ToolKind::Scan, true, None)
+        } else {
+            return None;
+        };
+        let color = material.and_then(|m| content.materials.colors[m.index()].first().copied());
+        Some(ToolUse { kind, aim: f.aim, working, color })
     }
 
     /// The building kind of the part in the hand, if it is a building.

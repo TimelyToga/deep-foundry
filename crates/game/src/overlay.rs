@@ -1,6 +1,8 @@
 //! Shapes drawn over the world in the normal mode, with the egui painter of the background layer
-//! (under the UI windows): the robot, the dig circle, a status icon over each building that does
-//! not work, and the construction shapes (`construct_draw.rs`).
+//! (under the UI windows): the jetpack fuel gauge, the dig circle, a status icon over each
+//! building that does not work, and the construction shapes (`construct_draw.rs`).
+//!
+//! The robot itself is drawn by the world renderer as sprites (`robot_sprite.rs`).
 //!
 //! The world renderer does not change. Buildings are body cells, so the renderer draws them.
 
@@ -66,9 +68,10 @@ pub fn draw(painter: &Painter, frame: &FactoryFrame, s: &Scene) {
     for (r, text) in &frame.labels {
         label(painter, &v, *r, text);
     }
+    // The robot itself is a sprite in the world renderer (`robot_sprite.rs`).
     if let Some(r) = &frame.robot {
-        let at = s.robot_at.unwrap_or((r.left as f32 + r.rem.0, r.top as f32 + r.rem.1));
-        robot(painter, &v, r, at, frame);
+        let at = s.robot_at.unwrap_or_else(|| r.draw_top_left());
+        fuel_gauge(painter, &v, r, at, frame.tick);
     }
     construct_draw::draw_over(painter, &v, frame, s.build, s.content, s.atlas);
     let b = s.build;
@@ -87,33 +90,51 @@ pub fn draw(painter: &Painter, frame: &FactoryFrame, s: &Scene) {
     }
 }
 
-fn robot(p: &Painter, v: &View, r: &Robot, at: (f32, f32), frame: &FactoryFrame) {
-    let (x, y) = (at.0 as f64, at.1 as f64);
-    let (w, h) = (ROBOT_W as f64, ROBOT_H as f64);
-    let outline = Stroke::new(1.0, Color32::from_rgb(30, 26, 22));
+/// The jetpack fuel gauge: a thin bar behind the robot, as high as the robot.
+/// - It shows while the jetpack runs and while the fuel is not full.
+/// - Flying: orange. In the air with no push: yellow. Empty: the frame blinks red and "Jet
+///   empty" shows. On the ground, before the refill starts: gray. Refilling: cyan, with an arrow.
+fn fuel_gauge(p: &Painter, v: &View, r: &Robot, at: (f32, f32), tick: u64) {
+    let fraction = r.fuel_fraction();
+    if fraction >= 1.0 && !r.jetting {
+        return;
+    }
     let s = v.scale();
-    let round = CornerRadius::same((s * 1.2).min(6.0) as u8);
-    // Legs: a walking robot moves them.
-    let step = if r.on_ground && r.vel.0.abs() > 0.1 { ((frame.tick / 6) % 2) as f64 } else { 0.5 };
-    let leg = Color32::from_rgb(70, 70, 78);
-    p.rect(v.rect(x + 1.0, y + h - 4.0, x + 3.0, y + h - step), CornerRadius::ZERO, leg, outline, StrokeKind::Inside);
-    p.rect(v.rect(x + w - 3.0, y + h - 4.0, x + w - 1.0, y + h - (1.0 - step)), CornerRadius::ZERO, leg, outline, StrokeKind::Inside);
-    // Body and head.
-    let body = Color32::from_rgb(232, 160, 48);
-    p.rect(v.rect(x, y + 5.0, x + w, y + h - 3.5), round, body, outline, StrokeKind::Inside);
-    p.rect(v.rect(x + 1.0, y, x + w - 1.0, y + 5.5), round, Color32::from_rgb(210, 205, 196), outline, StrokeKind::Inside);
-    // The visor looks in the facing direction.
-    let (ex0, ex1) = if r.facing < 0 { (x + 1.5, x + 4.5) } else { (x + w - 4.5, x + w - 1.5) };
-    p.rect_filled(v.rect(ex0, y + 1.5, ex1, y + 3.5), CornerRadius::ZERO, Color32::from_rgb(90, 220, 255));
-    // A band on the body.
-    p.rect_filled(v.rect(x + 1.0, y + 8.0, x + w - 1.0, y + 9.0), CornerRadius::ZERO, Color32::from_rgb(120, 70, 20));
-    // The tool beam while digging or spraying.
-    if frame.digging || frame.spraying {
-        let from = v.pos(x + w * 0.5 + r.facing as f64 * 3.0, y + 7.0);
-        let to = v.pos(frame.aim.x as f64 + 0.5, frame.aim.y as f64 + 0.5);
-        let c = if frame.digging { Color32::from_rgba_unmultiplied(255, 220, 120, 190) } else { Color32::from_rgba_unmultiplied(140, 200, 255, 190) };
-        p.line_segment([from, to], Stroke::new((s * 0.6).clamp(1.0, 3.0), c));
-        p.circle_filled(to, (s * 1.5).clamp(2.0, 6.0), c);
+    let (x, y) = (at.0 as f64, at.1 as f64);
+    // Behind the backpack.
+    let bar_x = if r.facing >= 0 { x - 4.0 } else { x + ROBOT_W as f64 + 3.0 };
+    let top = v.pos(bar_x, y + 1.0);
+    let height = (ROBOT_H as f32 - 2.0) * s;
+    let width = (s * 1.2).clamp(4.0, 9.0);
+    let frame = Rect::from_min_size(top, vec2(width, height));
+    let empty = r.fuel <= 0.0;
+    let blink = (tick / 8).is_multiple_of(2);
+    let (fill, label) = if r.jetting {
+        (Color32::from_rgb(255, 160, 50), None)
+    } else if empty && !r.on_ground {
+        (Color32::from_rgb(230, 60, 50), Some("Jet empty"))
+    } else if r.refilling() {
+        (Color32::from_rgb(110, 225, 255), None)
+    } else if r.on_ground {
+        (Color32::from_rgb(130, 140, 155), None)
+    } else {
+        (Color32::from_rgb(240, 200, 90), None)
+    };
+    p.rect_filled(frame.expand(1.0), CornerRadius::same(2), Color32::from_black_alpha(170));
+    let level = Rect::from_min_max(pos2(frame.left(), frame.bottom() - height * fraction), frame.max);
+    p.rect_filled(level, CornerRadius::ZERO, fill);
+    let edge = if empty && blink { Color32::from_rgb(255, 70, 60) } else { Color32::from_white_alpha(70) };
+    p.rect_stroke(frame.expand(1.0), CornerRadius::same(2), Stroke::new(1.0, edge), StrokeKind::Outside);
+    if r.refilling() {
+        // An arrow up over the bar: the fuel comes back.
+        let c = pos2(frame.center().x, frame.top() - 6.0);
+        let k = width * 0.6;
+        p.line_segment([c + vec2(-k, 3.0), c], Stroke::new(1.5, fill));
+        p.line_segment([c + vec2(k, 3.0), c], Stroke::new(1.5, fill));
+    }
+    if let Some(text) = label.filter(|_| blink || !empty) {
+        let pos = pos2(frame.center().x, frame.top() - 4.0);
+        p.text(pos, Align2::CENTER_BOTTOM, text, FontId::proportional(12.0), Color32::from_rgb(255, 110, 90));
     }
 }
 
