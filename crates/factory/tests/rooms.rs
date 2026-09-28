@@ -260,6 +260,30 @@ fn powder_that_falls_on_a_roof_hatch_goes_in() {
 }
 
 #[test]
+fn a_kiln_with_bellows_smelts_copper_into_a_barrel() {
+    let (c, mut sim, mut f) = setup();
+    let mut plan = kiln_plan();
+    // A tap in the right wall, at the bottom row of the room, with a barrel outside it.
+    plan.hatches.push(("kiln_hatch", TilePos::new(8, 10)));
+    let id = plan.build(&mut f, &mut sim);
+    let barrel = f.place(kind(&c, "barrel"), TilePos::new(9, 10), 0, false, &mut sim).unwrap();
+    f.set_recipe(id, c.factory.recipe("kiln_copper_raw")).unwrap();
+    f.buildings.insert(&c, id, item(&c, "raw_malachite"), 32);
+    f.buildings.insert(&c, id, item(&c, "charcoal"), 400);
+    // A charcoal fire alone is too cold for copper (1100 °C).
+    run(&mut f, &mut sim, 60 * 10);
+    assert_eq!(f.building_view(id).unwrap().status, Status::TooCold);
+    let copper = item(&c, "molten_copper");
+    let mut ticks = 0;
+    while ticks < 60 * 60 && f.buildings.inventory(barrel).unwrap().count(copper) < 16 {
+        f.buildings.set_blast(id, 300);
+        run(&mut f, &mut sim, 30);
+        ticks += 30;
+    }
+    assert_eq!(f.buildings.inventory(barrel).unwrap().count(copper), 16, "{:?}", f.building_view(id));
+}
+
+#[test]
 fn a_hopper_on_the_roof_hatch_feeds_the_kiln() {
     let (c, mut sim, mut f) = setup();
     let id = kiln_plan().build(&mut f, &mut sim);
