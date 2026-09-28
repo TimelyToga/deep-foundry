@@ -135,7 +135,7 @@
         hardness: 10,
         heat_capacity: 0.6,
         conductivity: 0.08,
-        burn: Some((ignite_at: 300, fire_temp: 800, chance: 0.005, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.05)),
+        burn: Some((ignite_at: 300, fire_temp: 800, chance: 0.005, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.05, char_into: Some("charcoal"))),
         tags: ["flammable", "organic"],
         note: Some("The extractor building takes resin from this wood."),
     ),
