@@ -103,6 +103,35 @@ impl Steps {
     }
 }
 
+/// `W_*` bits for every possible material id (65536 entries), so a lookup needs no range check.
+/// Ids above the last material have no work.
+struct WorkTable(Box<[u8; 1 << 16]>);
+
+impl WorkTable {
+    fn new(work: &[u8]) -> WorkTable {
+        let mut all = vec![0u8; 1 << 16];
+        all[..work.len()].copy_from_slice(work);
+        WorkTable(all.into_boxed_slice().try_into().expect("65536 entries"))
+    }
+
+    #[inline(always)]
+    fn get(&self, m: MaterialId) -> u8 {
+        self.0[m.0 as usize]
+    }
+}
+
+impl Default for WorkTable {
+    fn default() -> Self {
+        WorkTable::new(&[])
+    }
+}
+
+impl std::fmt::Debug for WorkTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "WorkTable({} materials with work)", self.0.iter().filter(|&&w| w != 0).count())
+    }
+}
+
 /// Lookup tables for reactions, built once from the content.
 #[derive(Debug, Default)]
 pub struct ReactTable {
@@ -114,7 +143,7 @@ pub struct ReactTable {
     rules: Vec<Rule>,
     extras: Vec<(MaterialId, f32)>,
     /// `W_*` bits for each material. 0: nothing to do (the fast path).
-    work: Vec<u8>,
+    work: WorkTable,
     /// Air, oxygen and fire: they count as "air" for burning and for `needs_air`.
     oxidizer: Vec<bool>,
     /// Puts out burning cells and fire: cool liquids that do not burn (water) and the tag `fire_out`.
@@ -283,7 +312,7 @@ impl ReactTable {
             pairs,
             rules,
             extras,
-            work,
+            work: WorkTable::new(&work),
             oxidizer,
             quench,
             timer,
@@ -295,7 +324,7 @@ impl ReactTable {
 
     /// True if a cell of this material can react, burn or change in any way.
     pub fn has_work(&self, m: MaterialId) -> bool {
-        self.work.get(m.index()).is_some_and(|&w| w != 0)
+        self.work.get(m) != 0
     }
 
     /// The lowest temperature (°C) at which something can start for a cell of this material by
@@ -347,7 +376,7 @@ pub enum Outcome {
 #[inline]
 pub fn try_react(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> Outcome {
     let t = h.react;
-    let work = t.work.get(m.index()).copied().unwrap_or(0);
+    let work = t.work.get(m);
     if work == 0 {
         return Outcome::None;
     }

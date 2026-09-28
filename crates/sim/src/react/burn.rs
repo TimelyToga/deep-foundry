@@ -230,7 +230,7 @@ fn burning(h: &mut Hood, t: &ReactTable, x: i32, y: i32, b: &Burn) -> Outcome {
     let (dx, dy) = DIRS[h.rng.below(8) as usize];
     let (nx, ny) = (x + dx, y + dy);
     let n = h.mat(nx, ny);
-    if t.work[n.index()] & W_BURN != 0 && h.life(nx, ny) & LIFE_BURNING == 0 && h.rng.chance(SPREAD_CHANCE) {
+    if t.work.get(n) & W_BURN != 0 && h.life(nx, ny) & LIFE_BURNING == 0 && h.rng.chance(SPREAD_CHANCE) {
         ignite_neighbor(h, t, nx, ny, n, false);
     }
     Outcome::KeepAwake
@@ -265,7 +265,7 @@ pub fn fire_cell(h: &mut Hood, t: &ReactTable, x: i32, y: i32, m: MaterialId) ->
             Fired::Yes(false) | Fired::Waiting => return Outcome::None,
         }
     }
-    if t.work[n.index()] & W_BURN != 0 {
+    if t.work.get(n) & W_BURN != 0 {
         if h.life(nx, ny) & LIFE_BURNING == 0 && h.rng.chance(FIRE_IGNITE_CHANCE) {
             ignite_neighbor(h, t, nx, ny, n, true);
         }
