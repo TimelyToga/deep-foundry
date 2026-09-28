@@ -221,6 +221,99 @@ fn storage_slot_clicks_move_items() {
     assert_eq!(g.count(brick), 7);
 }
 
+/// Place the start crate right of the robot and open its window. Returns its id.
+fn open_crate(g: &mut Game) -> BuildingId {
+    let kind = g.content.factory.building("crate").unwrap();
+    g.apply(FactoryCommand::PickToCursor(g.part("crate")));
+    let at = g.free_place(kind);
+    g.apply(FactoryCommand::Place { kind, at, rotation: 0 });
+    g.apply(FactoryCommand::OpenAt(at.origin()));
+    g.host.building_at(at.origin()).unwrap()
+}
+
+#[test]
+fn full_tanks_stop_digging_then_a_crate_takes_the_material() {
+    let mut g = Game::new();
+    let clay = g.content.expect_material("clay");
+    // Fill every tank with other materials.
+    let others = ["sand", "dirt", "gravel", "wood", "ash", "raw_malachite", "raw_cassiterite", "charcoal"];
+    let units = foundry_factory::inventory::PLAYER_TANK_UNITS;
+    g.host.factory.player.empty_tank(0);
+    for id in others {
+        g.give(ItemRef::Material(g.content.expect_material(id)), units);
+    }
+    let r = g.host.robot.rect();
+    let aim = CellPos::new(r.x1 + 6, r.y1 + 3);
+    for y in aim.y - 4..aim.y + 4 {
+        for x in aim.x - 4..aim.x + 4 {
+            g.sim.set_cell(CellPos::new(x, y), clay, None);
+        }
+    }
+    g.apply(FactoryCommand::Input(PlayerInput { aim, dig: true, ..Default::default() }));
+    g.ticks(5);
+    assert_eq!(g.count(ItemRef::Material(clay)), 0, "no room: the clay stays in the ground");
+    assert_eq!(g.sim.cell(aim).material, clay);
+    let f = g.frame();
+    assert!(f.tanks_full && !f.digging);
+    assert!(f.notices.iter().any(|n| n == TANKS_FULL), "{:?}", f.notices);
+    // Stop digging, put the sand tank into a crate (a click on the tank), then dig again.
+    g.apply(FactoryCommand::Input(PlayerInput::default()));
+    let id = open_crate(&mut g);
+    let sand = ItemRef::Material(g.content.expect_material("sand"));
+    let tank = g.host.factory.player.tanks.iter().position(|t| t.material.map(ItemRef::Material) == Some(sand)).unwrap();
+    g.apply(FactoryCommand::Click { target: SlotTarget::Tank(tank), click: Click::Left });
+    assert_eq!(g.host.factory.buildings.inventory(id).unwrap().count(sand), units);
+    assert_eq!(g.count(sand), 0);
+    g.apply(FactoryCommand::Input(PlayerInput { aim, dig: true, ..Default::default() }));
+    g.ticks(5);
+    assert!(g.count(ItemRef::Material(clay)) > 0);
+    // After a while without a full tank, the HUD warning goes away.
+    g.apply(FactoryCommand::Input(PlayerInput::default()));
+    g.ticks(TANKS_FULL_TICKS as u32 + 1);
+    assert!(!g.frame().tanks_full);
+}
+
+#[test]
+fn a_crate_refuses_water_and_a_tank_can_be_emptied() {
+    let mut g = Game::new();
+    let water = ItemRef::Material(g.content.expect_material("water"));
+    g.give(water, 300);
+    let id = open_crate(&mut g);
+    let tank = g.host.factory.player.tanks.iter().position(|t| t.material.map(ItemRef::Material) == Some(water)).unwrap();
+    g.apply(FactoryCommand::Click { target: SlotTarget::Tank(tank), click: Click::Left });
+    assert_eq!(g.host.factory.buildings.inventory(id).unwrap().count(water), 0);
+    assert!(g.frame().notices.iter().any(|n| n.contains("put liquids in a barrel")));
+    g.apply(FactoryCommand::EmptyTank(tank));
+    assert_eq!(g.count(water), 0);
+    assert!(g.frame().notices.iter().any(|n| n.starts_with("Emptied a tank: 300 units of Water")));
+}
+
+#[test]
+fn the_hub_window_shows_later_stages_and_gives_items_back() {
+    let mut g = Game::new();
+    let (hub, rect) = g.hub();
+    let wire = ItemRef::Part(g.part("copper_wire"));
+    g.give(wire, 50);
+    g.apply(FactoryCommand::OpenAt(CellPos::new(rect.x0 + 2, rect.y0 + 2)));
+    let f = g.frame();
+    assert!(f.later_milestones.iter().any(|m| m.stage == 2 && m.items.iter().any(|d| d.item == wire)));
+    // Copper wire is for stage 2: the Hub holds it, and a click gives it back.
+    let slot = g.host.factory.player.slots.iter().position(|s| s.is_some_and(|s| ItemRef::Part(s.part) == wire)).unwrap();
+    g.apply(FactoryCommand::Click { target: SlotTarget::Inventory(slot), click: Click::Shift });
+    g.ticks(5);
+    assert_eq!(g.host.factory.buildings.inventory(hub).unwrap().count(wire), 50, "stage 1 does not use it");
+    let places = g.frame().building.unwrap().inventory.unwrap().places();
+    let index = places.iter().position(|p| p.item == Some(wire)).unwrap();
+    g.apply(FactoryCommand::Click { target: SlotTarget::Building { id: hub, group: SlotGroup::Input, index }, click: Click::Left });
+    assert_eq!(g.count(wire), 50);
+    // The Hub does not take what no stage needs.
+    let crate_part = ItemRef::Part(g.part("crate"));
+    let slot = g.host.factory.player.slots.iter().position(|s| s.is_some_and(|s| ItemRef::Part(s.part) == crate_part)).unwrap();
+    g.apply(FactoryCommand::Click { target: SlotTarget::Inventory(slot), click: Click::Shift });
+    assert_eq!(g.count(crate_part), 1);
+    assert!(g.frame().notices.iter().any(|n| n.contains("no repair stage needs it")));
+}
+
 #[test]
 fn research_needs_discoveries_then_starts() {
     let mut g = Game::new();

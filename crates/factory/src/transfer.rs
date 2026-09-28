@@ -318,13 +318,67 @@ mod tests {
     }
 
     #[test]
+    fn an_old_save_gets_the_new_tanks_and_crates() {
+        let (mut f, mut sim) = setup();
+        let c = f.content.clone();
+        let crate_ = place(&mut f, &mut sim, "crate", TilePos::new(4, 4));
+        let (clay, gear) = (mat(&f, "clay"), part(&f, "bronze_gear"));
+        // The shapes of the version before: 4 robot tanks of 2,000 units, crates for parts only.
+        f.player = crate::Inventory::new(40, 4, 2000);
+        f.player.insert(&c, clay, 1500);
+        let Some(Logic::Storage(inv)) = f.buildings.get_mut(crate_).map(|b| &mut b.logic) else { panic!() };
+        *inv = crate::Inventory::new(8, 0, 1000);
+        inv.slots[3] = Some(PartStack::new(f.content.factory.part("bronze_gear").unwrap(), 7));
+        let save = f.save();
+        f.load(save);
+        assert_eq!(f.player.tanks.len(), crate::inventory::PLAYER_TANKS);
+        assert!(f.player.tanks.iter().all(|t| t.capacity == PLAYER_TANK_UNITS));
+        assert_eq!(f.player.count(clay), 1500);
+        let inv = f.buildings.inventory(crate_).unwrap();
+        assert!(inv.mixed);
+        assert_eq!(inv.place_stack(3), Some(Stack { item: gear, count: 7 }), "the part keeps its slot");
+        assert_eq!(f.tank_to_building(0, Click::Left, crate_), Ok(1500));
+    }
+
+    #[test]
+    fn items_in_crates_count_for_the_guide() {
+        use crate::progress::GuideState;
+        let (mut f, mut sim) = setup();
+        let c = f.content.clone();
+        let crate_ = place(&mut f, &mut sim, "crate", TilePos::new(4, 4));
+        let sand = mat(&f, "sand");
+        f.player.insert(&c, sand, 60);
+        f.buildings.insert(&c, crate_, sand, 50);
+        assert_eq!(f.item_count(sand), 110);
+    }
+
+    #[test]
+    fn the_first_dig_discovers_the_material() {
+        let (mut f, _) = setup();
+        let malachite = f.content.expect_material("malachite");
+        let raw = f.content.expect_material("raw_malachite");
+        assert!(f.take_dug_cell(malachite));
+        assert_eq!(f.player.count(ItemRef::Material(raw)), 1, "the vein breaks into raw ore");
+        assert!(f.progress.is_material_discovered(malachite) && f.progress.is_material_discovered(raw));
+        let events: Vec<_> = f.progress.drain_events().collect();
+        assert_eq!(events.len(), 2, "one discovery each: {events:?}");
+        assert!(f.take_dug_cell(malachite));
+        assert_eq!(f.progress.drain_events().count(), 0, "a second dig discovers nothing");
+        // No room: nothing is taken.
+        for t in &mut f.player.tanks {
+            t.material = Some(f.content.expect_material("sand"));
+            t.units = t.capacity;
+        }
+        assert!(!f.take_dug_cell(malachite));
+    }
+
+    #[test]
     fn the_hub_takes_only_what_a_stage_needs_and_gives_it_back() {
         let (mut f, mut sim) = setup();
         let c = f.content.clone();
         let hub = place(&mut f, &mut sim, "hub", TilePos::new(4, 4));
         f.buildings.set_hub_rule(HubRule { stage: 0, need: Some(Arc::new(f.progress.hub_need(&c))) });
-        let (wood, plate, wire) = (part(&f, "bronze_gear"), part(&f, "bronze_plate"), part(&f, "copper_wire"));
-        let _ = wood;
+        let (plate, wire) = (part(&f, "bronze_plate"), part(&f, "copper_wire"));
         f.player.insert(&c, mat(&f, "wood"), 50);
         let err = f.tank_to_building(0, Click::Left, hub).unwrap_err();
         assert!(err.contains("no repair stage needs it"), "{err}");
