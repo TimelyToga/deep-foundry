@@ -36,6 +36,12 @@ Commands:
   determinism <scene> [--ticks N] [--every K]
       Run a scene twice (the second time on one thread). Compare world
       hashes every K ticks (default 100).
+  worldgen [--seed N] [--area X,Y,W,H] [--png out.png] [--scale K] [--depth D]
+      Make the cells of an area with the world generator (no simulation) and
+      write a PNG (default: the start area to out/worldgen.png). Each pixel
+      is K x K cells (default: the picture fits in 4000 pixels). --depth is
+      the world depth below the surface in chunks (default 128). Prints the
+      time per chunk on one thread (mean of up to 1000 chunks).
   help
       Show this text.
 
@@ -65,6 +71,7 @@ fn run(args: &[String]) -> Result<bool> {
         "test" => cmd_test(&Args::parse(rest, &[], &[])?),
         "bench" => cmd_bench(&Args::parse(rest, &["--ticks", "--repeat", "--png"], &["--save-baseline", "--compare"])?),
         "determinism" => cmd_determinism(&Args::parse(rest, &["--ticks", "--every"], &[])?),
+        "worldgen" => cmd_worldgen(&Args::parse(rest, &["--seed", "--area", "--png", "--scale", "--depth"], &[])?),
         "help" | "--help" | "-h" => {
             print!("{HELP}");
             Ok(true)
@@ -110,6 +117,45 @@ impl Args {
     fn switch(&self, name: &str) -> bool {
         self.switches.iter().any(|s| s == name)
     }
+}
+
+fn cmd_worldgen(a: &Args) -> Result<bool> {
+    use foundry_worldgen::{WorldGen, WorldGenSettings};
+    let seed: u64 = match a.value("--seed") {
+        Some(v) => v.parse().with_context(|| format!("--seed: `{v}` is not a whole number"))?,
+        None => 1,
+    };
+    let depth = a.number("--depth")?.unwrap_or(foundry_sim::DEFAULT_DEPTH_CHUNKS as u32) as i32;
+    let settings = WorldGenSettings::for_world(foundry_sim::DEFAULT_SKY_CHUNKS, depth.max(1));
+    let (x, y, w, h) = match a.value("--area") {
+        Some(v) => {
+            let n: Vec<i32> = v.split(',').map(|p| p.trim().parse()).collect::<Result<_, _>>().with_context(|| format!("--area: `{v}` is not X,Y,W,H"))?;
+            let [x, y, w, h] = n[..] else { bail!("--area needs four numbers: X,Y,W,H") };
+            if w <= 0 || h <= 0 {
+                bail!("--area: the width and height must be above 0");
+            }
+            (x, y, w, h)
+        }
+        None => (-1600, settings.surface_y - 400, 3200, 800),
+    };
+    let png = a.value("--png").map(PathBuf::from).unwrap_or_else(|| paths::out_dir().join("worldgen.png"));
+    let k = match a.number("--scale")? {
+        Some(k) => k.max(1) as i32,
+        None => ((w.max(h) + 3999) / 4000).max(1),
+    };
+    let content = load_content()?;
+    let source = WorldGen::new(&content, settings);
+    let (area, t) = foundry_headless::worldgen::generate_area(&source, seed, x, y, w, h);
+    foundry_headless::worldgen::draw(&area, &content, settings.surface_y, k).save_png(&png)?;
+    println!(
+        "worldgen seed {seed}: area {x},{y} {w} x {h} cells, {} chunks in {:.3} s on {} threads",
+        t.chunks,
+        t.total_s,
+        rayon::current_num_threads()
+    );
+    println!("one thread: {:.1} microseconds per chunk (mean of {} chunks)", t.per_chunk_us, t.chunks.min(1000));
+    println!("picture: {} ({} cells per pixel)", png.display(), k);
+    Ok(true)
 }
 
 fn load_content() -> Result<Arc<Content>> {

@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+description = "World generation: a chunk source for the surface and the upper stone layer."
 
 [dependencies]
 foundry_core.workspace = true
 foundry_content.workspace = true
+foundry_sim.workspace = true
