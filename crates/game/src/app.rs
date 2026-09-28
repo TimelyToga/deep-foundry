@@ -30,7 +30,7 @@ use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
 use foundry_content::Content;
 use foundry_factory::Guide;
-use foundry_core::{CellPos, CellRect, CellTexel, ChunkPos, Command, DebugChunk, MaterialId, PaintMode};
+use foundry_core::{CellPos, CellRect, CellTexel, ChunkPos, Command, DebugChunk, MaterialId, PaintMode, TILE_SIZE, TilePos};
 use foundry_render::headless::device_descriptor;
 use foundry_render::{Renderer, wgpu};
 use foundry_sim::Simulation;
@@ -1201,16 +1201,17 @@ impl Game {
                 event_loop.exit();
             }
             step => {
-                // The normal-mode steps. `Ok(true)`: done; `Ok(false)`: try again next frame.
+                // The normal-mode steps. `Ok(None)`: done; `Ok(Some(step))`: do this step in the
+                // next frame.
                 let result = self.smoke_normal(&step);
                 let Some(smoke) = self.smoke.as_mut() else { return };
                 match result {
-                    Ok(true) => {
+                    Ok(None) => {
                         println!("smoke test: {step:?} ok");
                         smoke.passed_expect();
                     }
-                    Ok(false) => {
-                        if !smoke.retry(step) {
+                    Ok(Some(next)) => {
+                        if !smoke.retry(next) {
                             eprintln!("smoke test failed: {:?}; messages: {:?}", smoke.failure, self.ui.message_log);
                             event_loop.exit();
                         }
@@ -1226,10 +1227,17 @@ impl Game {
     }
 
     /// One normal-mode step of the smoke test.
-    fn smoke_normal(&mut self, step: &Step) -> Result<bool, String> {
+    fn smoke_normal(&mut self, step: &Step) -> Result<Option<Step>, String> {
         let content = self.content.clone();
         let near_clay = self.nearest_cell(content.material("clay"));
         let open_kind = self.ui.model.building.as_ref().map(|b| b.kind);
+        let free_row = match step {
+            Step::DragBelts { tiles, step: 0 } => self.free_row(*tiles),
+            _ => None,
+        };
+        let row = self.smoke.as_ref().and_then(|s| s.row);
+        let mut new_row = None;
+        let middle = |t: TilePos, i: i32| CellPos::new((t.x + i) * TILE_SIZE + TILE_SIZE / 2, t.y * TILE_SIZE + TILE_SIZE / 2);
         let Some(w) = self.world.as_mut() else { return Err("no world".into()) };
         let Some(n) = w.normal.as_mut() else { return Err("not the normal mode".into()) };
         let mut cmds: Vec<GameCommand> = vec![];
@@ -1241,7 +1249,79 @@ impl Game {
             let hand = f.cursor.filter(|c| c.item == item).map_or(0, |c| c.count);
             Ok(tanks + slots + hand)
         };
+        let mut again: Option<Step> = None;
         let done = match *step {
+            Step::DragBelts { tiles, step: k } => {
+                let belt = content.item("wood_belt").ok_or("no wood belt")?;
+                if k == 0 {
+                    // Take belts into the hand first.
+                    if n.frame.cursor.map(|c| c.item) != Some(belt) {
+                        if let foundry_content::ItemRef::Part(p) = belt {
+                            cmds.push(FactoryCommand::PickToCursor(p).into());
+                        }
+                        again = Some(step.clone());
+                        false
+                    } else {
+                        let start = free_row.ok_or("no free row in the air near the robot")?;
+                        new_row = Some(start);
+                        n.aim_override = Some(middle(start, 0));
+                        cmds = n.press(&content, true, middle(start, 0), Mods::default());
+                        again = Some(Step::DragBelts { tiles, step: 1 });
+                        false
+                    }
+                } else if k < tiles {
+                    // The frame sends the new placements for the moved mouse.
+                    let start = row.ok_or("no row")?;
+                    n.aim_override = Some(middle(start, k));
+                    again = Some(Step::DragBelts { tiles, step: k + 1 });
+                    false
+                } else {
+                    n.release(true);
+                    n.aim_override = None;
+                    true
+                }
+            }
+            Step::Count(id, count) => item_count(n, id)? == count,
+            Step::Undo => {
+                cmds = n.undo(false);
+                true
+            }
+            Step::Redo => {
+                cmds = n.undo(true);
+                true
+            }
+            Step::RemoveDrag { tiles, step: k } => {
+                let start = row.ok_or("no row")?;
+                let at = middle(start, k);
+                n.aim_override = Some(at);
+                if k == 0 {
+                    // Press when the host reports the belt under the mouse.
+                    if n.building_under(at) {
+                        cmds = n.press(&content, false, at, Mods::default());
+                        again = Some(Step::RemoveDrag { tiles, step: 1 });
+                    } else {
+                        again = Some(step.clone());
+                    }
+                    false
+                } else if k + 1 < tiles {
+                    again = Some(Step::RemoveDrag { tiles, step: k + 1 });
+                    false
+                } else {
+                    true
+                }
+            }
+            Step::Pipette(i) => {
+                let at = middle(row.ok_or("no row")?, i);
+                n.aim_override = Some(at);
+                if n.building_under(at) {
+                    cmds = n.pipette(&content, at);
+                    n.aim_override = None;
+                    true
+                } else {
+                    false
+                }
+            }
+            Step::InHand(id) => n.frame.cursor.map(|c| c.item) == content.item(id),
             Step::DigClay => {
                 let at = near_clay.ok_or("no clay in reach of the robot")?;
                 n.aim_override = Some(at);
@@ -1250,6 +1330,8 @@ impl Game {
             }
             Step::StopTools => {
                 n.held = Default::default();
+                n.release(true);
+                n.release(false);
                 n.aim_override = None;
                 true
             }
@@ -1287,7 +1369,41 @@ impl Game {
         for c in cmds {
             w.sim.send(c);
         }
-        Ok(done)
+        if let (Some(r), Some(s)) = (new_row, self.smoke.as_mut()) {
+            s.row = Some(r);
+        }
+        Ok(if done { None } else { Some(again.unwrap_or_else(|| step.clone())) })
+    }
+
+    /// The first tile of a row of free tiles (only air) two to seven tiles above the robot, in
+    /// reach, from the chunk images.
+    fn free_row(&self, tiles: i32) -> Option<TilePos> {
+        let r = self.world.as_ref()?.normal.as_ref()?.frame.robot?;
+        let rect = r.rect();
+        let (cx, cy) = r.center();
+        let top = TilePos::new(rect.x0.div_euclid(TILE_SIZE), rect.y0.div_euclid(TILE_SIZE));
+        let air = |t: TilePos| {
+            let o = t.origin();
+            (0..TILE_SIZE).all(|y| {
+                (0..TILE_SIZE).all(|x| {
+                    let p = CellPos::new(o.x + x, o.y + y);
+                    self.cells.get(&p.chunk()).and_then(|c| c.get(p.local_index())).is_some_and(|t| t[0] == MaterialId::AIR.0)
+                })
+            })
+        };
+        let near = |t: TilePos| {
+            let (dx, dy) = ((t.x * TILE_SIZE + 4) as f32 - cx, (t.y * TILE_SIZE + 4) as f32 - cy);
+            (dx * dx + dy * dy).sqrt() < crate::tools::REACH - 12.0
+        };
+        for dy in 2..8 {
+            for dx in -2..=2 {
+                let start = TilePos::new(top.x + dx, top.y - dy);
+                if (0..tiles).map(|i| TilePos::new(start.x + i, start.y)).all(|t| air(t) && near(t)) {
+                    return Some(start);
+                }
+            }
+        }
+        None
     }
 
     /// The cell of a material in the chunk images that is nearest to the robot and in reach.

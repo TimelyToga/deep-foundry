@@ -766,7 +766,9 @@ impl FactoryHost {
         let reasons = p.lock_reasons(&content, tech);
         let result = if reasons.is_empty() {
             p.start_research(&content, tech)
-        } else if reasons.iter().all(|r| matches!(r, LockReason::NeedsTech(_))) {
+        } else if reasons.iter().any(|r| matches!(r, LockReason::NeedsTech(_))) {
+            // As in Factorio: queue the technologies it needs, then this one. The queue starts
+            // each one when it can (tier, points and discoveries are checked then).
             p.queue_research(&content, tech)
         } else {
             Err(reasons[0].clone())

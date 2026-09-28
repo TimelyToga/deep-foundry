@@ -250,6 +250,30 @@ fn research_needs_discoveries_then_starts() {
 }
 
 #[test]
+fn research_queues_the_technologies_it_needs_first() {
+    let mut g = Game::new();
+    let (bronze, research) = (g.content.factory.tech("bronze").unwrap(), g.content.factory.tech("research").unwrap());
+    // Research needs Bronze, and Bronze needs discoveries: both wait in the queue, in order.
+    g.apply(FactoryCommand::StartResearch(research));
+    assert_eq!(g.host.factory.progress.queue(), &[bronze, research]);
+    // The research window offers the Queue button for such a technology.
+    let views = g.host.factory.progress.tech_views(&g.content);
+    let entry = crate::normal::tech_entry(&views[research.0 as usize]);
+    assert!(!entry.can_queue, "it is queued already");
+    let steam = g.content.factory.tech("steam_power").unwrap();
+    let entry = crate::normal::tech_entry(&views[steam.0 as usize]);
+    assert!(!entry.can_queue, "Tier 1 is not open yet");
+    // When the discoveries are made, Bronze runs, then Research follows from the queue.
+    for id in ["malachite", "cassiterite"] {
+        g.host.factory.scan(g.content.expect_material(id));
+    }
+    g.ticks(2);
+    let p = &g.host.factory.progress;
+    assert!(p.is_researched(bronze));
+    assert!(p.is_researched(research) || p.current() == Some(research), "{:?} {:?}", p.current(), p.queue());
+}
+
+#[test]
 fn cancel_craft_gives_the_ingredients_back() {
     let mut g = Game::new();
     let wood = ItemRef::Material(g.content.expect_material("wood"));

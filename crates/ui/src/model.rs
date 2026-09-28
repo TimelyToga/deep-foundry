@@ -94,6 +94,9 @@ pub struct TechEntry {
     pub reasons: Vec<String>,
     /// Place in the research queue (0 = next). `None` if it is not queued.
     pub queue_position: Option<usize>,
+    /// Locked only because technologies before it are not done: the Queue button queues them
+    /// first, then this one (`UiAction::StartResearch`).
+    pub can_queue: bool,
 }
 
 /// One goal of the guide (like a quest in the GTNH quest book).

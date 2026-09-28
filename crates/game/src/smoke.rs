@@ -3,9 +3,12 @@
 //! - sandbox: new game, paint, pause, save, resume, load, quit to the main menu, continue, delete
 //!   the save;
 //! - normal mode: new game, dig clay, hand craft a clay brick and a workbench, place the
-//!   workbench, open its window, save, load, check the inventory, delete the save;
+//!   workbench, open its window, craft belts, drag a line of belts, undo, redo, remove belts with
+//!   the remove button, pick a belt with the pipette, save, load, check the inventory, delete the
+//!   save;
 //! - quit.
 
+use foundry_core::TilePos;
 use foundry_ui::{GameMode, UiAction, WorldSize};
 use std::collections::VecDeque;
 
@@ -33,6 +36,22 @@ pub enum Step {
     OpenPlaced,
     /// Normal mode: the window of a building of this type must be open.
     WindowOf(&'static str),
+    /// Normal mode: take belts into the hand, find a free row of `tiles` tiles in the air near the
+    /// robot, press the left button on its first tile and move the mouse one tile per frame to its
+    /// end, then let go. `step` counts the frames.
+    DragBelts { tiles: i32, step: i32 },
+    /// Normal mode: exactly this many of an item in the inventory and the hand.
+    Count(&'static str, u32),
+    /// Normal mode: Ctrl + Z, Ctrl + Y.
+    Undo,
+    Redo,
+    /// Normal mode: press the right button on the first belt of the row and move over `tiles`
+    /// belts. The button stays down until `StopTools`.
+    RemoveDrag { tiles: i32, step: i32 },
+    /// Normal mode: the pipette (Q) on the belt at this place in the row.
+    Pipette(i32),
+    /// Normal mode: this item is in the hand.
+    InHand(&'static str),
     /// The test passed: close the window.
     Done,
 }
@@ -49,6 +68,8 @@ pub struct Smoke {
     /// Frames spent on the current `Expect`.
     tries: u32,
     pub failure: Option<String>,
+    /// The first tile of the belt row of `DragBelts`.
+    pub row: Option<TilePos>,
 }
 
 impl Smoke {
@@ -85,6 +106,20 @@ impl Smoke {
             (5, Step::PlaceNear("workbench")),
             (10, Step::OpenPlaced),
             (1, Step::WindowOf("workbench")),
+            // Construction: a drag line, undo, redo, the remove button, the pipette.
+            (5, Step::Craft("wood_belt", 2)),
+            (1, Step::Have("wood_belt", 4)),
+            (5, Step::DragBelts { tiles: 4, step: 0 }),
+            (1, Step::Count("wood_belt", 0)),
+            (5, Step::Undo),
+            (1, Step::Count("wood_belt", 4)),
+            (5, Step::Redo),
+            (1, Step::Count("wood_belt", 0)),
+            (5, Step::RemoveDrag { tiles: 3, step: 0 }),
+            (1, Step::Count("wood_belt", 3)),
+            (1, Step::StopTools),
+            (5, Step::Pipette(3)),
+            (1, Step::InHand("wood_belt")),
             (10, Step::Act(UiAction::Pause)),
             (5, Step::Act(UiAction::Save { name: normal_save.into(), overwrite: false })),
             (1, Step::Expect("Game saved: smoke normal")),
@@ -97,7 +132,7 @@ impl Smoke {
             (1, Step::Expect("Deleted: smoke normal")),
             (10, Step::Done),
         ];
-        Self { steps: steps.into_iter().collect(), wait: 0, tries: 0, failure: None }
+        Self { steps: steps.into_iter().collect(), wait: 0, tries: 0, failure: None, row: None }
     }
 
     /// The step to run in this frame, if its wait is over.
