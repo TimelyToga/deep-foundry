@@ -27,6 +27,7 @@ pollster = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 crossbeam-channel = "0.5"
 log.workspace = true
+rayon.workspace = true
 env_logger = "0.11"
 anyhow.workspace = true
 spin_sleep = "1.3"

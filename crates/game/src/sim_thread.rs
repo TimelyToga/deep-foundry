@@ -1,10 +1,14 @@
 //! Runs the simulation on its own thread at a fixed 60 ticks per second.
 //!
 //! Each tick: apply all queued commands, call `advance`, then publish a snapshot to the mailbox.
+//! The loop runs on its own worker threads (`sim_pool.rs`): a tick with little work runs on one
+//! thread, so it does not wait for other threads.
 //! The timing uses deadlines: tick N starts at `start + N × tick length`. If the thread falls behind,
 //! it runs at most `MAX_CATCH_UP` ticks at once and then forgets the rest of the lost time.
 
 use crate::factory_host::{self, FactoryFrame, FactoryHost, FactoryMailbox, GameCommand};
+use crate::perf::SimPerf;
+use crate::sim_pool::{self, Workers};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use foundry_core::{Command, Snapshot, SnapshotMailbox, TICK_SECONDS};
 use foundry_sim::Simulation;
@@ -46,7 +50,7 @@ impl SimThread {
             let (mailbox, factory, stop, tps) = (mailbox.clone(), factory.clone(), stop.clone(), tps.clone());
             std::thread::Builder::new()
                 .name("simulation".into())
-                .spawn(move || run(sim, host, rx, &mailbox, &factory, &stop, &tps))
+                .spawn(move || sim_pool::run(|w| run(w, sim, host, rx, &mailbox, &factory, &stop, &tps)))
                 .expect("cannot start the simulation thread")
         };
         Self { commands: tx, mailbox, factory, stop, tps, handle: Some(handle) }
@@ -90,7 +94,9 @@ impl Drop for SimThread {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run(
+    workers: &mut Workers,
     mut sim: Simulation,
     mut host: Option<FactoryHost>,
     commands: Receiver<GameCommand>,
@@ -105,6 +111,8 @@ fn run(
     let mut count = 0u32;
     // Messages for the player, sent with the next snapshot.
     let mut notices: Vec<String> = Vec::new();
+    // Timing logs (`DEEP_FOUNDRY_PERF`).
+    let mut perf = SimPerf::new();
     while !stop.load(Ordering::Relaxed) {
         let now = Instant::now();
         if now < next {
@@ -113,14 +121,20 @@ fn run(
         }
         let mut ran = 0;
         while ran < MAX_CATCH_UP && Instant::now() >= next {
+            perf.begin(ran > 0);
             loop {
                 match commands.try_recv() {
                     Ok(GameCommand::Sim(Command::SaveWorld { path })) => {
-                        notices.push(save_world(&sim, &path));
+                        // `&mut`: a shared `Simulation` cannot go to another thread (it is not `Sync`).
+                        let (sim, at) = (&mut sim, &path);
+                        notices.push(workers.big(true, move || save_world(sim, at)));
                         factory_host::save_side(host.as_ref(), &path, &mut notices);
                     }
-                    Ok(GameCommand::Sim(Command::LoadWorld { path })) => notices.push(load_world(&mut sim, &path)),
-                    Ok(GameCommand::Sim(cmd)) => sim.apply(cmd),
+                    Ok(GameCommand::Sim(Command::LoadWorld { path })) => notices.push(workers.big(true, || load_world(&mut sim, &path))),
+                    Ok(GameCommand::Sim(cmd)) => {
+                        workers.note(&cmd, sim.view());
+                        sim.apply(cmd);
+                    }
                     Ok(GameCommand::Factory(cmd)) => {
                         if let Some(h) = host.as_mut() {
                             h.apply(cmd, &mut sim);
@@ -130,26 +144,37 @@ fn run(
                     Err(TryRecvError::Disconnected) => return,
                 }
             }
-            if sim.advance() {
+            perf.mark();
+            let ticked = workers.tick(sim.stats().awake_chunks, || sim.advance());
+            perf.mark();
+            if ticked {
                 count += 1;
                 if let Some(h) = host.as_mut() {
                     h.tick(&mut sim);
                 }
             }
+            perf.mark();
             let mut snapshot = sim.take_snapshot();
-            if let Some(h) = host.as_mut() {
-                factory.publish(h.frame(&sim, snapshot.tick));
+            perf.mark();
+            let frame = host.as_mut().map(|h| h.frame(&sim, snapshot.tick));
+            perf.mark();
+            perf.snapshot(&snapshot, ticked, workers.on_crew());
+            if let Some(f) = frame {
+                factory.publish(f);
             }
             snapshot.notices.append(&mut notices);
             mailbox.publish(snapshot);
+            perf.end();
             next += tick;
             ran += 1;
         }
         // Still late after the catch-up ticks: forget the lost time.
         let now = Instant::now();
         if now > next + tick {
+            perf.lost(now.duration_since(next));
             next = now;
         }
+        perf.print_each_second();
         let since = now.duration_since(count_start);
         if since >= Duration::from_secs(1) {
             tps.store((count as f32 / since.as_secs_f32()).to_bits(), Ordering::Relaxed);
