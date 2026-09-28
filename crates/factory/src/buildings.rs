@@ -790,7 +790,7 @@ impl Buildings {
 
     /// Take up to `n` units out of the fuel slot of a machine. Returns the material and the count.
     pub fn take_fuel(&mut self, id: BuildingId, n: u32) -> Option<(MaterialId, u32)> {
-        let Some(b) = self.get_mut(id) else { return None };
+        let b = self.get_mut(id)?;
         let Logic::Machine(m) = &mut b.logic else { return None };
         let taken = m.fuel.as_mut()?.take(n);
         if taken.is_some() {

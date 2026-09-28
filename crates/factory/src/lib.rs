@@ -6,7 +6,7 @@
 //!
 //! Module owners (docs/design/04-build-plan.md):
 //! - `buildings`, `placement`, `geometry`, `cells`, `inventory`, `crafting`, `machines`,
-//!   `logistics`, `views`, `progress_link`: task "factory-core"
+//!   `logistics`, `views`, `progress_link`, `transfer`, `digging`: task "factory-core"
 //! - `progress` (technologies, labs, milestones, discovery, guide): task "progression"
 //! - networks (power, fluids, signals): a later task
 //!
