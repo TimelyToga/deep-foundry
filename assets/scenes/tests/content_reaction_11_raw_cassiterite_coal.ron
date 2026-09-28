@@ -1,5 +1,5 @@
 // Generated content scene: reaction #11 (raw_cassiterite + coal).
-// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+// A touches B.
 Scene(
     note: "Reaction: raw_cassiterite + coal.",
     legend: {
@@ -9,7 +9,7 @@ Scene(
     },
     ticks: 300,
     checks: [
-        Total(material: "molten_tin", min: 1, pending: true),
-        Total(material: "carbon_dioxide", min: 1, pending: true),
+        Total(material: "molten_tin", min: 1),
+        Total(material: "carbon_dioxide", min: 1),
     ],
 )

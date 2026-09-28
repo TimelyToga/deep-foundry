@@ -1,5 +1,5 @@
 // Generated content scene: reaction #24 (crushed_chalcopyrite + air).
-// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+// A touches B.
 Scene(
     note: "Reaction: crushed_chalcopyrite + air.",
     legend: {
@@ -9,7 +9,7 @@ Scene(
     },
     ticks: 300,
     checks: [
-        Total(material: "roasted_chalcopyrite", min: 1, pending: true),
-        Total(material: "sulfur_dioxide", min: 1, pending: true),
+        Total(material: "roasted_chalcopyrite", min: 1),
+        Total(material: "sulfur_dioxide", min: 1),
     ],
 )

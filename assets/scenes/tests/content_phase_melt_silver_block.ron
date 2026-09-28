@@ -1,13 +1,14 @@
 // Generated content scene: melt of silver_block into molten_silver at 962C.
-// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
 Scene(
     note: "silver_block melts into molten_silver.",
     legend: {
         "#d6d8da": (material: "silver_block", temperature: 1042),
         "#6b6a70": "stone",
     },
-    ticks: 300,
+    ticks: 3,
     checks: [
-        Total(material: "molten_silver", min: 1, pending: true),
+        Total(material: "molten_silver", min: 1),
     ],
 )

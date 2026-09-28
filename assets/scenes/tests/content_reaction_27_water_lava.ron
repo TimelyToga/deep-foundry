@@ -1,5 +1,5 @@
 // Generated content scene: reaction #27 (water + lava).
-// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+// A touches B.
 Scene(
     note: "Reaction: water + lava.",
     legend: {
@@ -9,7 +9,7 @@ Scene(
     },
     ticks: 300,
     checks: [
-        Total(material: "steam", min: 1, pending: true),
-        Total(material: "obsidian", min: 1, pending: true),
+        Total(material: "steam", min: 1),
+        Total(material: "obsidian", min: 1),
     ],
 )
