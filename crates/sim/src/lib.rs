@@ -36,6 +36,9 @@ pub use world::MemoryStats;
 pub enum SimEvent {
     /// An explosion at a cell. Task 1C (explosions) handles the queue after movement.
     Explosion { at: CellPos, strength: f32, heat: i16 },
+    /// A reaction rule fired. `index` is the index into `Content::reactions`; `at` is the cell of
+    /// input A. At most one event for each reaction in each tick (the first in the update order).
+    Reaction { index: u16, at: CellPos },
 }
 
 use chunk::{Chunk, FLAG_PARITY};
@@ -492,6 +495,8 @@ impl Simulation {
             &mut self.events,
             &mut spawns,
         );
+        // Each job sends a reaction once; keep only the first of each reaction for the whole tick.
+        react::dedupe_reaction_events(&mut self.events);
         for sp in spawns {
             self.particles.spawn(sp, self.settings.max_particles);
         }

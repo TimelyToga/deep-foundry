@@ -1,0 +1,20 @@
+// Oil burns only where air touches it: the pool burns away from the top down.
+// Picture (100 x 60): open stone box, inside x 4..96, walls from y 20, floor at y 56.
+// Oil y 36..56 (92 x 20 = 1840 cells). Its top row (y 36, 92 cells) starts at 300 °C, above the
+// ignition point of oil (250 °C).
+Scene(
+    note: "An oil pool burns at its surface. The oil under the surface stays until the fire gets to it.",
+    legend: {
+        "#2a2118": "oil",
+        "#8a4a20": (material: "oil", temperature: 300),
+        "#6b6a70": "stone",
+    },
+    ticks: 600,
+    checks: [
+        // The top of the pool burned away.
+        Total(material: "oil", max: 1700),
+        // The bottom 5 rows are still full of oil.
+        Count(material: "oil", rect: (x: 4, y: 51, w: 92, h: 5), exact: 460),
+        Deterministic(every: 200),
+    ],
+)

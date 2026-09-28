@@ -1,0 +1,21 @@
+// A wooden beam burns from one end. The fire spreads along the beam.
+// Picture (160 x 80): stone floor y 76..80. A wooden beam x 20..140, y 50..54 (480 cells) on two
+// stone pillars (x 20..24 and x 136..140, y 54..76). The left 4 columns of the beam (16 cells)
+// start at 400 °C, above the ignition point of wood (300 °C).
+Scene(
+    note: "A wooden beam burns from its hot left end to its right end. It leaves ash and makes smoke.",
+    legend: {
+        "#7a5230": "wood",
+        "#ff9040": (material: "wood", temperature: 400),
+        "#6b6a70": "stone",
+    },
+    ticks: 1200,
+    checks: [
+        // Most of the wood is gone, also at the far (right) end of the beam.
+        Total(material: "wood", max: 240),
+        Count(material: "wood", rect: (x: 100, y: 50, w: 40, h: 4), max: 100),
+        // Burnt wood leaves ash (it falls to the floor).
+        Total(material: "ash", min: 100),
+        Deterministic(every: 300),
+    ],
+)
