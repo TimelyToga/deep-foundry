@@ -302,11 +302,12 @@ impl NormalMode {
                 match slot {
                     SlotRef::Inventory(i) => out.push(FactoryCommand::Click { target: SlotTarget::Inventory(i), click: c }.into()),
                     SlotRef::Tank(i) => {
-                        if matches!(c, Click::Shift | Click::Ctrl) {
+                        if self.frame.building.is_some() || c.is_move() {
+                            // A building window is open: the click moves the material into it.
                             out.push(FactoryCommand::Click { target: SlotTarget::Tank(i), click: c }.into());
                         } else if let Some(ItemRef::Material(m)) = self.frame.inventory.tanks.get(i).and_then(|t| t.item) {
                             // A click on a tank selects its material for the spray tool.
-                            self.spray = if self.spray == Some(m) { None } else { Some(m) };
+                            self.spray = Some(m);
                             out.push(FactoryCommand::ClearCursor.into());
                         }
                     }
@@ -343,6 +344,7 @@ impl NormalMode {
             UiAction::SetRecipe { building, recipe } => out.push(FactoryCommand::SetRecipe { building, recipe }.into()),
             UiAction::StartResearch(t) => out.push(FactoryCommand::StartResearch(t).into()),
             UiAction::CloseWindow(WindowKind::Building) => out.push(FactoryCommand::CloseBuilding.into()),
+            UiAction::EmptyTank(i) => out.push(FactoryCommand::EmptyTank(i).into()),
             _ => return false,
         }
         true
@@ -369,6 +371,8 @@ impl NormalMode {
             units: t.units,
             capacity: t.capacity,
         }));
+        pl.spray = self.spray_material();
+        pl.tanks_full = f.tanks_full;
         // The hand shows the parts on the cursor, else the chosen spray material.
         pl.hand = f.cursor.or_else(|| {
             let m = self.spray?;
@@ -400,11 +404,12 @@ impl NormalMode {
                 done: g.done,
                 count: g.count,
                 reward_points: g.reward_points,
+                waits_for: g.waits_for.clone(),
             })
             .collect();
         model.guide.clear();
         model.guide.extend(goals);
-        model.building = f.building.as_ref().map(|b| building_view(&content, b, f.milestone.as_ref()));
+        model.building = f.building.as_ref().map(|b| building_view(&content, b, f.milestone.as_ref(), &f.later_milestones));
     }
 
     /// More about the thing under the mouse for the hover box: the dig rules and the discovery of
@@ -447,14 +452,24 @@ fn top_left(r: &crate::player::Robot) -> (f32, f32) {
 }
 
 fn click_of(c: SlotClick) -> Click {
-    if c.shift {
-        Click::Shift
-    } else if c.ctrl {
-        Click::Ctrl
-    } else if c.button == ClickButton::Right {
-        Click::Right
-    } else {
-        Click::Left
+    let right = c.button == ClickButton::Right;
+    match (c.shift, c.ctrl, right) {
+        (true, _, false) => Click::Shift,
+        (true, _, true) => Click::ShiftRight,
+        (false, true, false) => Click::Ctrl,
+        (false, true, true) => Click::CtrlRight,
+        (false, false, true) => Click::Right,
+        (false, false, false) => Click::Left,
+    }
+}
+
+/// A factory milestone view as a UI milestone view.
+fn milestone_view(m: &foundry_factory::progress::MilestoneView) -> MilestoneView {
+    MilestoneView {
+        stage: m.stage,
+        name: m.name.clone(),
+        description: m.description.clone(),
+        items: m.items.iter().map(|d| Delivery { item: d.item, delivered: d.delivered, need: d.need }).collect(),
     }
 }
 
@@ -494,29 +509,26 @@ pub(crate) fn tech_entry(t: &TechView) -> TechEntry {
 }
 
 /// The UI building window from the factory building view.
-fn building_view(content: &Content, b: &foundry_factory::BuildingView, milestone: Option<&foundry_factory::progress::MilestoneView>) -> BuildingView {
+fn building_view(
+    content: &Content,
+    b: &foundry_factory::BuildingView,
+    milestone: Option<&foundry_factory::progress::MilestoneView>,
+    later: &[foundry_factory::progress::MilestoneView],
+) -> BuildingView {
     let slot = |item: ItemRef, count: u32, filter: bool| BuildingSlot {
         stack: (count > 0).then_some(Stack { item, count }),
         filter: filter.then_some(item),
+        capacity: 0,
     };
     let (inputs, buffers) = match &b.inventory {
-        // Storage and the Hub: their slots are the input slots, their tanks are buffers.
+        // Storage and the Hub: each slot (a part stack or a material) is an input slot. The
+        // slot order is the factory's `Inventory::place` order, so clicks find the right slot.
         Some(inv) => (
-            inv.slots.iter().map(|s| BuildingSlot { stack: s.as_ref().map(|s| Stack { item: s.item, count: s.count }), filter: None }).collect(),
-            inv.tanks
+            inv.places()
                 .iter()
-                .enumerate()
-                .map(|(i, t)| MaterialBuffer {
-                    label: format!("Tank {}", i + 1),
-                    material: match t.item {
-                        Some(ItemRef::Material(m)) => Some(m),
-                        _ => None,
-                    },
-                    units: t.units,
-                    capacity: t.capacity,
-                    output: false,
-                })
+                .map(|p| BuildingSlot { stack: p.item.map(|item| Stack { item, count: p.count }), filter: None, capacity: p.capacity })
                 .collect(),
+            Vec::<MaterialBuffer>::new(),
         ),
         None => (b.inputs.iter().map(|x| slot(x.item, x.count, true)).collect(), vec![]),
     };
@@ -543,12 +555,8 @@ fn building_view(content: &Content, b: &foundry_factory::BuildingView, milestone
         speed: 1.0,
         power: None,
         temperature: Some(b.temperature as f32),
-        milestone: milestone.map(|m| MilestoneView {
-            stage: m.stage,
-            name: m.name.clone(),
-            description: m.description.clone(),
-            items: m.items.iter().map(|d| Delivery { item: d.item, delivered: d.delivered, need: d.need }).collect(),
-        }),
+        milestone: milestone.map(milestone_view),
+        later_stages: later.iter().map(milestone_view).collect(),
     }
 }
 

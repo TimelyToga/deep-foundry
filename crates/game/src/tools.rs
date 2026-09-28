@@ -3,7 +3,8 @@
 //! - **Dig** removes cells in a circle at the aim point. Each dug cell becomes one unit of its
 //!   broken form (stone becomes gravel, an ore vein becomes raw ore) in the material tanks. Each
 //!   tick has `DIG_POWER` dig points; a cell costs `1 + hardness / 10` points. Cells harder than
-//!   the drill head limit stay. Building body cells and bedrock stay.
+//!   the drill head limit stay. Building body cells and bedrock stay. A cell whose material does
+//!   not fit into the tanks stays too. The first dig of a material discovers it, like a scan.
 //! - **Spray** puts material from a tank back into the world, into empty cells near the aim point.
 //! - **Scan** discovers the material under the aim point (`Factory::scan`).
 //!
@@ -119,12 +120,11 @@ pub fn dig(factory: &mut Factory, sim: &mut Simulation, robot: &Robot, aim: Cell
         if cost > budget {
             break;
         }
-        let broken = c.materials.broken_into[m.index()];
-        if factory.player.room_for(c, ItemRef::Material(broken), 1) == 0 {
-            out.tank_full.get_or_insert(broken);
+        // The unit goes into the tanks; the first dig of a material discovers it.
+        if !factory.take_dug_cell(m) {
+            out.tank_full.get_or_insert(c.materials.broken_into[m.index()]);
             continue;
         }
-        factory.player.insert(c, ItemRef::Material(broken), 1);
         sim.set_cell(p, MaterialId::AIR, None);
         budget -= cost;
         out.dug += 1;

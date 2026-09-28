@@ -28,7 +28,12 @@ const GAP: f32 = 10.0;
 const MAX_COLS: usize = 10;
 /// The smallest space between the input and the output grids (room for the progress arrow).
 const ARROW_MIN: f32 = 64.0;
-const HUB_HINT: &str = "Put these items into the Hub. Shift + click moves a stack from your inventory.";
+const HUB_HINT: &str = "Put these items into the Hub: shift + click a stack in your inventory. The Hub takes only what the repair stages need.";
+/// Height of the title line of a later Hub stage, and of one row of its items.
+const LATER_TITLE_H: f32 = 22.0;
+const LATER_ROW_H: f32 = 26.0;
+/// Items in one row of a later Hub stage.
+const LATER_COLS: usize = 4;
 
 /// The size of a slot grid with `n` slots (at least one row, so an empty grid keeps its place).
 fn grid_size(n: usize) -> Vec2 {
@@ -78,10 +83,27 @@ fn milestone_h(ctx: &egui::Context, m: &MilestoneView) -> f32 {
     10.0 + 26.0 + desc + m.items.len() as f32 * ROW_H + 4.0 + hint + 10.0
 }
 
+/// The height of the list of later Hub stages.
+fn later_stages_h(b: &BuildingView) -> f32 {
+    if b.later_stages.is_empty() {
+        return 0.0;
+    }
+    let rows: usize = b.later_stages.iter().map(|m| m.items.len().div_ceil(LATER_COLS).max(1)).sum();
+    10.0 + 24.0 + b.later_stages.len() as f32 * LATER_TITLE_H + rows as f32 * LATER_ROW_H + 8.0
+}
+
+/// True if the window is the Hub.
+fn is_hub(cx: &Cx, b: &BuildingView) -> bool {
+    cx.model.content.factory.buildings.get(b.kind.0 as usize).is_some_and(|d| d.kind == "hub")
+}
+
 fn content_height(ctx: &egui::Context, b: &BuildingView, recipes: &[RecipeId]) -> f32 {
     let mut h = STATUS_H + PICTURE_H + GAP;
     if let Some(m) = &b.milestone {
         h += milestone_h(ctx, m) + GAP;
+    }
+    if !b.later_stages.is_empty() {
+        h += later_stages_h(b) + GAP;
     }
     if !recipes.is_empty() || b.recipe.is_some() {
         h += RECIPE_H + GAP;
@@ -121,7 +143,7 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
         // Player inventory.
         let fi = widgets::window(ui, id.with("inv"), inv_rect, "Character", false);
         st.move_window(WindowKind::Building, fi.drag);
-        inventory::panel(ui, cx, Rect::from_min_size(fi.content.min, inv), "Shift + click: move to building");
+        inventory::panel(ui, cx, st, Rect::from_min_size(fi.content.min, inv), "Shift + click: move to building");
         // Building.
         let fb = widgets::window(ui, id.with("b"), b_rect, name, true);
         st.move_window(WindowKind::Building, fb.drag);
@@ -131,7 +153,8 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
         }
         recipe_slot = building_panel(ui, cx, st, b, &recipes, fb.content);
     });
-    if st.picker_open && st.is_open(WindowKind::Building) {
+    // The picker is a Foreground layer: hide it under the pause menu.
+    if st.picker_open && st.is_open(WindowKind::Building) && cx.model.state == crate::model::GameState::Playing {
         recipe_picker(cx, st, b, &recipes, recipe_slot);
     }
 }
@@ -181,6 +204,11 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
     if let Some(m) = &b.milestone {
         let panel = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), milestone_h(cx.ctx, m)));
         milestone_panel(ui, cx, &p, m, panel);
+        y += panel.height() + GAP;
+    }
+    if !b.later_stages.is_empty() {
+        let panel = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), later_stages_h(b)));
+        later_stages_panel(ui, cx, &p, b, panel);
         y += panel.height() + GAP;
     }
 
@@ -237,8 +265,15 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
         if !b.inputs.is_empty() {
             // Storage and the Hub (no recipe, no outputs, no fuel) hold items: "Contents".
             let storage = b.recipe.is_none() && b.outputs.is_empty() && b.fuel.is_empty();
-            let label = if storage { "Contents" } else { "Input" };
+            let (label, help) = if is_hub(cx, b) {
+                ("Held items", "Click an item to take it back.")
+            } else if storage {
+                ("Contents", "Shift + click: take it back.")
+            } else {
+                ("Input", "")
+            };
             p.text(pos2(in_grid.left(), sy + 9.0), Align2::LEFT_CENTER, label, font_regular(text::SMALL), color::TEXT_DIM);
+            p.text(pos2(panel.right() - 8.0, sy + 9.0), Align2::RIGHT_CENTER, help, font_regular(text::SMALL), color::TEXT_FAINT);
             slot_grid(ui, cx, b, BuildingSlots::Input, in_grid);
         }
         if !b.outputs.is_empty() {
@@ -370,15 +405,25 @@ fn slot_grid(ui: &mut Ui, cx: &mut Cx, b: &BuildingView, group: BuildingSlots, g
         let (col, row) = (i % MAX_COLS, i / MAX_COLS);
         let sr = Rect::from_min_size(grid.min + vec2(2.0 + col as f32 * size::SLOT, 2.0 + row as f32 * size::SLOT), Vec2::splat(size::SLOT));
         let count = s.stack.filter(|x| x.count > 1).map(|x| format::count(x.count as u64));
-        let content = SlotContent { item: s.stack.map(|x| x.item), count: count.as_deref(), ghost: s.filter, ..Default::default() };
-        let look = if s.stack.is_some() { SlotLook::Normal } else { SlotLook::Dark };
+        // A material in a storage slot: a fill bar in its color.
+        let fill = s.stack.filter(|_| s.capacity > 0).map(|x| {
+            (x.count as f32 / s.capacity as f32, theme::rgba(item::color(&model.content, x.item)))
+        });
+        let content = SlotContent { item: s.stack.map(|x| x.item), count: count.as_deref(), ghost: s.filter, fill, ..Default::default() };
+        // A material slot is dark, like a tank, so its fill bar shows.
+        let look = if s.stack.is_some() && s.capacity == 0 { SlotLook::Normal } else { SlotLook::Dark };
         let resp = widgets::slot(ui, Id::new(("b-slot", group, i)), sr, look, &content, cx.atlas);
         if let Some(x) = s.stack {
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, item::name(&model.content, x.item)));
         }
         if resp.hovered() {
             if let Some(st) = s.stack {
-                cx.tip(Tip::Item { item: st.item, amount: Some(st.count.to_string()) });
+                let amount = if s.capacity > 0 {
+                    format!("{} / {} units", format::count_full(st.count as u64), format::count_full(s.capacity as u64))
+                } else {
+                    st.count.to_string()
+                };
+                cx.tip(Tip::Item { item: st.item, amount: Some(amount) });
             } else if let Some(f) = s.filter {
                 let what = match group {
                     BuildingSlots::Input => "Needs",
@@ -472,4 +517,32 @@ fn recipe_picker(cx: &mut Cx, st: &mut UiState, b: &BuildingView, recipes: &[Rec
         }
     });
     cx.ctx.move_to_top(LayerId::new(Order::Foreground, id));
+}
+
+/// The Hub repair stages after the next one: a title and the items each needs.
+fn later_stages_panel(ui: &mut Ui, cx: &mut Cx, p: &egui::Painter, b: &BuildingView, panel: Rect) {
+    widgets::shallow(p, panel);
+    let inner = panel.shrink(10.0);
+    let mut y = inner.top();
+    widgets::heading(p, pos2(inner.left(), y), "Later repair stages");
+    y += 24.0;
+    let cell_w = inner.width() / LATER_COLS as f32;
+    for m in &b.later_stages {
+        p.text(pos2(inner.left(), y + LATER_TITLE_H * 0.5), Align2::LEFT_CENTER, format!("Stage {}: {}", m.stage, m.name), font_bold(text::SMALL), color::TEXT_DIM);
+        y += LATER_TITLE_H;
+        for (i, d) in m.items.iter().enumerate() {
+            let (col, row) = (i % LATER_COLS, i / LATER_COLS);
+            let cell = Rect::from_min_size(pos2(inner.left() + col as f32 * cell_w, y + row as f32 * LATER_ROW_H), vec2(cell_w, LATER_ROW_H));
+            let icon = Rect::from_min_size(pos2(cell.left(), cell.top() + 2.0), Vec2::splat(22.0));
+            widgets::deep(p, icon);
+            cx.atlas.paint(p, d.item, icon.shrink(1.0), Color32::WHITE);
+            p.text(pos2(icon.right() + 6.0, icon.center().y), Align2::LEFT_CENTER, format!("× {}", d.need), font(text::SMALL), color::TEXT);
+            let resp = ui.interact(cell, Id::new(("b-later", m.stage, i)), egui::Sense::hover());
+            if resp.hovered() {
+                let amount = format!("Stage {} needs {}. The Hub keeps them until then.", m.stage, d.need);
+                cx.tip(Tip::Item { item: d.item, amount: Some(amount) });
+            }
+        }
+        y += m.items.len().div_ceil(LATER_COLS).max(1) as f32 * LATER_ROW_H;
+    }
 }

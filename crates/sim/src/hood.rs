@@ -173,14 +173,14 @@ impl<'a> Hood<'a> {
         };
         const SPEED8: u64 = 0x1f1f_1f1f_1f1f_1f1f;
         let mut bits = 0u64;
-        for (w, bytes) in motion.chunks_exact(8).enumerate() {
-            let word = u64::from_le_bytes(bytes.try_into().unwrap());
+        for (w, bytes) in motion.as_chunks::<8>().0.iter().enumerate() {
+            let word = u64::from_le_bytes(*bytes);
             if word & SPEED8 == 0 {
                 continue;
             }
-            for k in 0..8 {
+            for (k, &b) in bytes.iter().enumerate() {
                 let x = w * 8 + k;
-                if bytes[k] & MOTION_SPEED != 0 && mat[x] != 0 {
+                if b & MOTION_SPEED != 0 && mat[x] != 0 {
                     bits |= 1 << x;
                 }
             }

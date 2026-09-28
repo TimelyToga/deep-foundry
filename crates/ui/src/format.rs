@@ -21,6 +21,19 @@ pub fn count(n: u64) -> String {
     n.to_string()
 }
 
+/// A whole count with a comma between each group of three digits: 48,000.
+pub fn count_full(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// A number with a unit and an SI prefix (k, M, G, T). Below 10 it shows one decimal.
 /// Examples: `si(450.0, "W")` = "450 W", `si(1234.0, "W")` = "1.2 kW", `si(36000.0, "W")` = "36 kW".
 pub fn si(value: f64, unit: &str) -> String {
@@ -119,6 +132,14 @@ mod tests {
         assert_eq!(count(1_234_567), "1.2M");
         assert_eq!(count(45_000_000), "45M");
         assert_eq!(count(1_500_000_000), "1.5G");
+    }
+
+    #[test]
+    fn full_counts_have_commas() {
+        assert_eq!(count_full(0), "0");
+        assert_eq!(count_full(999), "999");
+        assert_eq!(count_full(4240), "4,240");
+        assert_eq!(count_full(1_048_000), "1,048,000");
     }
 
     #[test]

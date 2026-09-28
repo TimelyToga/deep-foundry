@@ -3,13 +3,19 @@
 //! - sandbox: new game, paint, pause, save, resume, load, quit to the main menu, continue, delete
 //!   the save;
 //! - normal mode: new game, dig clay, hand craft a clay brick and a workbench, place the
-//!   workbench, open its window, craft belts, drag a line of belts, undo, redo, remove belts with
-//!   the remove button, pick a belt with the pipette, save, load, check the inventory, delete the
+//!   workbench, open its window, dig until the tanks are full, place a crate and move a tank
+//!   into it, craft belts, drag a line of belts, undo, redo, remove belts with the remove button,
+//!   pick a belt with the pipette, save from the pause menu with mouse clicks, load, check the
+//!   inventory, delete the
 //!   save;
 //! - quit.
+//!
+//! The steps `Key` and `Click` go through egui like the player's keys and clicks, so they find
+//! menus that do not take clicks.
 
 use foundry_core::TilePos;
 use foundry_ui::{GameMode, UiAction, WorldSize};
+use egui::Key;
 use std::collections::VecDeque;
 
 /// One step of the test.
@@ -36,6 +42,21 @@ pub enum Step {
     OpenPlaced,
     /// Normal mode: the window of a building of this type must be open.
     WindowOf(&'static str),
+    /// Normal mode: fill the tanks so that only the tank of this material has this many units
+    /// of room (the test does not dig for minutes).
+    FillTanks(&'static str, u32),
+    /// Normal mode: click the tank that holds this material (in the open building window).
+    ClickTankOf(&'static str),
+    /// Normal mode: the open building window holds some of this item.
+    InBuilding(&'static str),
+    /// Press a key (through egui, as the player does).
+    Key(Key),
+    /// Click the button with this label (through egui). Waits until the button is shown.
+    Click(&'static str),
+    /// Click the button with this label if it is shown now, else go on.
+    ClickIfShown(&'static str),
+    /// Type this name into the save dialog.
+    SaveName(&'static str),
     /// Normal mode: take belts into the hand, find a free row of `tiles` tiles in the air near the
     /// robot, press the left button on its first tile and move the mouse one tile per frame to its
     /// end, then let go. `step` counts the frames.
@@ -68,6 +89,8 @@ pub struct Smoke {
     /// Frames spent on the current `Expect`.
     tries: u32,
     pub failure: Option<String>,
+    /// egui input for the next frame (keys and clicks of the steps).
+    pub events: Vec<egui::Event>,
     /// The first tile of the belt row of `DragBelts`.
     pub row: Option<TilePos>,
 }
@@ -106,6 +129,18 @@ impl Smoke {
             (5, Step::PlaceNear("workbench")),
             (10, Step::OpenPlaced),
             (1, Step::WindowOf("workbench")),
+            // Tanks: dig until they are full, then put the clay into a crate.
+            (5, Step::Key(Key::Escape)),
+            (5, Step::FillTanks("clay", 30)),
+            (5, Step::DigClay),
+            (1, Step::Expect(foundry_ui::TANKS_FULL)),
+            (1, Step::StopTools),
+            (5, Step::PlaceNear("crate")),
+            (10, Step::OpenPlaced),
+            (1, Step::WindowOf("crate")),
+            (5, Step::ClickTankOf("clay")),
+            (1, Step::InBuilding("clay")),
+            (5, Step::Key(Key::Escape)),
             // Construction: a drag line, undo, redo, the remove button, the pipette.
             (5, Step::Craft("wood_belt", 2)),
             (1, Step::Have("wood_belt", 4)),
@@ -120,10 +155,14 @@ impl Smoke {
             (1, Step::StopTools),
             (5, Step::Pipette(3)),
             (1, Step::InHand("wood_belt")),
-            (10, Step::Act(UiAction::Pause)),
-            (5, Step::Act(UiAction::Save { name: normal_save.into(), overwrite: false })),
+            // Save from the pause menu with mouse clicks.
+            (10, Step::Key(Key::Escape)),
+            (5, Step::SaveName(normal_save)),
+            (5, Step::Click("Save game")),
+            (5, Step::Click("Save")),
+            (10, Step::ClickIfShown("Overwrite")),
             (1, Step::Expect("Game saved: smoke normal")),
-            (5, Step::Act(UiAction::Resume)),
+            (5, Step::Click("Resume")),
             (30, Step::Act(UiAction::Load(normal_id.into()))),
             (1, Step::Expect("Game loaded: smoke normal")),
             (30, Step::Have("raw_clay_brick", 1)),
@@ -132,7 +171,7 @@ impl Smoke {
             (1, Step::Expect("Deleted: smoke normal")),
             (10, Step::Done),
         ];
-        Self { steps: steps.into_iter().collect(), wait: 0, tries: 0, failure: None, row: None }
+        Self { steps: steps.into_iter().collect(), wait: 0, tries: 0, failure: None, events: vec![], row: None }
     }
 
     /// The step to run in this frame, if its wait is over.
@@ -163,6 +202,19 @@ impl Smoke {
     pub fn passed_expect(&mut self) {
         self.tries = 0;
     }
+}
+
+/// The egui events of a key press.
+pub fn key_events(key: Key) -> Vec<egui::Event> {
+    [true, false]
+        .map(|pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE })
+        .into()
+}
+
+/// The egui events of a left click at `pos` (in points).
+pub fn click_events(pos: egui::Pos2) -> Vec<egui::Event> {
+    let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    vec![egui::Event::PointerMoved(pos), button(true), button(false)]
 }
 
 #[cfg(test)]

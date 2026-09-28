@@ -204,6 +204,23 @@ pub fn render_egui(
     cmds
 }
 
+/// The simulation sliders of the settings screen.
+fn sim_sliders(settings: &foundry_sim::SimSettings) -> Vec<foundry_ui::SimSetting> {
+    settings
+        .sliders()
+        .into_iter()
+        .map(|s| foundry_ui::SimSetting {
+            key: s.key.into(),
+            label: s.label.into(),
+            help: s.help.into(),
+            value: s.value,
+            min: s.min,
+            max: s.max,
+            step: s.step,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,21 +256,4 @@ mod tests {
         assert_eq!(s.brush_material(), None);
         assert!(!s.sandbox_action(&UiAction::Pause));
     }
-}
-
-/// The simulation sliders of the settings screen.
-fn sim_sliders(settings: &foundry_sim::SimSettings) -> Vec<foundry_ui::SimSetting> {
-    settings
-        .sliders()
-        .into_iter()
-        .map(|s| foundry_ui::SimSetting {
-            key: s.key.into(),
-            label: s.label.into(),
-            help: s.help.into(),
-            value: s.value,
-            min: s.min,
-            max: s.max,
-            step: s.step,
-        })
-        .collect()
 }

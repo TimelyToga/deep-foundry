@@ -151,7 +151,9 @@ Hardness classes for digging: soft (sand, dirt, clay, snow, surface ores), stone
 
 ### 6.4 Inventory
 
-- **Material tank.** Holds bulk material in units. It starts with 4 slots of 2,000 units. Each slot holds one material. Without the heat-proof tank upgrade, the robot cannot collect liquids hotter than 300 °C.
+- **Material tank.** Holds bulk material in units. It starts with 8 tanks of 6,000 units (`inventory::PLAYER_TANKS`, `PLAYER_TANK_UNITS`): a few minutes of digging. Each tank holds one material. When no tank has room, digging stops and the HUD says what to do: put material in a crate, spray it out, or empty a tank (trash button). Without the heat-proof tank upgrade, the robot cannot collect liquids hotter than 300 °C.
+- **Storage.** A crate slot holds one part stack or 6,000 units of one powder or solid. A barrel keeps one liquid. With a building window open (as in Factorio): a click on a tank moves it into the building, a right click moves half, Ctrl + click moves that material from every tank, and Shift + click on a building slot moves it back to the robot. The same rules work for part slots.
+- **Discovery.** The first dig of a material discovers it, the same as a scan.
 - **Part slots.** Hold stacks of parts (gears, plates, circuits) and buildings in item form.
 - **Hotbar.** 10 slots for buildings and tools.
 

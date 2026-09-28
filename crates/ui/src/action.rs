@@ -176,6 +176,9 @@ pub enum UiAction {
     SetHotbar { index: usize, item: Option<ItemRef> },
     /// Put the item in the hand back into the inventory (a click on empty UI space, or Q).
     ClearHand,
+    /// Delete the material in this tank of the robot (the trash button). For a large amount
+    /// the UI asks the player first.
+    EmptyTank(usize),
 
     // ----- Crafting -----
     /// Add hand crafting jobs to the queue.

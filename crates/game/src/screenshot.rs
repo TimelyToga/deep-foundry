@@ -167,7 +167,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             | UiState::GhostRed
             | UiState::Drag
             | UiState::Alt
-            | UiState::Remove => {
+            | UiState::Remove
+            | UiState::Tanks => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
@@ -280,16 +281,42 @@ fn setup_normal_screen(
                 if let Some(id) = h.building_at(cell)
                     && let Some(inv) = h.factory.buildings.inventory_mut(id)
                 {
+                    // A crate slot holds a part stack or bulk material.
+                    inv.insert(&content, mat("clay"), 8300);
+                    inv.insert(&content, mat("sand"), 4100);
+                    inv.insert(&content, mat("raw_malachite"), 950);
                     inv.insert(&content, ItemRef::Part(part("raw_clay_brick")), 12);
                     inv.insert(&content, ItemRef::Part(part("wood_belt")), 20);
                 }
+                // The robot has material in its tanks too.
+                give(h, mat("dirt"), 5200);
+                give(h, mat("raw_cassiterite"), 640);
             }
+        }
+        UiState::Tanks => {
+            // Every tank is full; the robot digs and has no room.
+            for (id, units) in [("clay", 6000u32), ("sand", 6000), ("dirt", 6000), ("gravel", 6000), ("raw_malachite", 6000), ("raw_cassiterite", 6000), ("wood", 5970), ("ash", 6000)] {
+                let have = h.factory.player.count(mat(id));
+                give(h, mat(id), units.saturating_sub(have));
+            }
+            let r = h.robot.rect();
+            let aim = CellPos::new(r.x1 + 4, r.y1 + 3);
+            h.apply(FactoryCommand::Input(PlayerInput { aim, dig: true, view, ..Default::default() }), sim);
+            for _ in 0..5 {
+                h.tick(sim);
+            }
+            h.apply(FactoryCommand::Input(PlayerInput { view, ..Default::default() }), sim);
         }
         UiState::Hub => {
             // Some deliveries are done already.
             let brick = ItemRef::Part(part("clay_brick"));
             h.factory.progress.deliver(&content, foundry_content::Stack { item: brick, count: 36 });
             give(h, brick, 20);
+            // Copper wire is for stage 2: the Hub holds it until then.
+            let hub_id = h.factory.buildings.iter().find(|(_, b)| content.factory.building_def(b.kind).kind == "hub").map(|(id, _)| id);
+            if let Some(hub) = hub_id {
+                h.factory.buildings.insert(&content, hub, ItemRef::Part(part("copper_wire")), 40);
+            }
             let hub = h.factory.buildings.iter().find(|(_, b)| content.factory.building_def(b.kind).kind == "hub").map(|(_, b)| b.at.origin());
             if let Some(cell) = hub {
                 h.apply(FactoryCommand::OpenAt(cell), sim);

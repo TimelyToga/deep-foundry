@@ -218,6 +218,59 @@ fn hud_guide_tracker() {
     h.snapshot_options("hud_guide_1920", &options());
 }
 
+/// The tank HUD at 2560 × 1440: the spray material has an orange frame, and the tanks are full.
+#[test]
+fn tank_hud_2560() {
+    let mut model = playing();
+    model.player.tanks_full = true;
+    let mut h = harness(QHD, model, |_| {});
+    settle(&mut h);
+    h.snapshot_options("tank_hud_2560", &options());
+}
+
+/// A crate with bulk materials and parts, next to the inventory with its tanks.
+#[test]
+fn crate_window_2560() {
+    let mut model = playing();
+    model.building = Some(mock::crate_view(&model.content));
+    let mut h = harness(QHD, model, |_| {});
+    settle(&mut h);
+    h.get_by_label("Sand").hover();
+    settle(&mut h);
+    h.snapshot_options("crate_2560", &options());
+}
+
+/// The Hub: the next repair stage, the later stages, and the items it holds.
+#[test]
+fn hub_window_2560() {
+    let mut model = playing();
+    model.building = Some(mock::hub_view(&model.content));
+    let mut h = harness(QHD, model, |_| {});
+    settle(&mut h);
+    h.snapshot_options("hub_2560", &options());
+}
+
+/// Esc, then Save game in the pause menu.
+#[test]
+fn save_from_pause_menu_2560() {
+    let mut h = harness(QHD, menu_model(GameState::Paused), |_| {});
+    settle(&mut h);
+    h.get_by_label("Save game").click();
+    settle(&mut h);
+    h.snapshot_options("save_from_pause_2560", &options());
+}
+
+/// The yes/no question before a full tank is emptied.
+#[test]
+fn empty_tank_question() {
+    let mut h = harness(HD, playing(), |ui| {
+        ui.open_window(WindowKind::Character);
+        ui.confirm_empty_tank(0);
+    });
+    settle(&mut h);
+    h.snapshot_options("empty_tank_1920", &options());
+}
+
 fn menu_model(state: GameState) -> UiModel {
     let mut m = playing();
     m.state = state;
@@ -500,6 +553,61 @@ fn closing_the_building_window_tells_the_game() {
     h.get_by_label("Close").click();
     settle(&mut h);
     assert!(h.state().actions.contains(&UiAction::CloseWindow(WindowKind::Building)));
+}
+
+#[test]
+fn tank_trash_button_asks_before_a_large_amount() {
+    let mut model = playing();
+    // Tank 3 has 420 units (no question), tank 0 has 4,240 (a question first).
+    assert!(model.player.tank[3].units < foundry_ui::EMPTY_CONFIRM_UNITS && model.player.tank[0].units >= foundry_ui::EMPTY_CONFIRM_UNITS);
+    model.player.tanks_full = false;
+    let mut h = harness(HD, model, |ui| ui.open_window(WindowKind::Character));
+    settle(&mut h);
+    h.get_by_label("Empty tank 4").click();
+    settle(&mut h);
+    assert!(h.state().actions.contains(&UiAction::EmptyTank(3)), "{:?}", h.state().actions);
+    h.get_by_label("Empty tank 1").click();
+    settle(&mut h);
+    assert!(!h.state().actions.contains(&UiAction::EmptyTank(0)), "a large amount asks first");
+    // Cancel keeps the material; Empty deletes it.
+    h.get_by_label("Cancel").click();
+    settle(&mut h);
+    assert!(h.query_by_label("Cancel").is_none());
+    h.get_by_label("Empty tank 1").click();
+    settle(&mut h);
+    h.get_by_label("Empty").click();
+    settle(&mut h);
+    assert!(h.state().actions.contains(&UiAction::EmptyTank(0)), "{:?}", h.state().actions);
+}
+
+#[test]
+fn tank_and_storage_clicks_are_reported() {
+    let mut model = playing();
+    model.building = Some(mock::crate_view(&model.content));
+    let crate_id = model.building.as_ref().unwrap().id;
+    let mut h = harness(HD, model, |_| {});
+    settle(&mut h);
+    // A click on a tank (with a building open, the game moves it into the building).
+    h.get_by_label("Tank Clay").click();
+    settle(&mut h);
+    let want = UiAction::ClickSlot { slot: foundry_ui::SlotRef::Tank(0), click: foundry_ui::SlotClick::LEFT };
+    assert!(h.state().actions.contains(&want), "{:?}", h.state().actions);
+    // Ctrl + click: every tank of that material.
+    h.get_by_label("Tank Clay").click_modifiers(egui::Modifiers::CTRL);
+    settle(&mut h);
+    let want = UiAction::ClickSlot { slot: foundry_ui::SlotRef::Tank(0), click: foundry_ui::SlotClick::CTRL_LEFT };
+    assert!(h.state().actions.contains(&want), "{:?}", h.state().actions);
+    // Shift + click on a crate slot takes it back.
+    h.get_by_label("Sand").click_modifiers(egui::Modifiers::SHIFT);
+    settle(&mut h);
+    let slot = foundry_ui::SlotRef::Building { building: crate_id, group: foundry_ui::BuildingSlots::Input, index: 2 };
+    let want = UiAction::ClickSlot { slot, click: foundry_ui::SlotClick::SHIFT_LEFT };
+    assert!(h.state().actions.contains(&want), "{:?}", h.state().actions);
+    // The HUD tanks are buttons too (a click chooses the spray material).
+    h.get_by_label("HUD tank Sand").click();
+    settle(&mut h);
+    let want = UiAction::ClickSlot { slot: foundry_ui::SlotRef::Tank(4), click: foundry_ui::SlotClick::LEFT };
+    assert!(h.state().actions.contains(&want), "{:?}", h.state().actions);
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::format;
 use crate::item;
 use foundry_content::ItemRef;
 use crate::model::{AlertKind, DigState, GuideGoal, HoverView, UiModel};
-use crate::theme::{self, color, font, font_bold, font_regular, rgba, size, text};
+use crate::theme::{self, color, font, font_bold, font_regular, size, text};
 use crate::tooltip::Tip;
 use crate::widgets::{self, SlotContent, SlotLook};
 use crate::UiState;
@@ -189,36 +189,115 @@ fn quickbar_slots(ui: &mut Ui, cx: &mut Cx, p: &Painter, rect: Rect, bars: Rect,
     }
 }
 
+/// Width of the text next to the tank slots in the HUD.
+const TANK_TEXT_W: f32 = 196.0;
+/// The message when the dig tool finds no room in the tanks.
+pub const TANKS_FULL: &str = "Tanks full: put material in a crate, spray it out, or empty a tank";
+
+/// The key or button of the spray tool, from the key list of the settings.
+fn spray_key(model: &UiModel) -> String {
+    model
+        .settings
+        .key_bindings
+        .iter()
+        .find(|r| r.action.starts_with("Spray"))
+        .map(|r| r.key.clone())
+        .unwrap_or_else(|| "Right mouse".into())
+}
+
+/// The tanks next to the quickbar: a slot for each tank (the spray material has an orange
+/// frame), which material the spray tool puts out, and a warning when the tanks are full.
 fn tank_summary(cx: &mut Cx, qb: Rect) {
-    let tank = &cx.model.player.tank;
+    let model = cx.model;
+    let tank = &model.player.tank;
     if tank.is_empty() {
         return;
     }
     let cols = tank.len().div_ceil(2).max(1);
     let grid_w = cols as f32 * size::SLOT + 4.0;
-    let outer = vec2(grid_w + 2.0 * PANEL_PAD, qb.height());
+    let outer = vec2(grid_w + 2.0 * PANEL_PAD + 10.0 + TANK_TEXT_W, qb.height());
     let rect = Rect::from_min_size(pos2(qb.right() + 8.0, qb.top()), outer);
     panel_area(cx.ctx, "tank", rect, |ui| {
         let p = ui.painter().clone();
-        p.text(pos2(rect.left() + PANEL_PAD + 2.0, rect.top() + PANEL_PAD + BARS_H * 0.5), Align2::LEFT_CENTER, "Tank", font_bold(text::SMALL), color::HEADING);
+        let head_y = rect.top() + PANEL_PAD + BARS_H * 0.5;
+        p.text(pos2(rect.left() + PANEL_PAD + 2.0, head_y), Align2::LEFT_CENTER, "Tanks", font_bold(text::SMALL), color::HEADING);
+        let used: u64 = tank.iter().map(|t| t.units as u64).sum();
+        let cap: u64 = tank.iter().map(|t| t.capacity as u64).sum();
+        let frac = if cap > 0 { used as f32 / cap as f32 } else { 0.0 };
+        let fill_c = if model.player.tanks_full { color::RED_TEXT } else { color::TEXT_DIM };
+        p.text(
+            pos2(rect.left() + PANEL_PAD + grid_w, head_y),
+            Align2::RIGHT_CENTER,
+            format!("{} full", format::percent(frac)),
+            font_regular(text::SMALL),
+            fill_c,
+        );
         let grid = Rect::from_min_size(pos2(rect.left() + PANEL_PAD, rect.top() + PANEL_PAD + BARS_H + 6.0), vec2(grid_w, 2.0 * size::SLOT + 4.0));
         widgets::deep(&p, grid);
-        for (i, t) in cx.model.player.tank.iter().enumerate() {
+        for (i, t) in tank.iter().enumerate() {
             let (col, row) = (i / 2, i % 2);
             let sr = Rect::from_min_size(grid.min + vec2(2.0 + col as f32 * size::SLOT, 2.0 + row as f32 * size::SLOT), Vec2::splat(size::SLOT));
-            let item = t.material.map(ItemRef::Material);
-            let fill_color = item.map(|x| rgba(item::color(&cx.model.content, x))).unwrap_or(color::GRAY);
-            let frac = if t.capacity > 0 { t.units as f32 / t.capacity as f32 } else { 0.0 };
-            let count = item.map(|_| format::count(t.units as u64));
-            let content = SlotContent { item, count: count.as_deref(), fill: item.map(|_| (frac, fill_color)), ..Default::default() };
+            let it = t.material.map(ItemRef::Material);
+            let count = it.map(|_| format::count(t.units as u64));
+            let content = SlotContent { count: count.as_deref(), ..super::inventory::tank_slot_content(model, t) };
             let resp = widgets::slot(ui, Id::new(("hud-tank", i)), sr, SlotLook::Dark, &content, cx.atlas);
+            if let Some(x) = it {
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("HUD tank {}", item::name(&model.content, x))));
+            }
             if resp.hovered() {
-                match item {
-                    Some(it) => cx.tip(Tip::Item { item: it, amount: Some(format!("{} / {} units", t.units, t.capacity)) }),
-                    None => cx.tip(Tip::Text { title: "Empty tank slot".into(), body: format!("Holds up to {} units of one material.", t.capacity) }),
+                match it {
+                    Some(x) => cx.tip(Tip::Item {
+                        item: x,
+                        amount: Some(format!("{} / {} units. Click to spray this material.", format::count_full(t.units as u64), format::count_full(t.capacity as u64))),
+                    }),
+                    None => cx.tip(Tip::Text {
+                        title: "Empty tank".into(),
+                        body: format!("Holds up to {} units of one material. Dig to fill it.", format::count_full(t.capacity as u64)),
+                    }),
                 }
             }
+            if let Some(click) = super::inventory::slot_click(cx, &resp) {
+                cx.act(UiAction::ClickSlot { slot: crate::action::SlotRef::Tank(i), click });
+            }
         }
+        // Which material the spray tool puts out, and how.
+        let tx = grid.right() + 10.0;
+        let mut y = grid.top() + 2.0;
+        let spray = model.player.spray.filter(|m| tank.iter().any(|t| t.material == Some(*m) && t.units > 0));
+        match spray {
+            Some(m) => {
+                let it = ItemRef::Material(m);
+                p.text(pos2(tx, y), Align2::LEFT_TOP, "Spray tool:", font_regular(text::SMALL), color::TEXT_DIM);
+                y += 17.0;
+                let icon = Rect::from_min_size(pos2(tx, y), Vec2::splat(18.0));
+                cx.atlas.paint(&p, it, icon, Color32::WHITE);
+                p.text(pos2(icon.right() + 5.0, icon.center().y), Align2::LEFT_CENTER, item::name(&model.content, it), font_bold(text::BODY), color::ORANGE);
+                y += 22.0;
+                let how = format!("Hold {} to spray it out.", spray_key(model).to_lowercase());
+                y = widgets::wrapped(&p, pos2(tx, y), &how, font_regular(text::SMALL), color::TEXT, TANK_TEXT_W).bottom() + 2.0;
+                widgets::wrapped(&p, pos2(tx, y), "Click a tank to choose another.", font_regular(text::SMALL), color::TEXT_FAINT, TANK_TEXT_W);
+            }
+            None => {
+                let text = if used == 0 { "The tanks are empty. Dig to fill them." } else { "Click a tank to choose what the spray tool puts out." };
+                widgets::wrapped(&p, pos2(tx, y), text, font_regular(text::SMALL), color::TEXT_DIM, TANK_TEXT_W);
+            }
+        }
+    });
+    if model.player.tanks_full {
+        tanks_full_warning(cx, rect);
+    }
+}
+
+/// A red box above the tank panel: the tanks are full, and what to do.
+fn tanks_full_warning(cx: &mut Cx, tank_panel: Rect) {
+    let w = tank_panel.width();
+    let body = widgets::text_height(cx.ctx, TANKS_FULL, font_bold(text::BODY), w - 20.0);
+    let rect = Rect::from_min_size(pos2(tank_panel.left(), tank_panel.top() - 8.0 - body - 16.0), vec2(w, body + 16.0));
+    widgets::area(cx.ctx, Id::new(("hud", "tanks-full")), Order::Middle, rect, |ui| {
+        let p = ui.painter();
+        p.rect_filled(rect, CornerRadius::same(3), Color32::from_rgba_unmultiplied(70, 16, 12, 235));
+        p.rect_stroke(rect, CornerRadius::same(3), Stroke::new(2.0, color::RED), egui::StrokeKind::Inside);
+        widgets::wrapped(p, rect.min + vec2(10.0, 8.0), TANKS_FULL, font_bold(text::BODY), color::TEXT, w - 20.0);
     });
 }
 
@@ -341,7 +420,8 @@ fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
     if model.sandbox.is_some() {
         return;
     }
-    let goals: Vec<&GuideGoal> = model.guide.iter().filter(|g| !g.done).take(GUIDE_GOALS).collect();
+    // Goals that the game cannot do yet are only in the guide window.
+    let goals: Vec<&GuideGoal> = model.guide.iter().filter(|g| !g.done && g.waits_for.is_none()).take(GUIDE_GOALS).collect();
     if goals.is_empty() {
         return;
     }

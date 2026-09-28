@@ -33,50 +33,62 @@ pub(crate) fn main_menu(cx: &mut Cx, st: &mut UiState) {
         );
         widgets::text_shadow(p, screen.left_bottom() + vec2(12.0, -10.0), Align2::LEFT_BOTTOM, concat!("Version ", env!("CARGO_PKG_VERSION")), font_regular(text::SMALL), color::TEXT_FAINT);
     });
-    match st.menu.page {
-        MenuPage::Root => main_root(cx, st),
-        page => dialog_page(cx, st, page),
-    }
-    confirm_dialog(cx, st);
+    menu_screen(cx, st, false);
 }
 
 pub(crate) fn pause_menu(cx: &mut Cx, st: &mut UiState) {
+    menu_screen(cx, st, true);
+}
+
+/// The egui layer of all menu windows.
+const MENU_LAYER: &str = "menu-screen";
+
+/// Draw the menu windows: the pause dim (when `paused`), the page (buttons or a dialog), and the
+/// yes/no question on top.
+///
+/// All of them are in one full-screen egui layer, drawn in this order. Inside one layer, a
+/// widget drawn later is on top, so the order is always correct. (Before, each window had its
+/// own layer. egui keeps the old order of layers that all move to the top in the same frame, so
+/// after the Save page, the pause dim covered the menu buttons and took all the clicks.)
+fn menu_screen(cx: &mut Cx, st: &mut UiState, paused: bool) {
     let screen = cx.ctx.content_rect();
-    let dim = Id::new("pause-dim");
-    widgets::area(cx.ctx, dim, Order::Foreground, screen, |ui| {
-        ui.painter().rect_filled(screen, CornerRadius::ZERO, color::DIM);
-        let _ = ui.interact(screen, Id::new("pause-dim-block"), egui::Sense::click());
-        widgets::text_shadow(ui.painter(), pos2(screen.center().x, screen.top() + 60.0), Align2::CENTER_CENTER, "Paused", font_bold(40.0), color::HEADING);
+    let id = Id::new(MENU_LAYER);
+    let ctx = cx.ctx;
+    widgets::area(ctx, id, Order::Foreground, screen, |ui| {
+        if paused {
+            ui.painter().rect_filled(screen, CornerRadius::ZERO, color::DIM);
+            // The dim takes the clicks, so they do not go to the game windows below.
+            let _ = ui.interact(screen, Id::new("pause-dim-block"), egui::Sense::click());
+            widgets::text_shadow(ui.painter(), pos2(screen.center().x, screen.top() + 60.0), Align2::CENTER_CENTER, "Paused", font_bold(40.0), color::HEADING);
+        }
+        match (st.menu.page, paused) {
+            (MenuPage::Root, false) => main_root(ui, cx, st),
+            (MenuPage::Root, true) => pause_root(ui, cx, st),
+            (page, _) => dialog_page(ui, cx, st, page),
+        }
+        confirm_dialog(ui, cx, st);
     });
-    cx.ctx.move_to_top(LayerId::new(Order::Foreground, dim));
-    match st.menu.page {
-        MenuPage::Root => pause_root(cx, st),
-        page => dialog_page(cx, st, page),
-    }
-    confirm_dialog(cx, st);
+    ctx.move_to_top(LayerId::new(Order::Foreground, id));
 }
 
 /// A column of big buttons in a window. Returns the index of the clicked button.
-fn button_column(cx: &mut Cx, id: Id, title: &str, buttons: &[(&str, ButtonKind, bool)], offset: Vec2) -> Option<usize> {
+fn button_column(ui: &Ui, id: Id, title: &str, buttons: &[(&str, ButtonKind, bool)], offset: Vec2) -> Option<usize> {
     let n = buttons.len() as f32;
     let content = vec2(MENU_W - 2.0 * size::PAD, n * BIG_BUTTON_H + (n - 1.0) * 10.0 + 4.0);
     let outer = widgets::window_outer(content);
-    let rect = widgets::place(cx.ctx.content_rect(), outer, offset);
+    let rect = widgets::place(ui.ctx().content_rect(), outer, offset);
     let mut clicked = None;
-    widgets::area(cx.ctx, id, Order::Foreground, rect, |ui| {
-        let f = widgets::window(ui, id, rect, title, false);
-        for (i, (label, kind, enabled)) in buttons.iter().enumerate() {
-            let r = Rect::from_min_size(pos2(f.content.left(), f.content.top() + 2.0 + i as f32 * (BIG_BUTTON_H + 10.0)), vec2(f.content.width(), BIG_BUTTON_H));
-            if widgets::button(ui, id.with(i), r, label, *kind, *enabled).clicked() {
-                clicked = Some(i);
-            }
+    let f = widgets::window(ui, id, rect, title, false);
+    for (i, (label, kind, enabled)) in buttons.iter().enumerate() {
+        let r = Rect::from_min_size(pos2(f.content.left(), f.content.top() + 2.0 + i as f32 * (BIG_BUTTON_H + 10.0)), vec2(f.content.width(), BIG_BUTTON_H));
+        if widgets::button(ui, id.with(i), r, label, *kind, *enabled).clicked() {
+            clicked = Some(i);
         }
-    });
-    cx.ctx.move_to_top(LayerId::new(Order::Foreground, id));
+    }
     clicked
 }
 
-fn main_root(cx: &mut Cx, st: &mut UiState) {
+fn main_root(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
     let has_save = !cx.model.saves.is_empty();
     let buttons = [
         ("Continue", ButtonKind::Normal, has_save),
@@ -85,7 +97,7 @@ fn main_root(cx: &mut Cx, st: &mut UiState) {
         ("Settings", ButtonKind::Normal, true),
         ("Quit game", ButtonKind::Normal, true),
     ];
-    match button_column(cx, Id::new("main-menu"), "Main menu", &buttons, vec2(0.0, 90.0)) {
+    match button_column(ui, Id::new("main-menu"), "Main menu", &buttons, vec2(0.0, 90.0)) {
         Some(0) => cx.act(UiAction::Continue),
         Some(1) => open_new_game(cx, st),
         Some(2) => st.menu.page = MenuPage::Load,
@@ -95,7 +107,7 @@ fn main_root(cx: &mut Cx, st: &mut UiState) {
     }
 }
 
-fn pause_root(cx: &mut Cx, st: &mut UiState) {
+fn pause_root(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
     let buttons = [
         ("Resume", ButtonKind::Confirm, true),
         ("Save game", ButtonKind::Normal, true),
@@ -104,7 +116,7 @@ fn pause_root(cx: &mut Cx, st: &mut UiState) {
         ("Quit to main menu", ButtonKind::Normal, true),
         ("Quit game", ButtonKind::Back, true),
     ];
-    match button_column(cx, Id::new("pause-menu"), "Menu", &buttons, Vec2::ZERO) {
+    match button_column(ui, Id::new("pause-menu"), "Menu", &buttons, Vec2::ZERO) {
         Some(0) => cx.act(UiAction::Resume),
         Some(1) => {
             st.menu.page = MenuPage::Save;
@@ -136,19 +148,20 @@ fn random_seed(x: f64) -> u32 {
     (h % 1_000_000_000) as u32
 }
 
-fn dialog_page(cx: &mut Cx, st: &mut UiState, page: MenuPage) {
+fn dialog_page(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, page: MenuPage) {
     match page {
         MenuPage::Root => {}
-        MenuPage::NewGame => new_game(cx, st),
-        MenuPage::Save => save_dialog(cx, st),
-        MenuPage::Load => load_dialog(cx, st),
-        MenuPage::Settings => settings(cx, st),
+        MenuPage::NewGame => new_game(ui, cx, st),
+        MenuPage::Save => save_dialog(ui, cx, st),
+        MenuPage::Load => load_dialog(ui, cx, st),
+        MenuPage::Settings => settings(ui, cx, st),
     }
 }
 
 /// A dialog window with a Back button at the bottom left and an optional confirm button at the
 /// bottom right, as in Factorio. Returns (back clicked, confirm clicked).
 fn dialog(
+    ui: &mut Ui,
     cx: &mut Cx,
     id: Id,
     title: &str,
@@ -165,28 +178,25 @@ fn dialog(
         let room = (screen.bottom() - rect.bottom()).max(0.0);
         rect = rect.translate(vec2(0.0, (min_top - rect.top()).clamp(0.0, room)));
     }
-    let (mut back, mut ok) = (false, false);
-    widgets::area(cx.ctx, id, Order::Foreground, rect, |ui| {
-        let f = widgets::window(ui, id, rect, title, false);
-        let body = Rect::from_min_size(f.content.min, content);
-        add(ui, cx, body);
-        let bar = Rect::from_min_max(pos2(f.content.left(), f.content.bottom() - size::BUTTON_H - 4.0), pos2(f.content.right(), f.content.bottom()));
-        widgets::drag_pattern(ui.painter(), Rect::from_min_max(pos2(bar.left() + 150.0, bar.top() + 8.0), pos2(bar.right() - 150.0, bar.bottom() - 8.0)));
-        back = widgets::button(ui, id.with("back"), Rect::from_min_size(bar.min, vec2(140.0, size::BUTTON_H)), "Back", ButtonKind::Back, true).clicked();
-        if let Some((label, kind, enabled)) = confirm {
-            let r = Rect::from_min_size(pos2(bar.right() - 140.0, bar.top()), vec2(140.0, size::BUTTON_H));
-            ok = widgets::button(ui, id.with("ok"), r, label, kind, enabled).clicked();
-        }
-    });
-    cx.ctx.move_to_top(LayerId::new(Order::Foreground, id));
+    let f = widgets::window(ui, id, rect, title, false);
+    let body = Rect::from_min_size(f.content.min, content);
+    add(ui, cx, body);
+    let bar = Rect::from_min_max(pos2(f.content.left(), f.content.bottom() - size::BUTTON_H - 4.0), pos2(f.content.right(), f.content.bottom()));
+    widgets::drag_pattern(ui.painter(), Rect::from_min_max(pos2(bar.left() + 150.0, bar.top() + 8.0), pos2(bar.right() - 150.0, bar.bottom() - 8.0)));
+    let back = widgets::button(ui, id.with("back"), Rect::from_min_size(bar.min, vec2(140.0, size::BUTTON_H)), "Back", ButtonKind::Back, true).clicked();
+    let mut ok = false;
+    if let Some((label, kind, enabled)) = confirm {
+        let r = Rect::from_min_size(pos2(bar.right() - 140.0, bar.top()), vec2(140.0, size::BUTTON_H));
+        ok = widgets::button(ui, id.with("ok"), r, label, kind, enabled).clicked();
+    }
     (back, ok)
 }
 
-fn new_game(cx: &mut Cx, st: &mut UiState) {
+fn new_game(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
     let seed_ok = st.menu.seed_text.trim().parse::<u64>().is_ok();
     let id = Id::new("new-game");
     let menu = &mut st.menu;
-    let (back, ok) = dialog(cx, id, "New game", vec2(560.0, 306.0), Some(("Play", ButtonKind::Confirm, seed_ok)), |ui, cx, r| {
+    let (back, ok) = dialog(ui, cx, id, "New game", vec2(560.0, 306.0), Some(("Play", ButtonKind::Confirm, seed_ok)), |ui, cx, r| {
         let p = ui.painter().clone();
         let inner = Rect::from_min_size(r.min, r.size());
         widgets::shallow(&p, inner);
@@ -303,12 +313,12 @@ fn save_list(ui: &mut Ui, cx: &mut Cx, r: Rect, selected: &mut Option<String>, n
     double
 }
 
-fn save_dialog(cx: &mut Cx, st: &mut UiState) {
+fn save_dialog(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
     let name_ok = !st.menu.save_name.trim().is_empty();
     let id = Id::new("save-dialog");
     let menu = &mut st.menu;
     let mut double = None;
-    let (back, ok) = dialog(cx, id, "Save game", vec2(640.0, 400.0), Some(("Save", ButtonKind::Confirm, name_ok)), |ui, cx, r| {
+    let (back, ok) = dialog(ui, cx, id, "Save game", vec2(640.0, 400.0), Some(("Save", ButtonKind::Confirm, name_ok)), |ui, cx, r| {
         let list = Rect::from_min_size(r.min, vec2(r.width(), r.height() - 70.0));
         let mut sel = menu.selected_save.clone();
         double = save_list(ui, cx, list, &mut sel, Some(&mut menu.save_name));
@@ -339,13 +349,13 @@ fn save_dialog(cx: &mut Cx, st: &mut UiState) {
     }
 }
 
-fn load_dialog(cx: &mut Cx, st: &mut UiState) {
+fn load_dialog(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
     let id = Id::new("load-dialog");
     let has_sel = st.menu.selected_save.as_ref().is_some_and(|s| cx.model.saves.iter().any(|x| &x.id == s));
     let menu = &mut st.menu;
     let mut double = None;
     let mut delete = false;
-    let (back, ok) = dialog(cx, id, "Load game", vec2(640.0, 400.0), Some(("Load", ButtonKind::Confirm, has_sel)), |ui, cx, r| {
+    let (back, ok) = dialog(ui, cx, id, "Load game", vec2(640.0, 400.0), Some(("Load", ButtonKind::Confirm, has_sel)), |ui, cx, r| {
         let list = Rect::from_min_size(r.min, vec2(r.width(), r.height() - 48.0));
         let mut sel = menu.selected_save.clone();
         double = save_list(ui, cx, list, &mut sel, None);
@@ -371,11 +381,11 @@ fn sim_rows(cx: &Cx) -> usize {
     cx.model.settings.simulation.len().max(1)
 }
 
-fn settings(cx: &mut Cx, st: &mut UiState) {
+fn settings(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
     let id = Id::new("settings-dialog");
     let sim_h = 34.0 + sim_rows(cx) as f32 * 34.0 + 6.0;
     let height = 150.0 + 12.0 + sim_h + 14.0 + CONTROLS_H;
-    let (back, _) = dialog(cx, id, "Settings", vec2(640.0, height), None, |ui, cx, r| {
+    let (back, _) = dialog(ui, cx, id, "Settings", vec2(640.0, height), None, |ui, cx, r| {
         let p = ui.painter().clone();
         let s = &cx.model.settings;
         let top = Rect::from_min_size(r.min, vec2(r.width(), 150.0));
@@ -523,7 +533,7 @@ fn controls(ui: &mut Ui, cx: &mut Cx, p: &Painter, r: Rect, top: f32) {
     });
 }
 
-fn confirm_dialog(cx: &mut Cx, st: &mut UiState) {
+fn confirm_dialog(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
     let Some(confirm) = st.menu.confirm.clone() else { return };
     let (title, body, ok_label) = match &confirm {
         Confirm::Overwrite(name) => ("Overwrite save?", format!("A save named \"{name}\" already exists. Replace it?"), "Overwrite"),
@@ -533,28 +543,20 @@ fn confirm_dialog(cx: &mut Cx, st: &mut UiState) {
         }
     };
     let screen = cx.ctx.content_rect();
-    let dim = Id::new("confirm-dim");
-    widgets::area(cx.ctx, dim, Order::Foreground, screen, |ui| {
-        ui.painter().rect_filled(screen, CornerRadius::ZERO, Color32::from_black_alpha(110));
-        let _ = ui.interact(screen, Id::new("confirm-dim-block"), egui::Sense::click());
-    });
-    cx.ctx.move_to_top(LayerId::new(Order::Foreground, dim));
+    // A dim over the page. It is drawn after the page, so it takes the clicks of the page.
+    ui.painter().rect_filled(screen, CornerRadius::ZERO, Color32::from_black_alpha(110));
+    let _ = ui.interact(screen, Id::new("confirm-dim-block"), egui::Sense::click());
     let id = Id::new("confirm-dialog");
     let content = vec2(440.0, 70.0 + 12.0 + size::BUTTON_H);
     let outer = widgets::window_outer(content);
     let rect = widgets::place(screen, outer, Vec2::ZERO);
-    let (mut cancel, mut ok) = (false, false);
-    widgets::area(cx.ctx, id, Order::Foreground, rect, |ui| {
-        let f = widgets::window(ui, id, rect, title, false);
-        let p = ui.painter();
-        let galley = p.layout(body.clone(), font(text::BODY), color::TEXT, f.content.width());
-        p.galley(f.content.min + vec2(0.0, 8.0), galley, color::TEXT);
-        let by = f.content.bottom() - size::BUTTON_H;
-        cancel = widgets::button(ui, id.with("cancel"), Rect::from_min_size(pos2(f.content.left(), by), vec2(140.0, size::BUTTON_H)), "Cancel", ButtonKind::Normal, true).clicked();
-        ok = widgets::button(ui, id.with("ok"), Rect::from_min_size(pos2(f.content.right() - 140.0, by), vec2(140.0, size::BUTTON_H)), ok_label, ButtonKind::Back, true)
-            .clicked();
-    });
-    cx.ctx.move_to_top(LayerId::new(Order::Foreground, id));
+    let f = widgets::window(ui, id, rect, title, false);
+    let p = ui.painter();
+    let galley = p.layout(body.clone(), font(text::BODY), color::TEXT, f.content.width());
+    p.galley(f.content.min + vec2(0.0, 8.0), galley, color::TEXT);
+    let by = f.content.bottom() - size::BUTTON_H;
+    let cancel = widgets::button(ui, id.with("cancel"), Rect::from_min_size(pos2(f.content.left(), by), vec2(140.0, size::BUTTON_H)), "Cancel", ButtonKind::Normal, true).clicked();
+    let ok = widgets::button(ui, id.with("ok"), Rect::from_min_size(pos2(f.content.right() - 140.0, by), vec2(140.0, size::BUTTON_H)), ok_label, ButtonKind::Back, true).clicked();
     if cancel {
         st.menu.confirm = None;
     }

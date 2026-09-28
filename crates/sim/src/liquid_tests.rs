@@ -406,7 +406,9 @@ fn liquid_frames() {
     let only = std::env::var("SCENE").ok();
     let want = |n: &str| only.as_deref().is_none_or(|o| o == n);
     type Make = fn() -> Scene;
-    let scenes: [(&str, Make, &[u64], CellRect, u32, usize); 9] = [
+    /// (name, make, ticks, area, scale, cols): see the loop below.
+    type SceneRow = (&'static str, Make, &'static [u64], CellRect, u32, usize);
+    let scenes: [SceneRow; 9] = [
         ("ball", || ball_scene(192), &[10, 20, 30, 36, 40, 44, 48, 52, 60, 70, 80, 100, 130, 160, 200], CellRect::new(0, 0, 384, 256), 3, 4),
         ("dam", dam_scene, &[10, 20, 30, 40, 50, 60, 80, 100, 130, 160, 200, 300, 400, 600, 900, 1200], CellRect::new(0, 0, 1024, 384), 1, 2),
         ("waterfall", waterfall_scene, &[40, 80, 120, 200, 300, 450, 600, 800, 1000], CellRect::new(0, 0, 512, 384), 2, 3),
