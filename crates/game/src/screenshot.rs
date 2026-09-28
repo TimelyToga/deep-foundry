@@ -20,7 +20,7 @@ use crate::tools;
 use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
 use foundry_content::{Content, ItemRef};
-use foundry_core::{CellPos, Command, TILE_SIZE};
+use foundry_core::{CellPos, Command, TILE_SIZE, TilePos};
 use foundry_factory::Guide;
 use foundry_render::headless::{CAPTURE_FORMAT, capture, capture_with, create_device};
 use foundry_render::wgpu;
@@ -215,7 +215,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             | UiState::Alt
             | UiState::Remove
             | UiState::Tanks
-            | UiState::Campfire => {
+            | UiState::Campfire
+            | UiState::OreLine => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
@@ -564,6 +565,137 @@ fn setup_normal_screen(
                 h.apply(FactoryCommand::OpenAt(cell), sim);
             }
             give(h, mat("wood"), 40);
+        }
+        UiState::OreLine => {
+            // Live Tier 0 line at the right of the spawn: hopper -> stamp mill -> belts ->
+            // water-fed sluice -> crate. Feed it real cells and run the simulation to completion.
+            for i in 0..content.factory.techs.len() {
+                h.factory
+                    .progress
+                    .debug_complete(&content, foundry_core::TechId(i as u16));
+            }
+            // Put the output crate within the robot's interaction range so its inventory is
+            // visible in the final capture.
+            let x = h.robot.center().0 as i32 / TILE_SIZE - 12;
+            let ground = h.robot.center().1 as i32 / TILE_SIZE - 5;
+            for cy in (ground - 12) * TILE_SIZE..(ground + 2) * TILE_SIZE {
+                for cx in (x - 1) * TILE_SIZE..(x + 15) * TILE_SIZE {
+                    sim.set_cell(CellPos::new(cx, cy), foundry_core::MaterialId::AIR, None);
+                }
+            }
+            let hopper_at = TilePos::new(x, ground - 7);
+            let stamp_at = TilePos::new(x, ground - 5);
+            let hopper = h
+                .factory
+                .place(kind("hopper"), hopper_at, 0, false, sim)
+                .expect("hopper fits");
+            let stamp = h
+                .factory
+                .place(kind("stamp_mill"), stamp_at, 0, false, sim)
+                .expect("stamp mill fits");
+            for belt_x in x + 2..=x + 6 {
+                h.factory
+                    .place(
+                        kind("wood_belt"),
+                        TilePos::new(belt_x, ground - 1),
+                        0,
+                        false,
+                        sim,
+                    )
+                    .expect("belt fits");
+            }
+            let sluice_at = TilePos::new(x + 7, ground - 2);
+            let sluice = h
+                .factory
+                .place(kind("sluice"), sluice_at, 0, false, sim)
+                .expect("sluice fits");
+            let crate_at = TilePos::new(x + 10, ground - 2);
+            let crate_id = h
+                .factory
+                .place(kind("crate"), crate_at, 0, false, sim)
+                .expect("crate fits");
+            h.factory
+                .set_recipe(
+                    stamp,
+                    Some(
+                        content
+                            .factory
+                            .recipe("crushed_malachite")
+                            .expect("crush recipe"),
+                    ),
+                )
+                .expect("known crush recipe");
+            h.factory
+                .set_recipe(
+                    sluice,
+                    Some(
+                        content
+                            .factory
+                            .recipe("washed_malachite")
+                            .expect("wash recipe"),
+                    ),
+                )
+                .expect("known wash recipe");
+
+            let raw = content.expect_material("raw_malachite");
+            for cy in (ground - 10) * TILE_SIZE..(ground - 9) * TILE_SIZE {
+                for cx in x * TILE_SIZE..(x + 1) * TILE_SIZE {
+                    sim.set_cell(CellPos::new(cx, cy), raw, None);
+                }
+            }
+            let water = content.expect_material("water");
+            for cy in (ground - 6) * TILE_SIZE..(ground - 4) * TILE_SIZE {
+                for cx in (x + 7) * TILE_SIZE..(x + 8) * TILE_SIZE {
+                    sim.set_cell(CellPos::new(cx, cy), water, None);
+                }
+            }
+            let stone = content.expect_material("stone");
+            for cy in (ground + 1) * TILE_SIZE..(ground + 2) * TILE_SIZE {
+                for cx in (x + 2) * TILE_SIZE..(x + 18) * TILE_SIZE {
+                    sim.set_cell(CellPos::new(cx, cy), stone, None);
+                }
+            }
+            let washed = mat("washed_malachite");
+            for _ in 0..4800 {
+                sim.tick();
+                h.tick(sim);
+                if h.factory
+                    .buildings
+                    .inventory(crate_id)
+                    .is_some_and(|inv| inv.count(washed) >= 6)
+                {
+                    break;
+                }
+            }
+            // The long autonomous run lets nearby generated terrain settle. Clear the final
+            // view around the line while preserving the machines' material cells.
+            for ty in ground - 12..=ground + 1 {
+                for tx in x - 1..x + 15 {
+                    let machine = (tx == x && ty == ground - 7)
+                        || ((x..x + 2).contains(&tx) && (ground - 5..ground - 2).contains(&ty))
+                        || ((x + 2..x + 7).contains(&tx) && ty == ground - 1)
+                        || ((x + 7..x + 10).contains(&tx) && ty == ground - 2)
+                        || ((x + 10..x + 12).contains(&tx) && (ground - 2..ground).contains(&ty));
+                    if !machine {
+                        for cy in ty * TILE_SIZE..(ty + 1) * TILE_SIZE {
+                            for cx in tx * TILE_SIZE..(tx + 1) * TILE_SIZE {
+                                sim.set_cell(
+                                    CellPos::new(cx, cy),
+                                    foundry_core::MaterialId::AIR,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            for cy in (ground + 1) * TILE_SIZE..(ground + 2) * TILE_SIZE {
+                for cx in (x + 2) * TILE_SIZE..(x + 18) * TILE_SIZE {
+                    sim.set_cell(CellPos::new(cx, cy), content.expect_material("stone"), None);
+                }
+            }
+            h.apply(FactoryCommand::OpenAt(crate_at.origin()), sim);
+            let _ = hopper;
         }
         UiState::GuideWorkbench | UiState::GuideDone => {
             // The goals up to the workbench and the two ores are done.

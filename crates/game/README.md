@@ -236,7 +236,8 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
   `--walk N` lets the robot walk N ticks first (N < 0: to the left).
   `guide-workbench` shows the guide after the first goals (up to the workbench and the two
   ores), `guide-done` the guide when every goal that the game can do is done ("Next: the kiln.
-  It comes in a later update."), and `campfire` a campfire window that fires clay bricks.
+  It comes in a later update."), `campfire` a campfire window that fires clay bricks, and
+  `ore-line` a working hopper, stamp mill, belt, sluice and crate line.
 - `--pose NAME[:FRAME]` (normal mode) makes the robot act for the picture: `idle`, `walk`,
   `jump`, `fall`, `land`, `fly`, `wade` show that animation (FRAME picks one frame; `fall` and
   `land` first use up the jetpack fuel, so the fuel bar shows). `dig`, `spray` and `scan` use

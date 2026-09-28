@@ -77,6 +77,20 @@
     Recipe(id: "crushed_hematite", category: "crushing", inputs: [("raw_hematite", 16)], outputs: [("crushed_hematite", 16)], time: 4.0),
     Recipe(id: "crushed_limestone", category: "crushing", inputs: [("raw_limestone", 16)], outputs: [("crushed_limestone", 16)], time: 4.0),
     Recipe(id: "crushed_slag", category: "crushing", inputs: [("slag_block", 16)], outputs: [("crushed_slag", 16)], time: 4.0),
+    Recipe(id: "crushed_malachite", category: "crushing", inputs: [("raw_malachite", 16)], outputs: [("crushed_malachite", 16)], time: 4.0),
+    Recipe(id: "crushed_cassiterite", category: "crushing", inputs: [("raw_cassiterite", 16)], outputs: [("crushed_cassiterite", 16)], time: 4.0),
+    Recipe(id: "crushed_coal", category: "crushing", inputs: [("raw_coal", 16)], outputs: [("crushed_coal", 16)], time: 4.0),
+    Recipe(id: "crushed_chalcopyrite", category: "crushing", inputs: [("raw_chalcopyrite", 16)], outputs: [("crushed_chalcopyrite", 16)], time: 4.0),
+
+    // Water washes crushed ore: the clean fraction leaves through the product port while light
+    // silt exits with the flowing water through its own tailings port.
+    Recipe(id: "washed_malachite", category: "washing", inputs: [("crushed_malachite", 4), ("water", 1)], outputs: [("washed_malachite", 3), ("water", 1)], byproducts: [(item: "silt", count: 1, chance: 1.0)], time: 2.0),
+    Recipe(id: "washed_cassiterite", category: "washing", inputs: [("crushed_cassiterite", 4), ("water", 1)], outputs: [("washed_cassiterite", 3), ("water", 1)], byproducts: [(item: "silt", count: 1, chance: 1.0)], time: 2.0),
+    Recipe(id: "washed_coal", category: "washing", inputs: [("crushed_coal", 4), ("water", 1)], outputs: [("washed_coal", 3), ("water", 1)], byproducts: [(item: "silt", count: 1, chance: 1.0)], time: 2.0),
+    Recipe(id: "washed_magnetite", category: "washing", inputs: [("crushed_magnetite", 4), ("water", 1)], outputs: [("washed_magnetite", 3), ("water", 1)], byproducts: [(item: "silt", count: 1, chance: 1.0)], time: 2.0),
+    Recipe(id: "washed_hematite", category: "washing", inputs: [("crushed_hematite", 4), ("water", 1)], outputs: [("washed_hematite", 3), ("water", 1)], byproducts: [(item: "silt", count: 1, chance: 1.0)], time: 2.0),
+    Recipe(id: "washed_chalcopyrite", category: "washing", inputs: [("crushed_chalcopyrite", 4), ("water", 1)], outputs: [("washed_chalcopyrite", 3), ("water", 1)], byproducts: [(item: "silt", count: 1, chance: 1.0)], time: 2.0),
+    Recipe(id: "washed_limestone", category: "washing", inputs: [("crushed_limestone", 4), ("water", 1)], outputs: [("washed_limestone", 3), ("water", 1)], byproducts: [(item: "silt", count: 1, chance: 1.0)], time: 2.0),
 
     Recipe(id: "firebrick_wall", category: "hand", inputs: [("firebrick", 2)], outputs: [("firebrick_wall", 1)], time: 0.5),
     Recipe(id: "coke_oven_controller", category: "hand", inputs: [("clay_brick", 8), ("wood", 2)], outputs: [("coke_oven_controller", 1)], time: 2.0),

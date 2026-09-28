@@ -140,6 +140,8 @@ pub enum UiState {
     GuideDone,
     /// Normal mode: a campfire that fires raw clay bricks, with its window open.
     Campfire,
+    /// Normal mode: a live hopper, stamp mill, belt, sluice and crate line.
+    OreLine,
 }
 
 impl UiState {
@@ -167,6 +169,7 @@ impl UiState {
             "guide-workbench" => UiState::GuideWorkbench,
             "guide-done" => UiState::GuideDone,
             "campfire" => UiState::Campfire,
+            "ore-line" => UiState::OreLine,
             _ => return None,
         })
     }
@@ -193,6 +196,7 @@ impl UiState {
                 | UiState::GuideWorkbench
                 | UiState::GuideDone
                 | UiState::Campfire
+                | UiState::OreLine
         )
     }
 }
