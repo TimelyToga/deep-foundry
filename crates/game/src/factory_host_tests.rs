@@ -442,3 +442,61 @@ fn items_can_be_taken_back_out_of_machine_input_slots() {
     assert_eq!(input(&mut g), 0);
     assert_eq!(g.count(plate), 2);
 }
+
+/// A small closed stone cup at `center` with a row of lava on a row of water, so the two react.
+fn lava_on_water(g: &mut Game, center: CellPos) {
+    let m = |name: &str| g.content.expect_material(name);
+    let (stone, water, lava) = (m("stone"), m("water"), m("lava"));
+    for dy in -4..=2 {
+        for dx in -5i32..=5 {
+            let inside = dx.abs() <= 4 && (-3..=1).contains(&dy);
+            let material = match (inside, dy) {
+                (false, _) => stone,
+                (true, 1) | (true, 0) => water,
+                (true, -1) => lava,
+                _ => MaterialId::AIR,
+            };
+            g.sim.set_cell(CellPos::new(center.x + dx, center.y + dy), material, None);
+        }
+    }
+}
+
+/// Run ticks until the simulation sends a reaction event (at most `max` ticks). Returns the first one.
+fn tick_until_reaction(g: &mut Game, max: u32) -> Option<(u16, CellPos)> {
+    for _ in 0..max {
+        g.ticks(1);
+        let found = g.sim.events().iter().find_map(|e| if let SimEvent::Reaction { index, at } = *e { Some((index, at)) } else { None });
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// A reaction near the robot is discovered (with a notice); the same reaction far from the robot
+/// is not.
+#[test]
+fn reactions_near_the_robot_are_discovered() {
+    let mut g = Game::new();
+    let robot = g.host.robot.center_cell();
+    // Far: more than REACTION_SEE_RANGE cells from the robot, in the air above the ground.
+    lava_on_water(&mut g, CellPos::new(robot.x + foundry_factory::REACTION_SEE_RANGE + 40, robot.y - 40));
+    let (index, at) = tick_until_reaction(&mut g, 120).expect("lava and water react");
+    let key = foundry_factory::progress::reaction_key(&g.content, &g.content.reactions[index as usize]);
+    assert!((at.x - robot.x).abs() > foundry_factory::REACTION_SEE_RANGE, "the reaction is far: {at:?}");
+    assert!(!g.host.factory.progress.is_reaction_discovered(&key), "a far reaction is not seen");
+    g.ticks(60);
+    // Near: 20 cells from the robot.
+    lava_on_water(&mut g, CellPos::new(robot.x + 20, robot.y - 30));
+    let mut seen = false;
+    for _ in 0..120 {
+        g.ticks(1);
+        if g.host.factory.progress.is_reaction_discovered(&key) {
+            seen = true;
+            break;
+        }
+    }
+    assert!(seen, "the reaction {key} near the robot is discovered");
+    let notices = g.frame().notices;
+    assert!(notices.iter().any(|n| n.starts_with("Discovered a reaction")), "{notices:?}");
+}
