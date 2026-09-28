@@ -16,7 +16,7 @@
 //!   so all metals conduct heat at the same, highest speed.
 //! - Two neighbors that differ by less than `MIN_DIFF` (2 °C) do not exchange heat. Without this,
 //!   the random rounding (below) moves single degrees back and forth for a long time, and areas
-//!   never come to rest.
+//!   never come to rest. So an area at rest can keep a slope of up to 1 °C per cell.
 //! - The new temperature is rounded at random: up with a chance equal to the fraction. So small
 //!   flows are not lost, and on average no heat is made or lost.
 //! - Air cells (material 0) also move `AIR_RATE` of the way toward the air temperature of their

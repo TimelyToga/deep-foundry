@@ -1,0 +1,16 @@
+// Water on lava boils into steam.
+// Picture (100 x 60): open stone box, inside x 4..96, walls from y 20, floor at y 56.
+// Lava x 4..96, y 46..56 (920 cells). Water on top of it, y 36..46 (920 cells).
+Scene(
+    note: "Water on lava boils into steam.",
+    legend: {
+        "#ff5a1a": "lava",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 60,
+    checks: [
+        Total(material: "steam", min: 100),
+        Total(material: "water", max: 850),
+    ],
+)
