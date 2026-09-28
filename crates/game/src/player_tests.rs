@@ -438,3 +438,122 @@ fn a_short_press_makes_a_lower_jump() {
     assert!(short * 2 < long, "short {short}, long {long}");
     assert!(short >= 4, "a tap still jumps: {short}");
 }
+
+// ------------------------------------------------------------ No shake (stutter)
+//
+// The drawn body is `draw_top_left`: whole cells plus the remainder. These tests check that the
+// drawn body does not move back and forth when the robot pushes against a wall, a ceiling or
+// the ground, and that it moves evenly in water.
+
+/// The drawn top-left corner after each of `ticks` ticks. With `tick_sim`, the cells update
+/// before each tick (water flows).
+fn drawn_path(r: &mut Robot, sim: &mut Simulation, input: MoveInput, ticks: u32, tick_sim: bool) -> Vec<(f32, f32)> {
+    (0..ticks)
+        .map(|_| {
+            if tick_sim {
+                sim.tick();
+            }
+            r.step(input, sim);
+            r.draw_top_left()
+        })
+        .collect()
+}
+
+#[test]
+fn no_shake_when_walking_into_a_wall() {
+    let mut sim = world();
+    // A wall too high to step up.
+    fill(&mut sim, "stone", 130, 150, 140, 200);
+    let mut r = standing(&sim, 110);
+    run(&mut r, &sim, RIGHT, 40);
+    assert_eq!(r.rect().x1, 130, "at the wall");
+    let path = drawn_path(&mut r, &mut sim, RIGHT, 60, false);
+    assert!(path.iter().all(|&p| p == path[0]), "the drawn body stays still: {path:?}");
+    assert_eq!(path[0].0, (130 - ROBOT_W) as f32, "and it is not drawn in the wall");
+    assert!(r.blocked > 0);
+    // The same to the left.
+    fill(&mut sim, "stone", 90, 150, 100, 200);
+    run(&mut r, &sim, LEFT, 40);
+    assert_eq!(r.left, 100);
+    let path = drawn_path(&mut r, &mut sim, LEFT, 60, false);
+    assert!(path.iter().all(|&p| p == path[0]), "the drawn body stays still: {path:?}");
+}
+
+#[test]
+fn no_shake_when_flying_up_and_falling_along_a_wall() {
+    let mut sim = world();
+    // A high wall right of the robot.
+    fill(&mut sim, "stone", 130, 20, 140, 200);
+    let mut r = standing(&sim, 130 - ROBOT_W);
+    let into_wall = MoveInput { x: 1, jump: true };
+    // Jump, fly with the jetpack until the fuel ends, then fall back down. The key into the
+    // wall is down the whole time.
+    let mut path = drawn_path(&mut r, &mut sim, into_wall, 120, false);
+    path.extend(drawn_path(&mut r, &mut sim, RIGHT, 120, false));
+    assert!(r.on_ground, "landed again");
+    let top = path.iter().map(|p| p.1).fold(f32::MAX, f32::min);
+    assert!(top < (FLOOR - ROBOT_H - 30) as f32, "it flew up: {top}");
+    for (i, p) in path.iter().enumerate() {
+        assert_eq!(p.0, (130 - ROBOT_W) as f32, "tick {i}: the drawn body moves into the wall and back");
+    }
+}
+
+#[test]
+fn no_shake_when_the_jetpack_pushes_against_a_ceiling() {
+    let mut sim = world();
+    // A ceiling 4 cells above the head.
+    let ceiling = FLOOR - ROBOT_H - 4;
+    fill(&mut sim, "stone", 2, ceiling - 10, 254, ceiling);
+    let mut r = standing(&sim, 100);
+    let path = drawn_path(&mut r, &mut sim, JUMP, 25, false);
+    assert!(r.fuel > 0.0 && r.jetting, "still flying");
+    // The jetpack push grows over a few ticks, so just after the jump hits the ceiling the robot
+    // drops a very small distance (about 0.02 cells). A shake was 0.7 cells.
+    let at_ceiling = path.iter().position(|p| p.1 == ceiling as f32).expect("the head reaches the ceiling");
+    for (i, p) in path.iter().enumerate().skip(at_ceiling) {
+        assert!((p.1 - ceiling as f32).abs() < 0.05, "tick {i}: the drawn body moves into the ceiling and back: {}", p.1);
+    }
+    // Also with a walk key down: the robot slides along the ceiling with no shake up and down.
+    let path = drawn_path(&mut r, &mut sim, MoveInput { x: 1, jump: true }, 15, false);
+    assert!(r.jetting);
+    assert!(path.iter().all(|p| p.1 == ceiling as f32), "{path:?}");
+}
+
+#[test]
+fn walks_evenly_through_water_over_a_bumpy_bottom() {
+    let mut sim = world();
+    // A pool with a bottom that goes up and down by 1 and 2 cells, and a high wall at its end.
+    let bumps = [0, 1, 2, 1, 0, 2, 0, 1];
+    for (i, x) in (100..200).step_by(6).enumerate() {
+        fill(&mut sim, "stone", x, FLOOR - bumps[i % bumps.len()], x + 6, FLOOR);
+    }
+    fill(&mut sim, "stone", 200, 100, 210, FLOOR);
+    fill(&mut sim, "water", 2, FLOOR - 12, 200, FLOOR - 2);
+    for _ in 0..200 {
+        sim.tick();
+    }
+    let mut r = standing(&sim, 90);
+    assert!(r.in_liquid);
+    // Get to wading speed, then walk over the bumps with the water still moving.
+    run(&mut r, &sim, RIGHT, 10);
+    let mut last = r.draw_top_left();
+    let mut on_bottom = 0;
+    while r.rect().x1 < 200 {
+        sim.tick();
+        r.step(RIGHT, &sim);
+        let p = r.draw_top_left();
+        let (dx, dy) = (p.0 - last.0, p.1 - last.1);
+        if r.rect().x1 < 200 {
+            assert!((0.45..=0.55).contains(&dx), "even speed in the water: {dx} at x {}", r.left);
+        }
+        assert!(dy.abs() <= 1.0, "the drawn body moves smoothly over a step: {dy} at x {}", r.left);
+        on_bottom += r.on_ground as u32;
+        last = p;
+        assert!(r.left < 300, "walked too long");
+    }
+    assert!(r.in_liquid);
+    assert!(on_bottom >= 190, "walks on the bottom and does not float down each step: {on_bottom} ticks on the bottom");
+    // At the wall at the end of the pool: no shake.
+    let path = drawn_path(&mut r, &mut sim, RIGHT, 40, true);
+    assert!(path.iter().all(|p| p.0 == (200 - ROBOT_W) as f32), "{path:?}");
+}
