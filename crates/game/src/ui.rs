@@ -44,6 +44,7 @@ impl SandboxUi {
         let ui = FoundryUi::new(ctx);
         let mut model = UiModel::new(content);
         model.settings.show_fps = true;
+        model.settings.simulation = sim_sliders(&foundry_sim::SimSettings::default());
         model.saves = saves::list(&saves_dir);
         let mut s = Self { ui, model, saves_dir, message_until: None, message_log: Vec::new() };
         s.set_mode(GameMode::Sandbox);
@@ -77,6 +78,12 @@ impl SandboxUi {
         model.player.hand = model.player.hotbar[0].map(|item| Stack { item, count: 1 });
         model.player.craft_speed = 1.0;
         model.sandbox = Some(SandboxView { brush_radius: 6, sim_paused: false });
+    }
+
+    /// `Command::SetSimSetting` for every simulation slider, to give a new simulation the
+    /// player's values.
+    pub fn sim_setting_commands(&self) -> Vec<foundry_core::Command> {
+        self.model.settings.simulation.iter().map(|s| foundry_core::Command::SetSimSetting { key: s.key.clone(), value: s.value }).collect()
     }
 
     /// The material that the brush paints: the material in the hand.
@@ -232,4 +239,21 @@ mod tests {
         assert_eq!(s.brush_material(), None);
         assert!(!s.sandbox_action(&UiAction::Pause));
     }
+}
+
+/// The simulation sliders of the settings screen.
+fn sim_sliders(settings: &foundry_sim::SimSettings) -> Vec<foundry_ui::SimSetting> {
+    settings
+        .sliders()
+        .into_iter()
+        .map(|s| foundry_ui::SimSetting {
+            key: s.key.into(),
+            label: s.label.into(),
+            help: s.help.into(),
+            value: s.value,
+            min: s.min,
+            max: s.max,
+            step: s.step,
+        })
+        .collect()
 }
