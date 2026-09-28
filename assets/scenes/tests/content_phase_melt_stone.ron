@@ -1,13 +1,15 @@
 // Generated content scene: melt of stone into lava at 1200C.
-// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
 Scene(
     note: "stone melts into lava.",
     legend: {
-        "#6b6a70": (material: "stone", temperature: 1280),
+        // A hot stone block, in its own color (the box is stone too).
+        "#c8784a": (material: "stone", temperature: 1280),
         "#6b6a70": "stone",
     },
-    ticks: 300,
+    ticks: 3,
     checks: [
-        Total(material: "lava", min: 1, pending: true),
+        Total(material: "lava", min: 1),
     ],
 )

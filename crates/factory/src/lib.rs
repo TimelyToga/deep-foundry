@@ -395,8 +395,8 @@ impl Factory {
     /// the player sees it. The first time the player sees a reaction, it is discovered and gives
     /// discovery points. Returns true if the reaction is new.
     ///
-    /// The simulation does not send reaction events yet. See "A reaction event from the
-    /// simulation" in `docs/design/requests/factory-core.md`.
+    /// The game calls this for each `SimEvent::Reaction` of the simulation
+    /// (crates/game/src/factory_host.rs).
     pub fn observe_reaction(&mut self, index: u16, at: CellPos) -> bool {
         let Some(reaction) = self.content.reactions.get(index as usize) else { return false };
         if let Some(p) = self.player_pos {
