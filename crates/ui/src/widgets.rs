@@ -109,7 +109,16 @@ pub struct SlotContent<'a> {
 
 /// Draw a slot and make it clickable. Left and right clicks both count.
 pub fn slot(ui: &Ui, id: Id, r: Rect, look: SlotLook, content: &SlotContent, atlas: &IconAtlas) -> Response {
-    let resp = ui.interact(r, id, Sense::click());
+    slot_sense(ui, id, r, look, content, atlas, Sense::click())
+}
+
+/// Draw a slot that can be clicked and dragged (a drag source, see `screens::drag`).
+pub fn slot_drag(ui: &Ui, id: Id, r: Rect, look: SlotLook, content: &SlotContent, atlas: &IconAtlas) -> Response {
+    slot_sense(ui, id, r, look, content, atlas, Sense::click_and_drag())
+}
+
+fn slot_sense(ui: &Ui, id: Id, r: Rect, look: SlotLook, content: &SlotContent, atlas: &IconAtlas, sense: Sense) -> Response {
+    let resp = ui.interact(r, id, sense);
     let hovered = resp.hovered();
     let p = ui.painter();
     let (fill, light, dark) = match look {

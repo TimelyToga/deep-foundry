@@ -28,6 +28,7 @@ mod settings;
 mod sim_pool;
 mod sim_thread;
 mod smoke;
+mod spoil;
 mod tools;
 mod ui;
 

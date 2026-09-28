@@ -22,6 +22,9 @@
     // --- Tier 0 intermediates: known from the start ---
     Recipe(id: "raw_clay_brick", category: "hand", inputs: [("clay", 16)], outputs: [("raw_clay_brick", 1)], time: 1.0),
     Recipe(id: "clay_brick", name: Some("Clay brick"), category: "kiln", inputs: [("raw_clay_brick", 1)], outputs: [("clay_brick", 1)], time: 20.0, min_temp: Some(900)),
+    // Pit firing: the campfire bakes raw clay bricks slowly with wood as fuel (its fuel slot).
+    // So the first clay bricks (and the kiln that needs them) do not need a kiln.
+    Recipe(id: "pit_fired_clay_brick", name: Some("Clay brick (campfire)"), category: "pit_firing", inputs: [("raw_clay_brick", 1)], outputs: [("clay_brick", 1)], time: 30.0),
     Recipe(id: "raw_firebrick", category: "hand", inputs: [("clay", 12), ("sand", 4)], outputs: [("raw_firebrick", 1)], time: 1.0),
     Recipe(id: "firebrick", name: Some("Firebrick"), category: "kiln", inputs: [("raw_firebrick", 1)], outputs: [("firebrick", 1)], time: 30.0, min_temp: Some(1200)),
     Recipe(id: "charcoal", category: "kiln", inputs: [("wood", 32)], outputs: [("charcoal", 24)], byproducts: [(item: "smoke", count: 8, chance: 1.0)], time: 30.0, min_temp: Some(300)),

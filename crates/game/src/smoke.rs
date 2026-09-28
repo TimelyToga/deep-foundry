@@ -129,9 +129,10 @@ impl Smoke {
             (5, Step::PlaceNear("workbench")),
             (10, Step::OpenPlaced),
             (1, Step::WindowOf("workbench")),
-            // Tanks: dig until they are full, then put the clay into a crate.
+            // Tanks: dig until they are full, then put the clay into a crate. (The clay tank has
+            // no room: the robot throws the dirt around the clay out, so only clay fills a tank.)
             (5, Step::Key(Key::Escape)),
-            (5, Step::FillTanks("clay", 30)),
+            (5, Step::FillTanks("clay", 0)),
             (5, Step::DigClay),
             (1, Step::Expect(foundry_ui::TANKS_FULL)),
             (1, Step::StopTools),

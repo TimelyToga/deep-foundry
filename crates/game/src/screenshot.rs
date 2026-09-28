@@ -200,13 +200,14 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             | UiState::Drag
             | UiState::Alt
             | UiState::Remove
-            | UiState::Tanks => {
+            | UiState::Tanks
+            | UiState::Campfire => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
                 }
             }
-            UiState::Research | UiState::Guide => {
+            UiState::Research | UiState::Guide | UiState::GuideWorkbench | UiState::GuideDone => {
                 ui.model.state = GameState::Playing;
                 ui.ui.open_window(if state == UiState::Research { WindowKind::Research } else { WindowKind::Guide });
             }
@@ -363,9 +364,13 @@ fn setup_normal_screen(
     let mut mouse = None;
     match state {
         UiState::Inventory => {
-            // The robot dug some clay and sand, and makes clay bricks.
+            // The robot dug some clay and sand, and makes clay bricks. It found dirt, stone
+            // (gravel) and copper ore: the keep or drop list shows them.
             give(h, mat("clay"), 180);
             give(h, mat("sand"), 120);
+            for id in ["dirt", "stone", "malachite"] {
+                h.factory.scan(content.expect_material(id));
+            }
             h.apply(FactoryCommand::Craft { recipe: content.factory.recipe("raw_clay_brick").expect("recipe"), count: 5 }, sim);
             for _ in 0..40 {
                 h.tick(sim);
@@ -521,6 +526,55 @@ fn setup_normal_screen(
         }
         UiState::Guide => {
             give(h, mat("clay"), 40);
+            h.apply(FactoryCommand::Windows { research: false, guide: true }, sim);
+        }
+        UiState::Campfire => {
+            // A campfire right of the robot: raw clay bricks in it, wood in the fuel slot, and
+            // the first bricks are done.
+            give(h, ItemRef::Part(part("campfire")), 1);
+            h.apply(FactoryCommand::PickToCursor(part("campfire")), sim);
+            h.apply(FactoryCommand::PlaceNear, sim);
+            h.apply(FactoryCommand::ClearCursor, sim);
+            let fire = h.factory.buildings.iter().find(|(_, b)| b.kind == kind("campfire")).map(|(id, b)| (id, b.at.origin()));
+            if let Some((id, cell)) = fire {
+                h.factory.buildings.insert(&content, id, ItemRef::Part(part("raw_clay_brick")), 8);
+                h.factory.buildings.insert(&content, id, mat("wood"), 60);
+                for _ in 0..(2 * 30 + 12) * 60 {
+                    h.tick(sim);
+                }
+                h.apply(FactoryCommand::OpenAt(cell), sim);
+            }
+            give(h, mat("wood"), 40);
+        }
+        UiState::GuideWorkbench | UiState::GuideDone => {
+            // The goals up to the workbench and the two ores are done.
+            give(h, mat("sand"), 100);
+            give(h, mat("clay"), 64);
+            give(h, mat("wood"), 60);
+            for id in ["malachite", "cassiterite"] {
+                h.factory.scan(content.expect_material(id));
+            }
+            let place = |h: &mut FactoryHost, sim: &mut foundry_sim::Simulation, id: &str| {
+                give(h, ItemRef::Part(part(id)), 1);
+                h.apply(FactoryCommand::PickToCursor(part(id)), sim);
+                h.apply(FactoryCommand::PlaceNear, sim);
+                h.apply(FactoryCommand::ClearCursor, sim);
+            };
+            place(h, sim, "workbench");
+            if state == UiState::GuideDone {
+                // Every goal that the game can do is done: research, bricks, campfire, sluice.
+                for tech in ["bronze", "research"] {
+                    h.apply(FactoryCommand::StartResearch(content.factory.tech(tech).expect("tech")), sim);
+                    for _ in 0..60 {
+                        h.tick(sim);
+                    }
+                }
+                give(h, ItemRef::Part(part("raw_clay_brick")), 8);
+                give(h, ItemRef::Part(part("clay_brick")), 8);
+                place(h, sim, "campfire");
+                place(h, sim, "sluice");
+            }
+            h.factory.update_guide();
             h.apply(FactoryCommand::Windows { research: false, guide: true }, sim);
         }
         _ => {}

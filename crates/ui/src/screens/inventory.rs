@@ -75,6 +75,9 @@ pub fn panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect, hint: &str) {
     let p = &model.player;
     let sandbox = model.sandbox.is_some();
     let painter = ui.painter().clone();
+    // A building slot dropped on the inventory goes back to the robot.
+    let zone = ui.interact(r, Id::new("inventory-drop"), egui::Sense::hover());
+    super::drag::robot_zone(cx, &zone);
     widgets::heading(&painter, r.min + vec2(0.0, 4.0), if sandbox { "Materials" } else { "Inventory" });
     let hint = if sandbox && hint.is_empty() { "Click a material to paint with it." } else { hint };
     if !hint.is_empty() {
@@ -96,9 +99,10 @@ pub fn panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect, hint: &str) {
                 let count = stack.filter(|s| s.count > 1 && !sandbox).map(|s| format::count(s.count as u64));
                 let selected = sandbox && stack.is_some() && stack.map(|s| s.item) == p.hand.map(|h| h.item);
                 let content = SlotContent { item: stack.map(|s| s.item), count: count.as_deref(), selected, ..Default::default() };
-                let resp = widgets::slot(ui, Id::new(("inv", i)), sr, SlotLook::Normal, &content, cx.atlas);
+                let resp = widgets::slot_drag(ui, Id::new(("inv", i)), sr, SlotLook::Normal, &content, cx.atlas);
                 if let Some(s) = stack {
                     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, item::name(&model.content, s.item)));
+                    super::drag::source(&resp, super::drag::Drag::Inventory(i));
                     if resp.hovered() {
                         let amount = if sandbox { "No limit (sandbox)".to_string() } else { s.count.to_string() };
                         cx.tip(Tip::Item { item: s.item, amount: Some(amount) });
@@ -138,9 +142,10 @@ pub fn panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect, hint: &str) {
         let content = tank_slot_content(model, t);
         let count = it.map(|_| format::count(t.units as u64));
         let content = SlotContent { count: count.as_deref(), ..content };
-        let resp = widgets::slot(ui, Id::new(("tank", i)), sr, SlotLook::Dark, &content, cx.atlas);
+        let resp = widgets::slot_drag(ui, Id::new(("tank", i)), sr, SlotLook::Dark, &content, cx.atlas);
         if let Some(x) = it {
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Tank {}", item::name(&model.content, x))));
+            super::drag::source(&resp, super::drag::Drag::Tank(i));
         }
         if resp.hovered() {
             match it {
@@ -161,6 +166,7 @@ pub fn panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect, hint: &str) {
         if let Some(click) = slot_click(cx, &resp) {
             cx.act(UiAction::ClickSlot { slot: SlotRef::Tank(i), click });
         }
+        super::keep::corner_button(ui, cx, Id::new(("tank-keep", i)), sr, t.material);
         // The trash button under the slot.
         let tr = Rect::from_min_size(pos2(sr.left() + 2.0, sr.bottom() + 1.0), vec2(size::SLOT - 4.0, TRASH_H - 4.0));
         let trash = super::tank::trash_button(ui, Id::new(("tank-trash", i)), tr, it.is_some());
@@ -175,9 +181,9 @@ pub fn panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, r: Rect, hint: &str) {
         }
     }
     let help = if building_open {
-        "Click a tank to move it into the building (right click: half). Shift + click a building slot to take it back."
+        "Click a tank to move it into the building (right click: half). Shift + click a building slot to take it back. You can also drag."
     } else {
-        "Click a tank to choose it for the spray tool. The trash button under a tank empties it."
+        "Click a tank to choose it for the spray tool. The trash button under a tank empties it. The mark on a tank: keep or drop it when you dig."
     };
     widgets::wrapped(&painter, pos2(r.left(), tgrid.bottom() + 4.0), help, font_regular(text::SMALL), color::TEXT_FAINT, r.width());
 }

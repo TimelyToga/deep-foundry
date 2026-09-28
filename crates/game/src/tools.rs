@@ -1,7 +1,9 @@
 //! The multi-tool of the robot (game design section 6.3): dig, spray and scan.
 //!
 //! - **Dig** removes cells in a circle at the aim point. Each dug cell becomes one unit of its
-//!   broken form (stone becomes gravel, an ore vein becomes raw ore) in the material tanks. Each
+//!   broken form (stone becomes gravel, an ore vein becomes raw ore). The robot keeps useful
+//!   materials in its tanks and throws out the others (`foundry_factory::digging`, `spoil.rs`).
+//!   A thrown out cell costs the same dig points. Each
 //!   tick has `DIG_POWER` dig points; a cell costs `1 + hardness / 10` points. Cells harder than
 //!   the drill head limit stay. Building body cells and bedrock stay. A cell whose material does
 //!   not fit into the tanks stays too. The first dig of a material discovers it, like a scan.
@@ -13,7 +15,7 @@
 use crate::player::Robot;
 use foundry_content::{Content, ItemRef, Layer, Phase};
 use foundry_core::{CellPos, MaterialId};
-use foundry_factory::Factory;
+use foundry_factory::{Dug, Factory};
 use foundry_sim::Simulation;
 use std::sync::OnceLock;
 
@@ -122,12 +124,16 @@ pub fn dig(factory: &mut Factory, sim: &mut Simulation, robot: &Robot, aim: Cell
         if cost > budget {
             break;
         }
-        // The unit goes into the tanks; the first dig of a material discovers it.
-        if !factory.take_dug_cell(m) {
-            out.tank_full.get_or_insert(c.materials.broken_into[m.index()]);
-            continue;
+        // A kept unit goes into the tanks; a dropped one flies out behind the robot (spoil.rs).
+        // The first dig of a material discovers it.
+        match factory.take_dug_cell(m) {
+            Dug::Kept => sim.set_cell(p, MaterialId::AIR, None),
+            Dug::Dropped(loose) => crate::spoil::throw_out(sim, robot, aim, p, loose, out.dug),
+            Dug::NoRoom(b) => {
+                out.tank_full.get_or_insert(b);
+                continue;
+            }
         }
-        sim.set_cell(p, MaterialId::AIR, None);
         budget -= cost;
         out.dug += 1;
         out.material.get_or_insert(m);

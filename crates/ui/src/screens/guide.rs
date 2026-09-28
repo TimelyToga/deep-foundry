@@ -4,7 +4,7 @@
 use super::research::{TIER_H, tier_heading};
 use super::{Cx, window_id};
 use crate::action::WindowKind;
-use crate::model::GuideGoal;
+use crate::model::{GuideGoal, NextGoal, next_goal};
 use crate::theme::{self, color, font, font_bold, font_regular, text};
 use crate::widgets;
 use crate::UiState;
@@ -20,6 +20,8 @@ const DONE_H: f32 = 28.0;
 const TITLE_H: f32 = 24.0;
 /// The count bar line of an open goal.
 const COUNT_H: f32 = 24.0;
+/// The line "Next: ..." at the top when no goal can be done now.
+const BANNER_H: f32 = 30.0;
 
 pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
     let ctx = cx.ctx;
@@ -43,7 +45,17 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
         p.text(pos2(r.left(), cy), Align2::LEFT_CENTER, format!("{done} of {} goals done", model.guide.len()), font(text::BODY), color::TEXT_DIM);
         let value = p.text(pos2(r.right(), cy), Align2::RIGHT_CENTER, model.discovery_points.to_string(), font_bold(text::BODY + 2.0), color::HEADING);
         p.text(pos2(value.left() - 8.0, cy), Align2::RIGHT_CENTER, "Discovery points", font(text::BODY), color::TEXT_DIM);
-        let list = Rect::from_min_max(pos2(r.left(), r.top() + TOP_H), r.right_bottom());
+        let mut list_top = r.top() + TOP_H;
+        // No goal can be done now: say what comes next.
+        if let NextGoal::Waiting(g) = next_goal(&model.guide) {
+            let banner = Rect::from_min_size(pos2(r.left(), list_top), vec2(r.width(), BANNER_H));
+            p.rect_filled(banner, egui::CornerRadius::same(2), egui::Color32::from_rgba_unmultiplied(70, 56, 16, 230));
+            p.rect_stroke(banner, egui::CornerRadius::same(2), egui::Stroke::new(1.0, color::YELLOW), egui::StrokeKind::Inside);
+            let t = format!("You did every goal for now. {}", g.next_text().unwrap_or_default());
+            p.text(pos2(banner.left() + 10.0, banner.center().y), Align2::LEFT_CENTER, t, font_bold(text::BODY), color::YELLOW);
+            list_top += BANNER_H + GAP;
+        }
+        let list = Rect::from_min_max(pos2(r.left(), list_top), r.right_bottom());
         goal_list(ui, cx, list);
     });
 }
@@ -81,6 +93,11 @@ fn goal_list(ui: &mut Ui, cx: &mut Cx, list: Rect) {
             let (area, _) = ui.allocate_exact_size(vec2(width, total), egui::Sense::hover());
             let p = ui.painter().clone();
             let mut y = area.top();
+            // The next goal that the player can do gets a "Next" mark.
+            let next_id = match next_goal(&model.guide) {
+                NextGoal::Goal(g) => Some(g.id.clone()),
+                _ => None,
+            };
             for (tier, goals) in &tiers {
                 let done = goals.iter().filter(|g| g.done).count();
                 tier_heading(&p, Rect::from_min_size(pos2(area.left() + PAD, y), vec2(card_w, TIER_H)), *tier, &format!("{done} of {} done", goals.len()));
@@ -91,7 +108,7 @@ fn goal_list(ui: &mut Ui, cx: &mut Cx, list: Rect) {
                     if g.done {
                         done_goal(&p, r, g, i);
                     } else {
-                        open_goal(&p, r, g, text_w);
+                        open_goal(&p, r, g, text_w, next_id.as_deref() == Some(g.id.as_str()));
                     }
                     y += h;
                 }
@@ -112,14 +129,22 @@ fn done_goal(p: &Painter, r: Rect, g: &GuideGoal, i: usize) {
     }
 }
 
-fn open_goal(p: &Painter, r: Rect, g: &GuideGoal, text_w: f32) {
+fn open_goal(p: &Painter, r: Rect, g: &GuideGoal, text_w: f32, next: bool) {
     widgets::raised(p, r, color::SHALLOW, color::SHALLOW_LIGHT, theme::shade(color::SHALLOW, 0.7));
+    if next {
+        p.rect_stroke(r, egui::CornerRadius::ZERO, egui::Stroke::new(2.0, color::ORANGE), egui::StrokeKind::Inside);
+    }
     let x = r.left() + PAD;
     let title_y = r.top() + PAD + TITLE_H * 0.5 - 2.0;
     // A goal that the game cannot do yet is gray.
     let waiting = g.waits_for.is_some();
     let title_color = if waiting { color::TEXT_FAINT } else { color::HEADING };
-    p.text(pos2(x, title_y), Align2::LEFT_CENTER, &g.title, font_bold(text::BODY + 1.0), title_color);
+    let t = p.text(pos2(x, title_y), Align2::LEFT_CENTER, &g.title, font_bold(text::BODY + 1.0), title_color);
+    if next {
+        let badge = Rect::from_min_size(pos2(t.right() + 10.0, title_y - 9.0), vec2(44.0, 18.0));
+        p.rect_filled(badge, egui::CornerRadius::same(2), color::ORANGE);
+        p.text(badge.center(), Align2::CENTER_CENTER, "Next", font_bold(text::SMALL), color::BUTTON_TEXT);
+    }
     if g.reward_points > 0 {
         p.text(pos2(r.right() - PAD, title_y), Align2::RIGHT_CENTER, points_text(g.reward_points), font_regular(text::SMALL), color::TEXT_DIM);
     }
@@ -129,7 +154,7 @@ fn open_goal(p: &Painter, r: Rect, g: &GuideGoal, text_w: f32) {
         y = widgets::wrapped(p, pos2(x, y), &g.text, font_regular(text::BODY), text_color, text_w).bottom();
     }
     if let Some(w) = &g.waits_for {
-        p.text(pos2(x, y + 11.0), Align2::LEFT_CENTER, format!("Not in the game yet: this needs {w}."), font_bold(text::SMALL), color::YELLOW);
+        p.text(pos2(x, y + 11.0), Align2::LEFT_CENTER, format!("Waits for {w}. It comes in a later update."), font_bold(text::SMALL), color::YELLOW);
         y += COUNT_H;
     }
     if let Some((have, need)) = g.count {
