@@ -238,7 +238,7 @@ impl LightPass {
         pass.set_bind_group(1, &g.sky, &[]);
         pass.dispatch_workgroups(used[0].div_ceil(64), 1, 1);
 
-        let iterations = (iterations.max(2) + 1) / 2 * 2;
+        let iterations = iterations.max(2).div_ceil(2) * 2;
         pass.set_pipeline(&p.spread);
         for i in 0..iterations {
             if i == iterations - 1 {
