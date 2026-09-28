@@ -218,6 +218,19 @@ fn hud_guide_tracker() {
     h.snapshot_options("hud_guide_1920", &options());
 }
 
+/// Every goal that the game can do is done: the tracker says what comes next.
+#[test]
+fn hud_guide_tracker_next() {
+    let mut model = playing();
+    model.research = None;
+    for g in &mut model.guide {
+        g.done |= g.waits_for.is_none();
+    }
+    let mut h = harness(HD, model, |_| {});
+    settle(&mut h);
+    h.snapshot_options("hud_guide_next_1920", &options());
+}
+
 /// The tank HUD at 2560 × 1440: the spray material has an orange frame, and the tanks are full.
 #[test]
 fn tank_hud_2560() {
