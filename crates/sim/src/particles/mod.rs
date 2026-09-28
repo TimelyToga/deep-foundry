@@ -225,7 +225,9 @@ impl Particles {
         let p = &mut self.list[i];
         let at = CellPos::new(p.x.floor() as i32, p.y.floor() as i32);
         let mut grid = Grid::default();
-        if let Some(spot) = free_spot(&mut grid, world, mats, at, &mut self.search) {
+        let liquid = mats.phase[p.mat as usize] == Phase::Liquid;
+        let back = if liquid { None } else { Some((p.vx, p.vy)) };
+        if let Some(spot) = free_spot(&mut grid, world, mats, at, back, &mut self.search) {
             let cell = Landing {
                 material: MaterialId(p.mat),
                 temp: p.temp,
@@ -644,19 +646,16 @@ impl Iterator for LineCells {
         }
         let last = CellPos::new(self.cx, self.cy);
         // Step in x or y, whichever border comes first. The step counts make sure that the line
-        // ends in the right cell also with rounding errors.
-        let t;
-        if self.ny == 0 || (self.nx > 0 && self.tx < self.ty) {
-            t = self.tx;
-            self.cx += self.sx;
-            self.nx -= 1;
-            self.tx += self.dtx;
-        } else {
-            t = self.ty;
-            self.cy += self.sy;
-            self.ny -= 1;
-            self.ty += self.dty;
-        }
+        // ends in the right cell also with rounding errors. (Written without branches: the choice
+        // changes often and cannot be predicted well.)
+        let x = (self.ny == 0) | ((self.nx > 0) & (self.tx < self.ty));
+        let t = if x { self.tx } else { self.ty };
+        self.cx += if x { self.sx } else { 0 };
+        self.cy += if x { 0 } else { self.sy };
+        self.nx -= x as i32;
+        self.ny -= !x as i32;
+        self.tx += if x { self.dtx } else { 0.0 };
+        self.ty += if x { 0.0 } else { self.dty };
         Some((last, CellPos::new(self.cx, self.cy), t))
     }
 }
@@ -694,6 +693,9 @@ struct Search {
 
 /// The cell where a landing particle becomes a grid cell:
 /// 1. `at` if it is air or gas;
+/// 1b. for a particle that is not a liquid (`back` is its velocity): else the first air cell back
+///    along the line it came from, at most `|velocity| + 2` cells (so debris piles up where it
+///    hit something, and does not appear on top of the material it hit);
 /// 2. else the first air cell straight up (through liquid, powder and gas, not through solids);
 /// 3. else the nearest air cell around, at most `SEARCH_RING` cells away (upper cells first), with
 ///    no solid cell on the line between it and `at`;
@@ -701,12 +703,32 @@ struct Search {
 ///    `SEARCH_AROUND` cells. A particle inside a solid searches through solids too.
 ///
 /// So a particle never lands on the other side of a wall. Only cells in live chunks count.
-fn free_spot(grid: &mut Grid, world: &mut World, mats: &MaterialTable, at: CellPos, search: &mut Search) -> Option<CellPos> {
+fn free_spot(
+    grid: &mut Grid,
+    world: &mut World,
+    mats: &MaterialTable,
+    at: CellPos,
+    back: Option<(f32, f32)>,
+    search: &mut Search,
+) -> Option<CellPos> {
     let here = grid.look(world, at);
     if let Look::Cell(m) | Look::Paused(m) = here
         && passable(m, mats)
     {
         return Some(at);
+    }
+    if let Some((vx, vy)) = back {
+        let len = (vx * vx + vy * vy).sqrt();
+        if len > 0.01 {
+            let k = (len + 2.0) / len;
+            for (_, c, _) in LineCells::new(at.x as f32 + 0.5, at.y as f32 + 0.5, -vx * k, -vy * k) {
+                match grid.look(world, c) {
+                    Look::Cell(m) | Look::Paused(m) if m.is_air() => return Some(c),
+                    Look::Cell(m) | Look::Paused(m) if mats.phase[m.index()] != Phase::Solid => {}
+                    _ => break,
+                }
+            }
+        }
     }
     // A particle inside a solid (for example one made inside a wall) may search through solids,
     // so that it gets out.

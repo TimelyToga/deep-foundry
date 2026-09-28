@@ -309,30 +309,41 @@ fn explosion_frames() {
     let mut s = sand_pit();
     fill(&mut s, 60, 120, 64, 140, "stone");
     s.explode(CellPos::new(128, 150), 40.0, 800);
-    shoot(&mut s, &frames, &format!("{dir}/sand"), CellRect::new(0, 0, 256, 256), 3);
+    shoot(&mut s, &frames, &format!("{dir}/sand"), CellRect::new(0, 0, 256, 256), 2);
+    // 1b. The same pit, a stronger explosion just below the surface.
+    let mut s = sand_pit();
+    s.explode(CellPos::new(128, 143), 80.0, 800);
+    shoot(&mut s, &frames, &format!("{dir}/sand_strong"), CellRect::new(0, 0, 256, 256), 2);
     // 2. A cave in stone with dirt and water, a strong explosion.
     let mut s = world(4, 4);
     fill(&mut s, 2, 100, 254, 254, "stone");
     fill(&mut s, 60, 120, 200, 180, "air");
     fill(&mut s, 60, 165, 200, 180, "water");
     fill(&mut s, 60, 150, 110, 165, "dirt");
-    fill(&mut s, 120, 60, 136, 100, "wood");
-    s.explode(CellPos::new(128, 140), 150.0, 1500);
-    shoot(&mut s, &frames, &format!("{dir}/cave"), CellRect::new(0, 0, 256, 256), 3);
+    fill(&mut s, 150, 150, 170, 165, "wood");
+    s.explode(CellPos::new(112, 166), 150.0, 1500);
+    shoot(&mut s, &frames, &format!("{dir}/cave"), CellRect::new(0, 0, 256, 256), 2);
     // 3. Bedrock wall shields sand.
     let mut s = world(3, 3);
-    fill(&mut s, 20, 100, 170, 188, "sand");
+    fill(&mut s, 20, 100, 170, 190, "sand");
     fill(&mut s, 100, 60, 103, 190, "bedrock");
     s.explode(CellPos::new(96, 120), 60.0, 600);
-    shoot(&mut s, &frames, &format!("{dir}/wall"), CellRect::new(0, 0, 192, 192), 3);
+    shoot(&mut s, &frames, &format!("{dir}/wall"), CellRect::new(0, 0, 192, 192), 2);
 }
 
 fn shoot(s: &mut Simulation, frames: &[u64], prefix: &str, area: CellRect, scale: u32) {
+    // One contact sheet with all frames, 4 in a row, and one picture of the last frame.
     let last = *frames.last().unwrap();
+    let (w, h) = (area.width() as u32 * scale, area.height() as u32 * scale);
+    let rows = frames.len().div_ceil(4) as u32;
+    let mut sheet = image::RgbImage::from_pixel((w + 4) * 4, (h + 4) * rows, image::Rgb([90, 90, 90]));
     for t in 0..=last {
-        if frames.contains(&t) {
-            crate::dump_png(s, area, scale, &format!("{prefix}_{t:04}.png"));
+        if let Some(k) = frames.iter().position(|&f| f == t) {
+            let img = crate::render(s, area, scale);
+            image::imageops::replace(&mut sheet, &img, ((k % 4) as u32 * (w + 4)) as i64, ((k / 4) as u32 * (h + 4)) as i64);
         }
         s.tick();
     }
+    crate::dump_png(s, area, scale, &format!("{prefix}_last.png"));
+    sheet.save(format!("{prefix}_sheet.png")).unwrap();
 }

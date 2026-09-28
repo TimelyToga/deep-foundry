@@ -18,8 +18,9 @@
 //! 2. Each cell that breaks:
 //!    - near the center (the core: `CORE` × radius), a flammable cell turns into its fire;
 //!    - every other cell flies outward as a material particle. The speed falls with the distance
-//!      from the center. A solid flies as its broken form (stone as gravel). The particles land
-//!      again as cells, so no material is lost.
+//!      from the center. The direction turns toward the open side (where the rays found air), so
+//!      a buried explosion throws its cells out of the hole. A solid flies as its broken form
+//!      (stone as gravel). The particles land again as cells, so no material is lost.
 //! 3. In the core, air and gas get the heat, and some air cells become fire. Flammable gas then
 //!    ignites through the normal reactions in the next ticks, so chain reactions spread over ticks.
 //! 4. Visual particles: sparks (if there is heat), smoke puffs and dust.
@@ -76,7 +77,10 @@ const FIRE_CHANCE: f32 = 0.35;
 /// Chance that a flammable cell in the core turns into fire (else it is thrown).
 const BURN_CHANCE: f32 = 0.5;
 /// Thrown cells get this part of their speed as an extra upward speed.
-const UP_BIAS: f32 = 0.35;
+const UP_BIAS: f32 = 0.3;
+/// How much thrown cells turn toward the open side of the explosion (where the free cells are).
+/// With all free cells on one side, a cell thrown straight away from it goes nowhere.
+const OPEN_PULL: f32 = 1.0;
 /// Chance that a thrown cell also makes a dust particle.
 const DUST_CHANCE: f32 = 0.25;
 
@@ -87,7 +91,7 @@ pub fn radius(strength: f32) -> f32 {
 
 /// Speed (cells per tick) of cells thrown from the center of an explosion with this strength.
 pub fn throw_speed(strength: f32) -> f32 {
-    1.5 + 0.5 * strength.max(0.0).sqrt()
+    2.0 + 0.6 * strength.max(0.0).sqrt()
 }
 
 /// One explosion.
@@ -244,6 +248,9 @@ impl Explosions {
         let turn = rng.unit() * TAU / rays as f32;
         let (ox, oy) = (b.at.x as f32 + 0.5, b.at.y as f32 + 0.5);
         let mut reader = Reader::default();
+        // The open side: the sum of the ray directions, each times the free cells (air, gas, fire)
+        // on the ray. `free` is the number of free cells on all rays.
+        let (mut open_x, mut open_y, mut free) = (0.0f32, 0.0f32, 0.0f32);
         for k in 0..rays {
             let a = turn + TAU * k as f32 / rays as f32;
             let (dx, dy) = (a.cos(), a.sin());
@@ -265,6 +272,9 @@ impl Explosions {
                 let slot = &mut self.power[((p.y - square.y0) * w + p.x - square.x0) as usize];
                 *slot = slot.max(power);
                 if m.is_air() || matches!(mats.phase[m.index()], Phase::Gas | Phase::Fire) {
+                    open_x += dx;
+                    open_y += dy;
+                    free += 1.0;
                     continue;
                 }
                 let h = mats.hardness[m.index()];
@@ -274,6 +284,16 @@ impl Explosions {
                 absorbed += ABSORB + ABSORB_PER_HARDNESS * h as f32;
             }
         }
+
+        // Thrown cells turn toward the open side, more when the free cells are all on one side
+        // (a buried explosion throws its cells out of the hole, not into the ground).
+        let open_len = (open_x * open_x + open_y * open_y).sqrt();
+        let (open_x, open_y) = if free > 0.0 && open_len > 0.0 {
+            let k = OPEN_PULL * open_len / free / open_len;
+            (open_x * k, open_y * k)
+        } else {
+            (0.0, 0.0)
+        };
 
         // 2. and 3. The cells, chunk by chunk in (y, x) order.
         let core = r * CORE;
@@ -338,6 +358,9 @@ impl Explosions {
                             // Throw the cell outward.
                             let into = if phase == Phase::Solid { mats.broken_into[m.index()] } else { m };
                             let (mut ux, mut uy) = if d < 0.5 { (rng.unit() - 0.5, -1.0) } else { (fx / d, fy / d) };
+                            (ux, uy) = (ux + open_x, uy + open_y);
+                            let len = (ux * ux + uy * uy).sqrt().max(0.2);
+                            (ux, uy) = (ux / len, uy / len);
                             let spin = (rng.unit() - 0.5) * 0.6;
                             (ux, uy) = (ux * spin.cos() - uy * spin.sin(), ux * spin.sin() + uy * spin.cos());
                             let speed = speed0 * (1.0 - 0.6 * d / r) * (0.75 + 0.5 * rng.unit());
