@@ -171,6 +171,9 @@ pub enum ButtonKind {
 pub fn button(ui: &Ui, id: Id, r: Rect, label: &str, kind: ButtonKind, enabled: bool) -> Response {
     let resp = ui.interact(r, id, if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    // Remember where the button is in this frame: the smoke test clicks buttons by label.
+    let pass = ui.ctx().cumulative_pass_nr();
+    ui.ctx().data_mut(|d| d.insert_temp(button_rect_id(label), (r, pass)));
     let p = ui.painter();
     let (base, hover) = match kind {
         ButtonKind::Normal => (color::BUTTON, color::BUTTON_HOVER),
@@ -197,6 +200,18 @@ pub fn button(ui: &Ui, id: Id, r: Rect, label: &str, kind: ButtonKind, enabled: 
     let offset = if pressed { vec2(0.0, 1.0) } else { Vec2::ZERO };
     p.text(r.center() + offset, Align2::CENTER_CENTER, label, font_bold(text::BUTTON), tc);
     resp
+}
+
+/// The egui memory key of the place of the button with this label.
+fn button_rect_id(label: &str) -> Id {
+    Id::new(("foundry-button-rect", label))
+}
+
+/// Where the button with this label was drawn in the last frame, if it was.
+pub fn button_rect(ctx: &egui::Context, label: &str) -> Option<Rect> {
+    let pass = ctx.cumulative_pass_nr();
+    let (r, at) = ctx.data(|d| d.get_temp::<(Rect, u64)>(button_rect_id(label)))?;
+    (at + 1 >= pass).then_some(r)
 }
 
 /// A toggle button that stays orange while `selected` (time range tabs, presets).

@@ -145,6 +145,9 @@ pub enum FactoryCommand {
     SetHotbar { index: usize, item: Option<ItemRef> },
     /// Delete the material in this robot tank (the trash button).
     EmptyTank(usize),
+    /// Fill the tanks, so that the tank of `material` has `room` units of room and no other
+    /// tank has room (for the smoke test: it does not dig for minutes).
+    FillTanks { material: MaterialId, room: u32 },
 }
 
 /// The ghost of the building in the hand, with the placement check.
@@ -547,6 +550,7 @@ impl FactoryHost {
                     *slot = item;
                 }
             }
+            FactoryCommand::FillTanks { material, room } => self.fill_tanks(material, room),
             FactoryCommand::EmptyTank(tank) => {
                 let content = self.factory.content.clone();
                 let material = self.factory.player.tanks.get(tank).and_then(|t| t.material);
@@ -555,6 +559,29 @@ impl FactoryHost {
                     self.notice(format!("Emptied a tank: {n} units of {} are gone", content.materials.names[m.index()]));
                 }
             }
+        }
+    }
+
+    /// See `FactoryCommand::FillTanks`. Empty tanks get materials that no tank has yet.
+    fn fill_tanks(&mut self, material: MaterialId, room: u32) {
+        let content = self.factory.content.clone();
+        // Materials that no guide goal counts.
+        let fillers = ["dirt", "gravel", "ash", "stone", "granite", "basalt", "snow", "peat", "leaves", "clay"];
+        let mut fillers = fillers.iter().filter_map(|id| content.material(id));
+        let tanks = &mut self.factory.player.tanks;
+        for i in 0..tanks.len() {
+            let m = match tanks[i].material {
+                Some(m) => m,
+                None => match fillers.find(|f| *f != material && !tanks.iter().any(|t| t.material == Some(*f))) {
+                    Some(f) => f,
+                    None => continue,
+                },
+            };
+            tanks[i].material = Some(m);
+            tanks[i].units = tanks[i].capacity;
+        }
+        if let Some(t) = tanks.iter_mut().find(|t| t.material == Some(material)) {
+            t.units = t.capacity.saturating_sub(room);
         }
     }
 
@@ -817,10 +844,11 @@ impl FactoryHost {
                 self.tanks_full_until = self.ticks + TANKS_FULL_TICKS;
             }
             if r.dug == 0 {
-                if let Some(m) = r.too_hard {
-                    self.notice(format!("{} is too hard: research a better drill head", content.materials.names[m.index()]));
-                } else if r.tank_full.is_some() {
+                // Full tanks first: the player can do something about it now.
+                if r.tank_full.is_some() {
                     self.notice(TANKS_FULL);
+                } else if let Some(m) = r.too_hard {
+                    self.notice(format!("{} is too hard: research a better drill head", content.materials.names[m.index()]));
                 } else if let Some(m) = r.too_hot {
                     self.notice(format!("{} is too hot for the tank", content.materials.names[m.index()]));
                 }
