@@ -14,6 +14,7 @@ use crate::factory_host::{FactoryCommand, FactoryFrame, FactoryHost, GameCommand
 use crate::normal::NormalMode;
 use crate::overlay;
 use crate::player::MoveInput;
+use crate::render_setup;
 use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
 use foundry_content::{Content, ItemRef};
@@ -21,7 +22,7 @@ use foundry_core::{CellPos, Command, TILE_SIZE};
 use foundry_factory::Guide;
 use foundry_render::headless::{CAPTURE_FORMAT, capture, capture_with, create_device};
 use foundry_render::wgpu;
-use foundry_render::{Camera, Renderer};
+use foundry_render::{Camera, LIGHT_MARGIN, Renderer};
 use foundry_ui::{GameMode, GameState, HoverView, MenuPage, PerfView, WindowKind};
 use glam::{DVec2, UVec2};
 use std::path::Path;
@@ -54,7 +55,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
         (None, Some(h)) => robot_center(h),
         (None, None) => DVec2::from(demo.start_center),
     };
-    let view_of = |c: DVec2| Camera::new(c, zoom, UVec2::new(size.0, size.1)).visible_rect().expand(1);
+    // The screen plus the light margin, as the game asks for it.
+    let view_of = |c: DVec2| Camera::new(c, zoom, UVec2::new(size.0, size.1)).visible_rect().expand(LIGHT_MARGIN);
 
     // Ask for the chunks on the screen, like the game does. The view is also the anchor: only
     // chunks near it are made and updated.
@@ -94,6 +96,13 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     let (device, queue) = create_device().context("no GPU adapter found")?;
     let mut renderer = Renderer::new(&device, &queue, CAPTURE_FORMAT, &content);
     renderer.set_time(args.ticks as f64 * foundry_core::TICK_SECONDS);
+    renderer.set_surface_level(render_setup::surface_level(snapshot.world_cells));
+    let mut views = render_setup::DebugViews::default();
+    render_setup::apply_view_names(&args.view, renderer.settings_mut(), &mut views).map_err(anyhow::Error::msg)?;
+    if let Some(h) = &host {
+        let (x, y) = h.robot.center();
+        renderer.set_lights(&[render_setup::robot_lamp((x as f32, y as f32), h.robot.facing)]);
+    }
     let upload_start = Instant::now();
     if state.has_world() {
         let evicted = renderer.apply_snapshot(&snapshot, &camera);
