@@ -1,0 +1,13 @@
+// Generated content scene: crushed_limestone falls from the air onto the floor.
+Scene(
+    note: "crushed_limestone falls and settles at the bottom.",
+    legend: {
+        "#cec7b0": "crushed_limestone",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "crushed_limestone"),
+        Count(material: "crushed_limestone", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

@@ -1,0 +1,15 @@
+// Generated content scene: reaction #40 (dirt + water).
+// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+Scene(
+    note: "Reaction: dirt + water.",
+    legend: {
+        "#6b4a2f": "dirt",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "mud", min: 1, pending: true),
+        Total(material: "air", min: 1, pending: true),
+    ],
+)

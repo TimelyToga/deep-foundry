@@ -1,0 +1,13 @@
+// Generated content scene: condense of steam into water at 95C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "steam condenses into water.",
+    legend: {
+        "#e8eef5": (material: "steam", temperature: 15),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "water", min: 1, pending: true),
+    ],
+)

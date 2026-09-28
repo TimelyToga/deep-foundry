@@ -1,0 +1,13 @@
+// Generated content scene: freeze of molten_lead into lead_block at 317C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "molten_lead freezes into lead_block.",
+    legend: {
+        "#c9a06f": (material: "molten_lead", temperature: 237),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "lead_block", min: 1, pending: true),
+    ],
+)

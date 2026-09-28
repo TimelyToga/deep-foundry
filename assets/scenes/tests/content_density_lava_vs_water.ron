@@ -1,0 +1,15 @@
+// Generated content scene: lava (density 2600) is denser than water and sinks below it.
+Scene(
+    note: "lava sinks through water.",
+    legend: {
+        "#ff5a1a": "lava",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 1500,
+    checks: [
+        TotalUnchanged(material: "lava"),
+        TotalUnchanged(material: "water"),
+        Count(material: "lava", rect: (x: 4, y: 48, w: 72, h: 18), min: 300),
+    ],
+)

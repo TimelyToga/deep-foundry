@@ -1,0 +1,13 @@
+// Generated content scene: freeze of molten_gold into gold_block at 1054C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "molten_gold freezes into gold_block.",
+    legend: {
+        "#ffe066": (material: "molten_gold", temperature: 974),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "gold_block", min: 1, pending: true),
+    ],
+)

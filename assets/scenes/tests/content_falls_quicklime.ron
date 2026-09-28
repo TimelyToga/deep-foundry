@@ -1,0 +1,13 @@
+// Generated content scene: quicklime falls from the air onto the floor.
+Scene(
+    note: "quicklime falls and settles at the bottom.",
+    legend: {
+        "#eceae2": "quicklime",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "quicklime"),
+        Count(material: "quicklime", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

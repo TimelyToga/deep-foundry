@@ -1,0 +1,13 @@
+// Generated content scene: washed_hematite falls from the air onto the floor.
+Scene(
+    note: "washed_hematite falls and settles at the bottom.",
+    legend: {
+        "#783227": "washed_hematite",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "washed_hematite"),
+        Count(material: "washed_hematite", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

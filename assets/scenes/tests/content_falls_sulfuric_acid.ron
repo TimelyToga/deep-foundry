@@ -1,0 +1,13 @@
+// Generated content scene: sulfuric_acid falls from the air onto the floor.
+Scene(
+    note: "sulfuric_acid falls and settles at the bottom.",
+    legend: {
+        "#c7c22f": "sulfuric_acid",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "sulfuric_acid"),
+        Count(material: "sulfuric_acid", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

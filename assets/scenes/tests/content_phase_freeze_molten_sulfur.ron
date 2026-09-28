@@ -1,0 +1,13 @@
+// Generated content scene: freeze of molten_sulfur into sulfur_dust at 105C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "molten_sulfur freezes into sulfur_dust.",
+    legend: {
+        "#e0c23e": (material: "molten_sulfur", temperature: 25),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "sulfur_dust", min: 1, pending: true),
+    ],
+)

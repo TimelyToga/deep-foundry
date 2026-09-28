@@ -1,0 +1,15 @@
+// Generated content scene: molten_zinc (density 6600) is denser than water and sinks below it.
+Scene(
+    note: "molten_zinc sinks through water.",
+    legend: {
+        "#e0e6e8": "molten_zinc",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 1500,
+    checks: [
+        TotalUnchanged(material: "molten_zinc"),
+        TotalUnchanged(material: "water"),
+        Count(material: "molten_zinc", rect: (x: 4, y: 48, w: 72, h: 18), min: 300),
+    ],
+)

@@ -1,0 +1,14 @@
+// Generated content scene: reaction #2 (hydrogen + fire).
+// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+Scene(
+    note: "Reaction: hydrogen + fire.",
+    legend: {
+        "#e4f0ff": "hydrogen",
+        "#ffb02e": "fire",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "fire", min: 1, pending: true),
+    ],
+)

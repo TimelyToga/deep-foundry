@@ -1,0 +1,13 @@
+// Generated content scene: freeze of molten_bronze into bronze_block at 940C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "molten_bronze freezes into bronze_block.",
+    legend: {
+        "#e0a860": (material: "molten_bronze", temperature: 860),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "bronze_block", min: 1, pending: true),
+    ],
+)

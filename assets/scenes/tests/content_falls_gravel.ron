@@ -1,0 +1,13 @@
+// Generated content scene: gravel falls from the air onto the floor.
+Scene(
+    note: "gravel falls and settles at the bottom.",
+    legend: {
+        "#7d7a76": "gravel",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "gravel"),
+        Count(material: "gravel", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

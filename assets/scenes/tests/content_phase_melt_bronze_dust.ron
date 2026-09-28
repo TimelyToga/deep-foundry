@@ -1,0 +1,13 @@
+// Generated content scene: melt of bronze_dust into molten_bronze at 950C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "bronze_dust melts into molten_bronze.",
+    legend: {
+        "#a97f45": (material: "bronze_dust", temperature: 1030),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_bronze", min: 1, pending: true),
+    ],
+)

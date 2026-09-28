@@ -1,0 +1,13 @@
+// Generated content scene: water falls from the air onto the floor.
+Scene(
+    note: "water falls and settles at the bottom.",
+    legend: {
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "water"),
+        Count(material: "water", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)
