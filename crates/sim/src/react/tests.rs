@@ -116,9 +116,12 @@ fn table_expands_tags_and_words() {
     for n in ["sand", "stone", "bedrock", "gravel", "smoke"] {
         assert!(!t.has_work(m(n)), "{n} has no work");
     }
-    for n in ["water", "lava", "wood", "fire", "wet_concrete", "oil"] {
+    for n in ["lava", "wood", "fire", "wet_concrete", "oil", "molten_copper", "salt", "dirt"] {
         assert!(t.has_work(m(n)), "{n} has work");
     }
+    // Water has rules, but each partner (lava, fire, salt, ...) starts them.
+    assert!(!t.has_work(m("water")), "water leaves its reactions to the partner");
+    assert!(t.rule_count(m("water"), m("lava")) >= 1);
     assert_eq!(t.wake_temp(m("wood")), Some(300));
     assert_eq!(t.wake_temp(m("raw_malachite")), Some(1100));
     assert_eq!(t.wake_temp(m("sand")), None);
