@@ -600,6 +600,13 @@ fn hover_lines(model: &UiModel, hover: &HoverView) -> Vec<HoverLine> {
             if let Some(b) = content.materials.broken_into.get(m).filter(|b| b.index() != m && !b.is_air()) {
                 out.push(HoverLine::new(format!("Breaks into {}", content.materials.names[b.index()]), color::TEXT_DIM));
             }
+            // Keep or drop (the setting of the dug form).
+            let dug = content.materials.broken_into.get(m).copied().unwrap_or(*material);
+            match (&d.dig, model.player.keeps(dug)) {
+                (Some(DigState::CanDig), Some(true)) => out.push(HoverLine::new("When dug: kept in the tanks", color::TEXT_DIM)),
+                (Some(DigState::CanDig), Some(false)) => out.push(HoverLine::new("When dug: thrown out (drop)", color::TEXT_DIM)),
+                _ => {}
+            }
             if d.undiscovered {
                 out.push(HoverLine::new(format!("Not discovered: scan with {} (hold)", model.settings.key("scan")), color::ORANGE));
             }
