@@ -37,13 +37,15 @@
 //! buffers. The player puts items in through the controller window. A hatch moves items between
 //! the outside and the controller. Its role comes from its place in the wall:
 //!
-//! - in the roof (the room is below it): input. It takes powder that falls on it (from a belt or
-//!   a hopper), and items from a crate or barrel on top of it. Gas outputs leave through it.
+//! - in the roof (the room is below it): input. It takes powder that falls on it (from the end of
+//!   a belt), and items from a crate, a barrel or a hopper on top of it. Gas outputs leave
+//!   through it.
 //! - in the floor (the room is above it): output. Products go into a crate or barrel below it,
 //!   or out as cells.
 //! - in a side wall: input and output.
 //!
-//! A hatch never takes in an item that the room makes. Liquid products go out through the lowest
+//! Products go into the building on the outer side if it takes them (a crate, a barrel, a mold),
+//! or out as cells. A hatch never takes in an item that the room makes. Liquid products go out through the lowest
 //! hatch first: the densest liquid (the iron) through the lowest hatch, the next one (the slag)
 //! through the next hatch up. Gas products that cannot leave escape through the walls.
 

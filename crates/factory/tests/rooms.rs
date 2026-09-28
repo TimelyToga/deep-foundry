@@ -260,6 +260,18 @@ fn powder_that_falls_on_a_roof_hatch_goes_in() {
 }
 
 #[test]
+fn a_hopper_on_the_roof_hatch_feeds_the_kiln() {
+    let (c, mut sim, mut f) = setup();
+    let id = kiln_plan().build(&mut f, &mut sim);
+    let hopper = f.place(kind(&c, "hopper"), TilePos::new(6, 7), 0, false, &mut sim).unwrap();
+    f.set_recipe(id, c.factory.recipe("clay_brick")).unwrap();
+    assert_eq!(f.buildings.insert(&c, hopper, item(&c, "charcoal"), 40), 40);
+    run(&mut f, &mut sim, 30);
+    assert_eq!(f.building_view(id).unwrap().fuel.unwrap().units, 40);
+    assert!(f.building_view(hopper).unwrap().inputs.is_empty(), "the hopper is empty");
+}
+
+#[test]
 fn room_problems_too_big_wrong_wall_no_hatch() {
     // Too big: 6 × 5 = 30 tiles inside a kiln (limit 24).
     let (c, mut sim, mut f) = setup();
