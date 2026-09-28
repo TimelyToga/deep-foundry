@@ -1054,6 +1054,7 @@ dependencies = [
  "foundry_content",
  "foundry_core",
  "foundry_sim",
+ "foundry_worldgen",
  "png",
  "rayon",
  "ron",
@@ -1106,6 +1107,8 @@ version = "0.1.0"
 dependencies = [
  "foundry_content",
  "foundry_core",
+ "foundry_sim",
+ "libc",
 ]
 
 [[package]]

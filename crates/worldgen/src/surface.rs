@@ -8,7 +8,7 @@
 
 use crate::noise::{hash1, lerp, noise1, signed, smoothstep, sub_seed};
 use crate::{Mats, WorldGen};
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 
 /// Width of a feature region in cells. A region has at most one surface feature.
 pub const REGION: i32 = 512;
@@ -26,6 +26,10 @@ const BLEND: f64 = 160.0;
 pub const MAX_RISE: i32 = 250;
 /// The ground is never lower than this many cells below the surface level.
 pub const MAX_DROP: i32 = 220;
+/// The natural ground is computed every `NAT_STEP` columns and joined by straight lines.
+const NAT_STEP: i32 = 4;
+/// Entries of the cache of natural ground samples (covers 256 columns).
+const NAT_CACHE: usize = 64;
 
 /// Indices of the seeds in `Seeds`. Each noise and each random choice has its own seed.
 pub(crate) mod sd {
@@ -60,11 +64,12 @@ pub(crate) mod sd {
     pub const CAVERN: usize = 34;
     pub const VEIN: usize = 35;
     pub const POCKET: usize = 36;
-    pub const JITTER: usize = 37;
     pub const POCKETS: usize = 38;
     pub const BEDROCK: usize = 39;
     pub const BED: usize = 40;
-    pub const COUNT: usize = 41;
+    pub const SED: usize = 41;
+    pub const SED_WARP: usize = 42;
+    pub const COUNT: usize = 43;
 }
 
 /// The seeds of one world, made from the world seed.
@@ -223,6 +228,10 @@ pub(crate) struct Ctx<'a> {
     start: OnceCell<Start>,
     /// The features of up to two regions: (region, feature).
     cache: [(i32, OnceCell<Option<Feature>>); 2],
+    /// Natural ground samples: (x, ground row, dune height). x = i32::MAX: empty.
+    nat: [Cell<(i32, f64, f64)>; NAT_CACHE],
+    /// The last zone found: (zone, left border, right border).
+    last_zone: Cell<(i32, f64, f64)>,
 }
 
 impl<'a> Ctx<'a> {
@@ -237,6 +246,8 @@ impl<'a> Ctx<'a> {
             hub: OnceCell::new(),
             start: OnceCell::new(),
             cache: [(r0, OnceCell::new()), (r1, OnceCell::new())],
+            nat: std::array::from_fn(|_| Cell::new((i32::MAX, 0.0, 0.0))),
+            last_zone: Cell::new((0, f64::NAN, f64::NAN)),
         }
     }
 
@@ -264,6 +275,10 @@ impl<'a> Ctx<'a> {
     /// The zone that holds column `x`, with the x of its left and right borders.
     fn zone(&self, x: i32) -> (i32, f64, f64) {
         let xf = x as f64;
+        let last = self.last_zone.get();
+        if xf >= last.1 && xf < last.2 {
+            return last;
+        }
         let mut i = (xf / ZONE + 0.5).floor() as i32;
         while xf < self.boundary(i) {
             i -= 1;
@@ -271,7 +286,9 @@ impl<'a> Ctx<'a> {
         while xf >= self.boundary(i + 1) {
             i += 1;
         }
-        (i, self.boundary(i), self.boundary(i + 1))
+        let z = (i, self.boundary(i), self.boundary(i + 1));
+        self.last_zone.set(z);
+        z
     }
 
     /// The biome of zone `i`. Zone 0 (the start) is temperate, zone 1 a desert, zone -1 a tundra.
@@ -373,8 +390,32 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// The ground row of column `x` without features, as a float, and the dune height.
+    /// The ground row of column `x` without features, as a float, and the dune height. Made from
+    /// samples every `NAT_STEP` columns (see `natural_exact`).
     fn natural(&self, x: i32) -> (f64, f64) {
+        let x4 = x.div_euclid(NAT_STEP) * NAT_STEP;
+        let a = self.natural_sample(x4);
+        if x == x4 {
+            return a;
+        }
+        let b = self.natural_sample(x4 + NAT_STEP);
+        let t = (x - x4) as f64 / NAT_STEP as f64;
+        (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+    }
+
+    fn natural_sample(&self, x: i32) -> (f64, f64) {
+        let e = &self.nat[(x.div_euclid(NAT_STEP) as usize) % NAT_CACHE];
+        let (cx, h, d) = e.get();
+        if cx == x {
+            return (h, d);
+        }
+        let (h, d) = self.natural_exact(x);
+        e.set((x, h, d));
+        (h, d)
+    }
+
+    /// The ground row of column `x` without features, and the dune height.
+    fn natural_exact(&self, x: i32) -> (f64, f64) {
         let base = self.surface_y as f64 + 75.0 * self.n(sd::BASE_A, x, 2900) + 32.0 * self.n(sd::BASE_B, x, 1150);
         let (a, b, w) = self.biome_mix(x);
         let calm = Self::calm(x);

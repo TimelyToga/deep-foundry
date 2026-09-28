@@ -10,3 +10,6 @@ description = "World generation: a chunk source for the surface and the upper st
 foundry_core.workspace = true
 foundry_content.workspace = true
 foundry_sim.workspace = true
+
+[dev-dependencies]
+libc = "0.2"

@@ -37,7 +37,7 @@ pub fn hash1(seed: u32, a: i32) -> u32 {
 /// A hash of a seed and two numbers.
 #[inline(always)]
 pub fn hash2(seed: u32, a: i32, b: i32) -> u32 {
-    fmix(fmix(seed ^ (a as u32).wrapping_mul(0x9E37_79B1)) ^ (b as u32).wrapping_mul(0x85EB_CA77))
+    fmix(seed ^ (a as u32).wrapping_mul(0x9E37_79B1) ^ (b as u32).wrapping_mul(0x85EB_CA77).rotate_left(16))
 }
 
 /// 0.0 to 1.0 (1.0 not included) from a hash.
@@ -80,20 +80,15 @@ pub fn noise1(seed: u32, x: i32, w: i32) -> f32 {
     0.5 * (a + t * (b + t * (c + t * d)))
 }
 
-/// The gradient at a lattice corner, dotted with the offset (dx, dy). 8 directions.
+/// The 8 gradient directions of `noise2` (length 1.41).
+const GRAD_X: [f32; 8] = [1.0, 1.0, -1.0, -1.0, 1.414, -1.414, 0.0, 0.0];
+const GRAD_Y: [f32; 8] = [1.0, -1.0, 1.0, -1.0, 0.0, 0.0, 1.414, -1.414];
+
+/// The gradient at a lattice corner, dotted with the offset (dx, dy).
 #[inline(always)]
 fn grad(h: u32, dx: f32, dy: f32) -> f32 {
-    const D: f32 = std::f32::consts::SQRT_2;
-    match h & 7 {
-        0 => dx + dy,
-        1 => dx - dy,
-        2 => -dx + dy,
-        3 => -dx - dy,
-        4 => D * dx,
-        5 => -D * dx,
-        6 => D * dy,
-        _ => -D * dy,
-    }
+    let i = (h >> 29) as usize;
+    GRAD_X[i] * dx + GRAD_Y[i] * dy
 }
 
 #[inline(always)]
@@ -118,68 +113,126 @@ pub fn noise2(seed: u32, x: i32, y: i32, wx: i32, wy: i32) -> f32 {
 /// Sum of `octaves` layers of `noise2`, each with half the wavelength and half the strength of
 /// the one before. About -1 to 1.
 pub fn fbm2(seed: u32, x: i32, y: i32, wx: i32, wy: i32, octaves: u32) -> f32 {
-    let (mut sum, mut amp, mut total) = (0.0, 1.0, 0.0);
+    let mut out = [0.0];
+    fbm2_line(seed, x, 1, y, wx, wy, octaves, &mut out);
+    out[0]
+}
+
+/// `fbm2` at the points (x0 + i × step, y) for each i of `out`. Faster than one call for each
+/// point: the corner hashes of a noise cell are made once for all points in it.
+#[allow(clippy::too_many_arguments)]
+pub fn fbm2_line(seed: u32, x0: i32, step: i32, y: i32, wx: i32, wy: i32, octaves: u32, out: &mut [f32]) {
+    out.fill(0.0);
+    let (mut amp, mut total) = (1.0, 0.0);
     let (mut wx, mut wy) = (wx, wy);
     for o in 0..octaves {
-        sum += amp * noise2(seed.wrapping_add(o.wrapping_mul(0x632B_E5AB)), x, y, wx.max(2), wy.max(2));
+        noise2_line(seed.wrapping_add(o.wrapping_mul(0x632B_E5AB)), x0, step, y, wx.max(2), wy.max(2), amp, out);
         total += amp;
         amp *= 0.5;
         wx /= 2;
         wy /= 2;
     }
-    sum / total
+    let inv = 1.0 / total;
+    for v in out.iter_mut() {
+        *v *= inv;
+    }
 }
 
-/// Distance in cells between the lattice points of a `Coarse` field.
-pub const STEP: i32 = 8;
+/// Add `amp` × `noise2` at the points (x0 + i × step, y) to `out`. Gives the same values as
+/// `noise2`.
+#[allow(clippy::too_many_arguments)]
+fn noise2_line(seed: u32, x0: i32, step: i32, y: i32, wx: i32, wy: i32, amp: f32, out: &mut [f32]) {
+    let iy = y.div_euclid(wy);
+    let fy = y.rem_euclid(wy) as f32 / wy as f32;
+    let v = fade(fy);
+    let mut cell = None;
+    let mut h = [0u32; 4];
+    for (i, o) in out.iter_mut().enumerate() {
+        let x = x0 + i as i32 * step;
+        let ix = x.div_euclid(wx);
+        if cell != Some(ix) {
+            cell = Some(ix);
+            h = [hash2(seed, ix, iy), hash2(seed, ix + 1, iy), hash2(seed, ix, iy + 1), hash2(seed, ix + 1, iy + 1)];
+        }
+        let fx = x.rem_euclid(wx) as f32 / wx as f32;
+        let u = fade(fx);
+        let n00 = grad(h[0], fx, fy);
+        let n10 = grad(h[1], fx - 1.0, fy);
+        let n01 = grad(h[2], fx, fy - 1.0);
+        let n11 = grad(h[3], fx - 1.0, fy - 1.0);
+        *o += amp * lerp(lerp(n00, n10, u), lerp(n01, n11, u), v);
+    }
+}
+
 /// Grid columns of a chunk with a border of one cell: world x = x0 - 1 to x0 + 64.
 pub const GW: usize = CHUNK_SIZE as usize + 2;
 /// Grid rows of a chunk with one more row below: world y = y0 to y0 + 64.
 pub const GH: usize = CHUNK_SIZE as usize + 1;
-/// Lattice columns: x0 - 8 to x0 + 72.
-const LX: usize = (CHUNK_SIZE / STEP) as usize + 3;
-/// Lattice rows: y0 to y0 + 72.
-const LY: usize = (CHUNK_SIZE / STEP) as usize + 2;
+/// The most lattice columns and rows (for a step of 8 cells).
+const LX: usize = (CHUNK_SIZE / 8) as usize + 3;
+const LY: usize = (CHUNK_SIZE / 8) as usize + 2;
 
-/// A field sampled every `STEP` cells around one chunk, and read with linear steps between the
-/// samples. The lattice points are at world positions that are multiples of `STEP`, so two
-/// chunks read the same value at the same cell.
+/// A field sampled every `step` cells (8, 16 or 32) around one chunk, and read with linear steps
+/// between the samples. The lattice points are at world positions that are multiples of `step`,
+/// so two chunks read the same value at the same cell.
 pub struct Coarse {
-    v: [[f32; LX]; LY],
+    step: usize,
+    /// The samples: `lattice[j][i]` is at world (x0 - step + i × step, y0 + j × step).
+    pub lattice: [[f32; LX]; LY],
+    /// Each lattice row, already joined along x: the value at each grid column.
+    rows: [[f32; GW]; LY],
 }
 
 impl Coarse {
-    /// Sample `f(x, y)` at the lattice points around the chunk with top-left cell (x0, y0).
-    /// Only the lattice rows for grid rows `first_row` and below are sampled.
-    pub fn new(x0: i32, y0: i32, first_row: usize, f: impl Fn(i32, i32) -> f32) -> Self {
-        let mut v = [[0.0; LX]; LY];
-        let j0 = first_row / STEP as usize;
-        for (j, row) in v.iter_mut().enumerate().skip(j0) {
-            let y = y0 + j as i32 * STEP;
-            for (i, out) in row.iter_mut().enumerate() {
-                *out = f(x0 - STEP + i as i32 * STEP, y);
+    /// Sample `fbm2(seed, x, y, wx, wy, octaves)` at the lattice points around the chunk with
+    /// top-left cell (x0, y0). Only the lattice rows for grid rows `first_row` and below are
+    /// sampled.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fbm(x0: i32, y0: i32, first_row: usize, step: i32, seed: u32, wx: i32, wy: i32, octaves: u32) -> Self {
+        debug_assert!(matches!(step, 8 | 16 | 32));
+        let s = step as usize;
+        let (nx, ny) = (CHUNK_SIZE as usize / s + 3, CHUNK_SIZE as usize / s + 2);
+        let mut c = Coarse { step: s, lattice: [[0.0; LX]; LY], rows: [[0.0; GW]; LY] };
+        for j in first_row / s..ny {
+            let y = y0 + (j * s) as i32;
+            let v = &mut c.lattice[j];
+            fbm2_line(seed, x0 - step, step, y, wx, wy, octaves, &mut v[..nx]);
+            // Grid column c is world x = x0 - 1 + c, which is step - 1 + c cells right of the
+            // first lattice column.
+            for (k, o) in c.rows[j].iter_mut().enumerate() {
+                let ox = s - 1 + k;
+                *o = lerp(v[ox / s], v[ox / s + 1], (ox % s) as f32 / s as f32);
             }
         }
-        Self { v }
+        c
     }
 
     /// The values of grid row `r` (world y = y0 + r) at the `GW` grid columns.
+    #[inline]
     pub fn row(&self, r: usize, out: &mut [f32; GW]) {
-        let j = r / STEP as usize;
-        let t = (r % STEP as usize) as f32 / STEP as f32;
-        let mut line = [0.0f32; LX];
-        for (i, l) in line.iter_mut().enumerate() {
-            *l = lerp(self.v[j][i], self.v[j + 1][i], t);
-        }
-        // Grid column c is world x = x0 - 1 + c, which is STEP - 1 + c cells right of the first
-        // lattice column.
-        for (c, o) in out.iter_mut().enumerate() {
-            let ox = STEP as usize - 1 + c;
-            let i = ox / STEP as usize;
-            let u = (ox % STEP as usize) as f32 / STEP as f32;
-            *o = lerp(line[i], line[i + 1], u);
+        let s = self.step;
+        let j = r / s;
+        let t = (r % s) as f32 / s as f32;
+        let (a, b) = (&self.rows[j], &self.rows[j + 1]);
+        for c in 0..GW {
+            out[c] = a[c] + (b[c] - a[c]) * t;
         }
     }
+}
+
+/// Values of a smooth 1D function at the `GW` grid columns (world x = x0 - 1 + c), sampled every
+/// 8 cells and joined by straight lines.
+pub fn sampled_columns(x0: i32, f: impl Fn(i32) -> f32) -> [f32; GW] {
+    let mut pts = [0.0f32; LX];
+    for (i, p) in pts.iter_mut().enumerate() {
+        *p = f(x0 - 8 + i as i32 * 8);
+    }
+    let mut out = [0.0; GW];
+    for (c, o) in out.iter_mut().enumerate() {
+        let ox = 7 + c;
+        *o = lerp(pts[ox / 8], pts[ox / 8 + 1], (ox % 8) as f32 / 8.0);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -205,6 +258,20 @@ mod tests {
     }
 
     #[test]
+    fn line_matches_points() {
+        let mut out = [0.0; 13];
+        fbm2_line(9, -100, 8, 333, 150, 110, 2, &mut out);
+        for (i, v) in out.iter().enumerate() {
+            let x = -100 + i as i32 * 8;
+            assert!((v - fbm2(9, x, 333, 150, 110, 2)).abs() < 1e-6);
+            let one = noise2(9, x, 333, 150, 110);
+            let mut o = [0.0];
+            noise2_line(9, x, 1, 333, 150, 110, 1.0, &mut o);
+            assert_eq!(o[0], one);
+        }
+    }
+
+    #[test]
     fn noise_is_continuous() {
         for x in -300..300 {
             assert!((noise1(3, x, 50) - noise1(3, x + 1, 50)).abs() < 0.1);
@@ -214,15 +281,19 @@ mod tests {
 
     #[test]
     fn coarse_matches_samples_at_lattice_points() {
-        let f = |x: i32, y: i32| noise2(5, x, y, 64, 64);
+        let f = |x: i32, y: i32| fbm2(5, x, y, 64, 64, 2);
         let (x0, y0) = (-128, 640);
-        let c = Coarse::new(x0, y0, 0, f);
-        let mut row = [0.0; GW];
-        for r in [0usize, 8, 64] {
-            c.row(r, &mut row);
-            // Column 1 is world x0, a lattice point.
-            assert!((row[1] - f(x0, y0 + r as i32)).abs() < 1e-5);
-            assert!((row[GW - 1] - f(x0 + 64, y0 + r as i32)).abs() < 1e-5);
+        for step in [8, 16, 32] {
+            let c = Coarse::fbm(x0, y0, 0, step, 5, 64, 64, 2);
+            let mut row = [0.0; GW];
+            for r in [0usize, 32, 64] {
+                c.row(r, &mut row);
+                // Column 1 is world x0, a lattice point.
+                assert!((row[1] - f(x0, y0 + r as i32)).abs() < 1e-5);
+                assert!((row[GW - 1] - f(x0 + 64, y0 + r as i32)).abs() < 1e-5);
+            }
         }
+        let cols = sampled_columns(x0, |x| x as f32 * 0.5);
+        assert!((cols[1] - x0 as f32 * 0.5).abs() < 1e-4 && (cols[GW - 1] - (x0 + 64) as f32 * 0.5).abs() < 1e-4);
     }
 }
