@@ -9,7 +9,7 @@ use crate::factory_host::{FactoryCommand, FactoryFrame, GameCommand, GhostReques
 use crate::player::MoveInput;
 use foundry_content::{Content, ItemRef, Stack};
 use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId};
-use foundry_factory::progress::{GoalView, TechState as FactoryTechState, TechView};
+use foundry_factory::progress::{GoalView, LockReason, TechState as FactoryTechState, TechView};
 use foundry_factory::{Click, Status};
 use foundry_ui::{
     BuildingSlot, BuildingSlots, BuildingView, ClickButton, CraftJobView, Delivery, GuideGoal, HoverView, MachineStatus, MaterialBuffer,
@@ -448,14 +448,23 @@ pub fn machine_status(s: Status) -> MachineStatus {
     }
 }
 
-fn tech_entry(t: &TechView) -> TechEntry {
+pub(crate) fn tech_entry(t: &TechView) -> TechEntry {
     let state = match t.state {
         FactoryTechState::Done => TechState::Done,
         FactoryTechState::Researching { .. } => TechState::Researching,
         FactoryTechState::Available => TechState::Available,
         FactoryTechState::Locked(_) => TechState::Locked,
     };
-    TechEntry { id: t.id, state, progress: t.progress, reasons: t.reasons.clone(), queue_position: t.queue_position }
+    // Locked by earlier technologies (and not by the tier): the chain can be queued.
+    let can_queue = match &t.state {
+        FactoryTechState::Locked(r) => {
+            t.queue_position.is_none()
+                && r.iter().any(|x| matches!(x, LockReason::NeedsTech(_)))
+                && !r.iter().any(|x| matches!(x, LockReason::NeedsTier { .. }))
+        }
+        _ => false,
+    };
+    TechEntry { id: t.id, state, progress: t.progress, reasons: t.reasons.clone(), queue_position: t.queue_position, can_queue }
 }
 
 /// The UI building window from the factory building view.

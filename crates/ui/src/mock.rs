@@ -278,7 +278,7 @@ pub fn tech_entries(c: &Content, finished: &[TechId], current: Option<(TechId, f
         .enumerate()
         .map(|(i, t)| {
             let id = TechId(i as u16);
-            let mut e = TechEntry { id, state: TechState::Available, progress: 0.0, reasons: vec![], queue_position: None };
+            let mut e = TechEntry { id, state: TechState::Available, progress: 0.0, reasons: vec![], queue_position: None, can_queue: false };
             if finished.contains(&id) {
                 e.state = TechState::Done;
                 e.progress = 1.0;
