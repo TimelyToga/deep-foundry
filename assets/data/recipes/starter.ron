@@ -28,6 +28,15 @@
     Recipe(id: "raw_firebrick", category: "hand", inputs: [("clay", 12), ("sand", 4)], outputs: [("raw_firebrick", 1)], time: 1.0),
     Recipe(id: "firebrick", name: Some("Firebrick"), category: "kiln", inputs: [("raw_firebrick", 1)], outputs: [("firebrick", 1)], time: 30.0, min_temp: Some(1200)),
     Recipe(id: "charcoal", category: "kiln", inputs: [("wood", 32)], outputs: [("charcoal", 24)], byproducts: [(item: "smoke", count: 8, chance: 1.0)], time: 30.0, min_temp: Some(300)),
+    // Smelting in the kiln (docs/design/02-content.md section 6, game design section 16): 16 ore
+    // units hold 24 metal units; raw ore gives 8, crushed ore 11, washed ore 14. Copper needs
+    // 1100 degrees C: a charcoal fire with bellows. The molten metal leaves through a tap.
+    Recipe(id: "kiln_tin_raw", name: Some("Molten tin (raw ore)"), category: "kiln", inputs: [("raw_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 8)], byproducts: [(item: "molten_slag", count: 4, chance: 1.0), (item: "carbon_dioxide", count: 2, chance: 1.0)], time: 10.0, min_temp: Some(900)),
+    Recipe(id: "kiln_tin_crushed", name: Some("Molten tin (crushed ore)"), category: "kiln", inputs: [("crushed_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 11)], byproducts: [(item: "molten_slag", count: 2, chance: 1.0), (item: "carbon_dioxide", count: 2, chance: 1.0)], time: 10.0, min_temp: Some(900)),
+    Recipe(id: "kiln_tin_washed", name: Some("Molten tin (washed ore)"), category: "kiln", inputs: [("washed_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 14)], byproducts: [(item: "carbon_dioxide", count: 2, chance: 1.0)], time: 10.0, min_temp: Some(900)),
+    Recipe(id: "kiln_copper_raw", name: Some("Molten copper (raw ore)"), category: "kiln", inputs: [("raw_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 8)], byproducts: [(item: "molten_slag", count: 4, chance: 1.0), (item: "carbon_dioxide", count: 2, chance: 1.0)], time: 12.0, min_temp: Some(1100)),
+    Recipe(id: "kiln_copper_crushed", name: Some("Molten copper (crushed ore)"), category: "kiln", inputs: [("crushed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 11)], byproducts: [(item: "molten_slag", count: 2, chance: 1.0), (item: "carbon_dioxide", count: 2, chance: 1.0)], time: 12.0, min_temp: Some(1100)),
+    Recipe(id: "kiln_copper_washed", name: Some("Molten copper (washed ore)"), category: "kiln", inputs: [("washed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 14)], byproducts: [(item: "carbon_dioxide", count: 2, chance: 1.0)], time: 12.0, min_temp: Some(1100)),
     Recipe(id: "tin_plate", category: "casting_plate", inputs: [("molten_tin", 16)], outputs: [("tin_plate", 1)], time: 6.0),
     Recipe(id: "copper_plate", category: "casting_plate", inputs: [("molten_copper", 16)], outputs: [("copper_plate", 1)], time: 8.0),
     Recipe(id: "bronze_gear", category: "hand", inputs: [("bronze_plate", 3)], outputs: [("bronze_gear", 1)], time: 2.0),
