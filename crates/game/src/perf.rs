@@ -73,7 +73,8 @@ impl Parts {
     /// The next part ends now.
     pub fn mark(&mut self) {
         let now = Instant::now();
-        if let Some(i) = (self.part < self.names.len()).then_some(self.part) {
+        let i = self.part;
+        if i < self.names.len() {
             let ms = now.duration_since(self.last).as_secs_f64() * 1000.0;
             self.sum[i] += ms;
             self.max[i] = self.max[i].max(ms);

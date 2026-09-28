@@ -5,7 +5,7 @@
 //! not in the pool must wait until a pool thread wakes up, runs the jobs and reports back. When
 //! other programs keep the CPU busy (for example a build), each of these waits can take several
 //! milliseconds. Measured on an M1 Max under load: the work of a tick while digging is about
-//! 0.1 ms, but the tick took up to 30 ms. The robot then stops, and the dig point does not follow
+//! 0.1 ms, but ticks took 20 to 48 ms. The robot then stops, and the dig point does not follow
 //! the mouse.
 //!
 //! So the simulation loop runs on a thread of its own one-thread pool (`solo`):
@@ -31,10 +31,12 @@ pub const CREW_FOR_NEW_VIEW: usize = 64;
 /// The pools of the simulation thread. See the module documentation.
 pub struct Workers {
     crew: Option<rayon::ThreadPool>,
-    /// The last tick used the `crew` pool.
+    /// The awake chunks are many: ticks use the `crew` pool.
     parallel: bool,
     /// A command asked for a large tick (see `note`).
     large_next: bool,
+    /// The last tick used the `crew` pool.
+    on_crew: bool,
 }
 
 impl Workers {
@@ -51,8 +53,8 @@ impl Workers {
     /// Run one tick (`f`). `awake` is the number of awake chunks of the last tick.
     pub fn tick<R: Send>(&mut self, awake: u32, f: impl FnOnce() -> R + Send) -> R {
         self.parallel = if self.parallel { awake >= SOLO_BELOW } else { awake >= CREW_FROM };
-        let large = std::mem::take(&mut self.large_next);
-        self.big(self.parallel || large, f)
+        self.on_crew = self.parallel || std::mem::take(&mut self.large_next);
+        self.big(self.on_crew, f)
     }
 
     /// Run `f` on the `crew` pool if `parallel` (for large jobs such as loading a world), else on
@@ -65,8 +67,8 @@ impl Workers {
     }
 
     /// True if the last tick used the `crew` pool.
-    pub fn parallel(&self) -> bool {
-        self.parallel
+    pub fn on_crew(&self) -> bool {
+        self.on_crew
     }
 }
 
@@ -89,7 +91,7 @@ pub fn run<R: Send>(f: impl FnOnce(&mut Workers) -> R + Send) -> R {
             .map_err(|e| log::warn!("cannot make the {name} threads: {e}"))
             .ok()
     };
-    let mut workers = Workers { crew: builder(crew_size(), "simulation-crew"), parallel: false, large_next: false };
+    let mut workers = Workers { crew: builder(crew_size(), "simulation-crew"), parallel: false, large_next: false, on_crew: false };
     match builder(1, "simulation-loop") {
         Some(solo) => solo.install(|| f(&mut workers)),
         None => f(&mut workers),
@@ -124,7 +126,7 @@ mod tests {
             let on = |w: &mut Workers, awake: u32| w.tick(awake, || std::thread::current().id());
             assert_eq!(on(w, 3), here, "few awake chunks: the loop thread");
             assert_ne!(on(w, CREW_FROM), here, "many awake chunks: a crew thread");
-            assert!(w.parallel());
+            assert!(w.on_crew());
             assert_ne!(on(w, SOLO_BELOW), here, "stays on the crew until the work is small");
             assert_eq!(on(w, SOLO_BELOW - 1), here, "back on the loop thread");
             // A new view with many new chunks: the next tick only runs on the crew.
@@ -133,7 +135,9 @@ mod tests {
             assert_eq!(on(w, 3), here, "one new column of chunks: the loop thread");
             w.note(&Command::SetView { area: CellRect::new(0, 0, 2048, 1024) }, Some(view));
             assert_ne!(on(w, 3), here, "a zoom out: a crew thread");
+            assert!(w.on_crew());
             assert_eq!(on(w, 3), here, "then the loop thread again");
+            assert!(!w.on_crew());
             // A rayon call on the loop thread runs on the loop thread.
             use rayon::prelude::*;
             let ids: Vec<_> = (0..4).into_par_iter().map(|_| std::thread::current().id()).collect();
