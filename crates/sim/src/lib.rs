@@ -125,7 +125,8 @@ impl std::fmt::Debug for SimConfig {
     }
 }
 
-/// Global simulation settings. Change them with `Simulation::settings_mut`.
+/// Global simulation settings. Change them with `Simulation::settings_mut`. Per-material settings
+/// (flow, momentum, splash, viscosity, friction, ...) are in the data files.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimSettings {
     /// Chunks around each anchor area that also update. A chunk with work that is farther from
@@ -137,11 +138,98 @@ pub struct SimSettings {
     pub keep_margin_chunks: i32,
     /// Look for far chunks to pack or drop every this many ticks. 0: never.
     pub unload_every_ticks: u32,
+    /// Gravity for free-flying particles, in cells per tick².
+    pub particle_gravity: f32,
+    /// Top speed of particles, in cells per tick.
+    pub particle_max_speed: f32,
+    /// Soft limit on particles. Splashes stop above half of it; visual particles stop at it.
+    pub max_particles: usize,
+    /// A liquid cell must land with at least this fall speed (0 to 28) to splash.
+    /// Fall speed goes up by 1 per tick of free fall; a cell falls `1 + speed / 4` cells per tick.
+    pub splash_min_speed: u8,
+    /// How far (cells, 1 to 31) a liquid cell looks to the side for a place to fall, and how far
+    /// pressure can push it. A liquid uses at most 4 × its `flow`.
+    pub liquid_look_ahead: i32,
 }
 
 impl Default for SimSettings {
     fn default() -> Self {
-        Self { sim_margin_chunks: 4, keep_margin_chunks: 8, unload_every_ticks: 10 }
+        Self {
+            sim_margin_chunks: 4,
+            keep_margin_chunks: 8,
+            unload_every_ticks: 10,
+            particle_gravity: 0.18,
+            particle_max_speed: 12.0,
+            max_particles: 50_000,
+            splash_min_speed: 10,
+            liquid_look_ahead: 31,
+        }
+    }
+}
+
+/// A number setting that the game shows as a slider (see `SimSettings::sliders`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingSlider {
+    /// The key for `SimSettings::set` and `Command::SetSimSetting`.
+    pub key: &'static str,
+    /// The name shown to the player.
+    pub label: &'static str,
+    /// One short sentence about what it does.
+    pub help: &'static str,
+    pub value: f32,
+    pub min: f32,
+    pub max: f32,
+    /// Round the value to steps of this size.
+    pub step: f32,
+}
+
+impl SimSettings {
+    /// The settings that a player can change with a slider: the liquid and droplet settings.
+    /// (The per-material liquid values are in the data files; see `assets/data/README.md`.)
+    pub fn sliders(&self) -> Vec<SettingSlider> {
+        vec![
+            SettingSlider {
+                key: "splash_min_speed",
+                label: "Splash speed",
+                help: "Liquid that lands faster than this splashes droplets. Lower: more splashes.",
+                value: self.splash_min_speed as f32,
+                min: 0.0,
+                max: 28.0,
+                step: 1.0,
+            },
+            SettingSlider {
+                key: "liquid_look_ahead",
+                label: "Liquid reach",
+                help: "How far liquids look and push to the side. Lower: slower leveling, steeper heaps.",
+                value: self.liquid_look_ahead as f32,
+                min: 1.0,
+                max: 31.0,
+                step: 1.0,
+            },
+            SettingSlider {
+                key: "particle_gravity",
+                label: "Droplet gravity",
+                help: "Gravity for droplets in the air. Higher: lower, shorter splashes.",
+                value: self.particle_gravity,
+                min: 0.05,
+                max: 0.5,
+                step: 0.01,
+            },
+        ]
+    }
+
+    /// Change a setting by its slider key. The value is clamped to the slider range.
+    /// Returns false for an unknown key.
+    pub fn set(&mut self, key: &str, value: f32) -> bool {
+        let Some(s) = self.sliders().into_iter().find(|s| s.key == key) else { return false };
+        let v = value.clamp(s.min, s.max);
+        match key {
+            "splash_min_speed" => self.splash_min_speed = v.round() as u8,
+            "liquid_look_ahead" => self.liquid_look_ahead = v.round() as i32,
+            "particle_gravity" => self.particle_gravity = v,
+            _ => return false,
+        }
+        true
     }
 }
 
@@ -293,6 +381,9 @@ impl Simulation {
             Command::SetPaused(p) => self.paused = p,
             Command::Step => self.step_requested = true,
             Command::SetDebug(on) => self.debug = on,
+            Command::SetSimSetting { key, value } => {
+                self.settings.set(&key, value);
+            }
             // Handled by the thread that owns the simulation.
             Command::SaveWorld { .. } | Command::LoadWorld { .. } => {}
         }
@@ -389,18 +480,23 @@ impl Simulation {
         let previous = std::mem::take(&mut self.events);
         explode::process(&mut self.world, mats, &previous, &mut self.particles, self.tick, self.seed, self.stamp);
         let t_explode = ms(start);
+        let mut spawns = vec![];
+        let splash_ok = self.particles.len() < self.settings.max_particles / 2;
         let awake = schedule::movement_tick(
             &mut self.world,
-            mats,
-            &self.react,
+            schedule::PassInput { mats, react: &self.react, settings: &self.settings, splash_ok },
             self.tick,
             self.seed,
             self.stamp,
             self.pool.as_ref(),
             &mut self.events,
+            &mut spawns,
         );
+        for sp in spawns {
+            self.particles.spawn(sp, self.settings.max_particles);
+        }
         let t_move = ms(start);
-        self.particles.step(&mut self.world, mats, self.tick, self.seed, self.stamp);
+        self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp);
         let t_particles = ms(start);
         heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
         let t_heat = ms(start);
@@ -907,6 +1003,14 @@ mod debug_awake {
 
 #[cfg(test)]
 pub(crate) fn dump_png(s: &Simulation, r: CellRect, scale: u32, path: &str) {
+    let img = render(s, r, scale);
+    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).ok();
+    img.save(path).unwrap();
+}
+
+/// A picture of the cells in `r` (each cell `scale` × `scale` pixels). Particles are light dots.
+#[cfg(test)]
+pub(crate) fn render(s: &Simulation, r: CellRect, scale: u32) -> image::RgbImage {
     let c = s.content();
     let (w, h) = (r.width() as u32, r.height() as u32);
     let mut img = image::RgbImage::new(w * scale, h * scale);
@@ -923,8 +1027,21 @@ pub(crate) fn dump_png(s: &Simulation, r: CellRect, scale: u32, path: &str) {
             }
         }
     }
-    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).ok();
-    img.save(path).unwrap();
+    let mut views = vec![];
+    s.particles().views(r, &mut views);
+    for v in views {
+        let (px, py) = ((v.x - r.x0 as f32) as u32, (v.y - r.y0 as f32) as u32);
+        if px < w && py < h {
+            let col = c.materials.colors[v.material as usize][0];
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    let lighter = |c: u8| c.saturating_add(70);
+                    img.put_pixel(px * scale + dx, py * scale + dy, image::Rgb([lighter(col[0]), lighter(col[1]), lighter(col[2])]));
+                }
+            }
+        }
+    }
+    img
 }
 
 #[cfg(test)]
@@ -948,6 +1065,9 @@ pub(crate) fn ascii(s: &Simulation, r: CellRect) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod liquid_tests;
 
 #[cfg(test)]
 mod debug_view {
@@ -1001,3 +1121,4 @@ mod debug_view {
         }
     }
 }
+

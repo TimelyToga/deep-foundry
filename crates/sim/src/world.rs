@@ -41,6 +41,14 @@ use std::sync::Arc;
 /// Salt for the random numbers of new chunks (shade and life of each cell).
 const GENERATE_SALT: u64 = 0x6765_6e65_7261_7465;
 
+/// See `World::raw_chunk`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RawChunk {
+    Live(*mut Chunk),
+    Air,
+    Unknown,
+}
+
 /// A rectangle of chunks. `x1` and `y1` are outside (exclusive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkArea {
@@ -722,6 +730,23 @@ impl World {
             prev = Some((c, hood));
         }
         complete
+    }
+
+    /// A raw pointer to a live chunk, for the level pass of the movement tick (see `schedule.rs`).
+    /// `Air`: the chunk is all air and has no cells in memory. `Unknown`: outside the world,
+    /// outside every simulation area, packed or not in memory (the level pass does not look there).
+    pub(crate) fn raw_chunk(&mut self, c: ChunkPos) -> RawChunk {
+        if !self.chunk_in_bounds(c) || !self.areas.simulates(c) {
+            return RawChunk::Unknown;
+        }
+        if let Some(b) = self.live.get_mut(&c) {
+            // `Box::as_mut_ptr` makes no reference to the chunk (see `hood_ptrs`).
+            return RawChunk::Live(Box::as_mut_ptr(b));
+        }
+        if self.air.contains(&c) {
+            return RawChunk::Air;
+        }
+        RawChunk::Unknown
     }
 
     /// Put a chunk into the awake list if it is not queued yet. For the movement pass, which holds
