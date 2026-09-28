@@ -64,9 +64,11 @@ pub(super) fn run(content: &Content, buildings: &mut Buildings, sim: &mut Simula
         let Some(h) = buildings.room(ctrl).and_then(|r| r.shape.as_ref()).and_then(|s| s.hatches.get(k).copied()) else { return };
         let Some(side) = h.outer else { continue };
         let outside = building_outside(buildings, &h);
-        // In: from a crate or barrel, or powder cells.
+        // In: from a crate, a barrel or a hopper, or powder cells.
         if h.takes_in() {
+            let is_hopper = |b: BuildingId| buildings.get(b).is_some_and(|x| matches!(x.logic, Logic::Hopper(_)));
             match outside {
+                Some(sid) if is_hopper(sid) => pull_from_hopper(content, buildings, ctrl, sid),
                 Some(sid) if part_tick && buildings.inventory(sid).is_some() => pull_from_storage(content, buildings, ctrl, sid),
                 Some(_) => {}
                 None => {
@@ -188,6 +190,30 @@ fn pull_from_storage(content: &Content, buildings: &mut Buildings, ctrl: Buildin
         }
         buildings.wake(sid);
         return;
+    }
+}
+
+/// A hatch takes powder from a hopper on its outer side, up to `PORT_CELLS_PER_TICK` cells in a
+/// tick, in the order the hopper got them. It stops at a cell the room does not take.
+fn pull_from_hopper(content: &Content, buildings: &mut Buildings, ctrl: BuildingId, hid: BuildingId) {
+    let mut moved = 0;
+    while moved < PORT_CELLS_PER_TICK {
+        let front = match buildings.get(hid).map(|b| &b.logic) {
+            Some(Logic::Hopper(h)) => h.cells.front().copied(),
+            _ => None,
+        };
+        let Some(m) = front else { break };
+        let item = ItemRef::Material(m);
+        if is_product(content, buildings, ctrl, item) || buildings.insert(content, ctrl, item, 1) == 0 {
+            break;
+        }
+        if let Some(Logic::Hopper(h)) = buildings.get_mut(hid).map(|b| &mut b.logic) {
+            h.cells.pop_front();
+        }
+        moved += 1;
+    }
+    if moved > 0 {
+        buildings.wake(hid);
     }
 }
 
