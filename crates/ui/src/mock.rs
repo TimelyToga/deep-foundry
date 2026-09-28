@@ -184,7 +184,62 @@ pub fn steam_assembler_view(c: &Content) -> BuildingView {
         temperature: Some(96.0),
         milestone: None,
         later_stages: vec![],
+        room: None,
     }
+}
+
+/// A kiln that fires clay bricks: a closed room of 6 tiles, hot enough, charcoal in the fuel slot.
+pub fn kiln_view(c: &Content) -> BuildingView {
+    let charcoal = ItemRef::Material(c.expect_material("charcoal"));
+    BuildingView {
+        id: BuildingId { index: 12, generation: 1 },
+        kind: bk(c, "kiln_controller"),
+        status: MachineStatus::Working,
+        status_detail: String::new(),
+        recipe: Some(rid(c, "clay_brick")),
+        inputs: vec![slot(st(c, "raw_clay_brick", 11), Some(it(c, "raw_clay_brick")))],
+        outputs: vec![slot(st(c, "clay_brick", 5), Some(it(c, "clay_brick")))],
+        fuel: vec![BuildingSlot { stack: Some(Stack { item: charcoal, count: 236 }), filter: Some(charcoal), capacity: 400 }],
+        buffers: vec![],
+        progress: 0.62,
+        speed: 48.0,
+        power: None,
+        temperature: Some(212.0),
+        milestone: None,
+        later_stages: vec![],
+        room: Some(RoomPanel {
+            valid: true,
+            problem: None,
+            temperature: Some(931.0),
+            needs: Some(900.0),
+            tiles: 6,
+            max_tiles: 24,
+            hatches: 2,
+            fuel_cells: 22,
+            burning: 19,
+            ash: 149,
+            blast: 0.0,
+            walls: "Clay brick wall or Firebrick wall".into(),
+        }),
+    }
+}
+
+/// A kiln whose room has a hole.
+pub fn kiln_hole_view(c: &Content) -> BuildingView {
+    let mut v = kiln_view(c);
+    v.status = MachineStatus::RoomNotValid;
+    v.status_detail = "The room has a hole".into();
+    v.progress = 0.0;
+    v.room = Some(RoomPanel {
+        valid: false,
+        problem: Some("The room has a hole 4 tiles right and 2 tiles up from the controller. Close it with a wall block.".into()),
+        temperature: None,
+        needs: Some(900.0),
+        max_tiles: 24,
+        walls: "Clay brick wall or Firebrick wall".into(),
+        ..Default::default()
+    });
+    v
 }
 
 /// A small boiler with no fuel.
@@ -208,6 +263,7 @@ pub fn boiler_view(c: &Content) -> BuildingView {
         temperature: Some(212.0),
         milestone: None,
         later_stages: vec![],
+        room: None,
     }
 }
 
@@ -233,6 +289,7 @@ pub fn electric_furnace_view(c: &Content) -> BuildingView {
         temperature: Some(1140.0),
         milestone: None,
         later_stages: vec![],
+        room: None,
     }
 }
 
@@ -272,6 +329,7 @@ pub fn hub_view(c: &Content) -> BuildingView {
         temperature: None,
         milestone,
         later_stages,
+        room: None,
     }
 }
 
@@ -303,6 +361,7 @@ pub fn crate_view(c: &Content) -> BuildingView {
         temperature: Some(21.0),
         milestone: None,
         later_stages: vec![],
+        room: None,
     }
 }
 

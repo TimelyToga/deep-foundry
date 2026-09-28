@@ -155,12 +155,17 @@ fn label(p: &Painter, v: &View, r: foundry_core::CellRect, text: &str) {
     p.text(top, Align2::CENTER_BOTTOM, text, font, Color32::from_rgb(255, 214, 140));
 }
 
-/// A round icon with "!" over the top middle of a building that does not work.
+/// A round icon with "!" over the top middle of a building that does not work. A room problem
+/// (the controller, and the tile with the hole or the wrong wall block) also gets a red frame.
 fn status_mark(p: &Painter, v: &View, r: foundry_core::CellRect, status: Status) {
     let color = match status {
-        Status::Broken | Status::TooHot | Status::NoPower => Color32::from_rgb(220, 60, 50),
+        Status::Broken | Status::TooHot | Status::NoPower | Status::NoRoom => Color32::from_rgb(220, 60, 50),
         _ => Color32::from_rgb(240, 190, 40),
     };
+    if status == Status::NoRoom {
+        let frame = v.rect(r.x0 as f64, r.y0 as f64, r.x1 as f64, r.y1 as f64);
+        p.rect_stroke(frame, 0.0, Stroke::new(2.0, color), egui::StrokeKind::Inside);
+    }
     let top = v.pos((r.x0 + r.x1) as f64 * 0.5, r.y0 as f64);
     let radius = (v.scale() * 3.0).clamp(7.0, 14.0);
     let c = top - vec2(0.0, radius + 3.0);
