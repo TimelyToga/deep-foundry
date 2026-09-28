@@ -1,66 +1,93 @@
-//! Speed test of the heat pass: `cargo run --release -p foundry_sim --example heat_stress [threads]`.
+//! Speed test of the heat pass:
+//! `cargo run --release -p foundry_sim --example heat_stress [threads] [ticks] [case]`.
+//! `threads` 0 (default) uses all cores. `case` is one of the names below (default: all).
 //!
-//! 1. "all active": a 48 × 32 chunk world (1,536 chunks) full of stone and copper with random
-//!    temperatures, so heat flows in every chunk in every tick.
-//! 2. "lava and water": lava, water, ice and hot metal in a 32 × 16 chunk world with air, so
-//!    movement, boiling, melting and cooling happen at once.
+//! 1. "random": a 48 × 32 chunk world (1,536 chunks) full of stone and copper with random
+//!    temperatures from 20 to 820 °C, so heat flows in almost every cell of every chunk in every
+//!    tick. This is the worst case.
+//! 2. "blocks": the same world full of stone at 20 °C, with a copper block at 600 °C (16 × 16
+//!    cells) in each chunk. Every chunk stays heat-active for a long time, but many of its cells
+//!    are at rest.
+//! 3. "lava": lava, water, ice and hot metal in a 32 × 16 chunk world with air, so movement,
+//!    boiling, melting and cooling happen at once.
 //!
 //! Prints the time of the heat pass (the "heat" section of `SimStats`) and of the whole tick.
 
 use foundry_content::Content;
-use foundry_core::{CHUNK_AREA, CellPos, CellRect, ChunkPos, PaintMode, Rng};
+use foundry_core::{CHUNK_AREA, CellPos, CellRect, ChunkPos, PaintMode, Rng, local_index};
 use foundry_sim::{SimConfig, Simulation};
 use std::sync::Arc;
 
 fn main() {
-    let arg = |i: usize, default: usize| std::env::args().nth(i).and_then(|a| a.parse().ok()).unwrap_or(default);
-    // Arguments: threads (0: all), ticks of case 1, ticks of case 2.
-    let (threads, ticks1, ticks2) = (arg(1, 0), arg(2, 300), arg(3, 600));
+    let args: Vec<String> = std::env::args().collect();
+    let threads: usize = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(0);
+    let ticks: usize = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(300);
+    let case = args.get(3).cloned().unwrap_or_default();
+    let want = |name: &str| case.is_empty() || case == name;
     let content = Arc::new(Content::load_default().unwrap());
     let (stone, copper) = (content.expect_material("stone").0, content.expect_material("copper_block").0);
-
-    // 1. Every chunk is heat-active.
-    let mut s = Simulation::new(content.clone(), SimConfig::finite(48, 32, 5));
-    if threads > 0 {
-        s.set_threads(threads);
-    }
-    let mut rng = Rng::new(7);
-    for cy in 0..32 {
-        for cx in 0..48 {
-            let mut mats = vec![stone; CHUNK_AREA];
-            let mut temps = vec![20i16; CHUNK_AREA];
-            for i in 0..CHUNK_AREA {
-                if (i / 64) % 16 < 4 {
-                    mats[i] = copper;
-                }
-                temps[i] = 20 + rng.below(800) as i16;
-            }
-            s.fill_chunk(ChunkPos::new(cx, cy), &mats, Some(&temps));
+    let new_sim = |w: i32, h: i32, seed: u64| {
+        let mut s = Simulation::new(content.clone(), SimConfig::finite(w, h, seed));
+        if threads > 0 {
+            s.set_threads(threads);
         }
-    }
-    // The first tick moves nothing but visits every cell (fill_chunk marks the whole chunk).
-    s.tick();
-    run(&mut s, "all active", ticks1);
-    if ticks2 == 0 {
-        return;
+        s
+    };
+
+    if want("random") {
+        let mut s = new_sim(48, 32, 5);
+        let mut rng = Rng::new(7);
+        for cy in 0..32 {
+            for cx in 0..48 {
+                let mut mats = vec![stone; CHUNK_AREA];
+                let mut temps = vec![20i16; CHUNK_AREA];
+                for i in 0..CHUNK_AREA {
+                    if (i / 64) % 16 < 4 {
+                        mats[i] = copper;
+                    }
+                    temps[i] = 20 + rng.below(800) as i16;
+                }
+                s.fill_chunk(ChunkPos::new(cx, cy), &mats, Some(&temps));
+            }
+        }
+        // The first tick moves nothing but visits every cell (fill_chunk marks the whole chunk).
+        s.tick();
+        run(&mut s, "random", ticks);
     }
 
-    // 2. Lava, water, ice and hot metal with air.
-    let mut s = Simulation::new(content.clone(), SimConfig::finite(32, 16, 6));
-    if threads > 0 {
-        s.set_threads(threads);
+    if want("blocks") {
+        let mut s = new_sim(48, 32, 5);
+        for cy in 0..32 {
+            for cx in 0..48 {
+                let mut mats = vec![stone; CHUNK_AREA];
+                let mut temps = vec![20i16; CHUNK_AREA];
+                for y in 24..40 {
+                    for x in 24..40 {
+                        mats[local_index(x, y)] = copper;
+                        temps[local_index(x, y)] = 600;
+                    }
+                }
+                s.fill_chunk(ChunkPos::new(cx, cy), &mats, Some(&temps));
+            }
+        }
+        s.tick();
+        run(&mut s, "blocks", ticks);
     }
-    let m = |n: &str| content.expect_material(n);
-    let (w, h) = s.size_cells();
-    for x in (200..w - 200).step_by(400) {
-        s.paint(CellPos::new(x, h - 150), 60, m("lava"), PaintMode::Replace, None);
-        s.paint(CellPos::new(x + 200, h - 150), 60, m("water"), PaintMode::Replace, None);
-        s.paint(CellPos::new(x + 100, h - 300), 30, m("ice"), PaintMode::Replace, Some(-20));
-        s.paint(CellPos::new(x + 100, 200), 40, m("copper_block"), PaintMode::Replace, Some(1000));
+
+    if want("lava") {
+        let mut s = new_sim(32, 16, 6);
+        let m = |n: &str| content.expect_material(n);
+        let (w, h) = s.size_cells();
+        for x in (200..w - 200).step_by(400) {
+            s.paint(CellPos::new(x, h - 150), 60, m("lava"), PaintMode::Replace, None);
+            s.paint(CellPos::new(x + 200, h - 150), 60, m("water"), PaintMode::Replace, None);
+            s.paint(CellPos::new(x + 100, h - 300), 30, m("ice"), PaintMode::Replace, Some(-20));
+            s.paint(CellPos::new(x + 100, 200), 40, m("copper_block"), PaintMode::Replace, Some(1000));
+        }
+        run(&mut s, "lava", ticks * 2);
+        let cells = |n: &str| s.count_material(CellRect::new(0, 0, w, h), m(n));
+        println!("  steam {}, stone {}, water {}", cells("steam"), cells("stone"), cells("water"));
     }
-    let cells = |s: &Simulation, n: &str| s.count_material(CellRect::new(0, 0, w, h), m(n));
-    run(&mut s, "lava and water", ticks2);
-    println!("  steam {}, stone {}, water {}", cells(&s, "steam"), cells(&s, "stone"), cells(&s, "water"));
 }
 
 fn run(s: &mut Simulation, name: &str, n: usize) {
