@@ -74,6 +74,7 @@
         hardness: 10,
         heat_capacity: 0.5,
         conductivity: 0.2,
+        temperature: Some(-10),
         melt: Some((at: 0, into: "water")),
         broken_into: Some("snow"),
     ),
@@ -87,6 +88,7 @@
         grain: Small,
         heat_capacity: 0.5,
         conductivity: 0.15,
+        temperature: Some(-5),
         melt: Some((at: 1, into: "water")),
     ),
     Material(
@@ -98,6 +100,7 @@
         hardness: 40,
         heat_capacity: 0.75,
         conductivity: 0.2,
+        temperature: Some(-5),
         melt: Some((at: 1, into: "mud")),
         broken_into: Some("dirt"),
     ),
