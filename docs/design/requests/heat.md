@@ -71,7 +71,29 @@ for more than the 8000 ticks the test waits. The test is about movement, so `sce
 `liquid_tests.rs` now sets the kept liquids to 20 °C and removes their phase changes in its own
 copy of the content (7 lines). Please check that this is what you want.
 
-## 6. Scene tests: pending checks that pass now
+## 6. Tests: changes in `crates/factory/tests/` (please review)
+
+These factory tests were written before heat existed. With heat they failed; each change keeps the
+purpose of the test:
+
+- `damage.rs`, `a_hot_body_stops_a_machine`: the wooden body at 250 °C cools to about 235 °C in
+  64 ticks (heat flows into the ground and the air). The test now accepts 221 to 250 °C and builds
+  the expected "Too hot" text from the building's temperature.
+- `machines.rs`, `min_temp_is_read_from_the_heat_port`: one row of 8 hot stone cells cooled below
+  500 °C before the oven was done. The row is now made hot again in each tick (a steady heat
+  source).
+- `machines.rs`, `fluid_ports_take_water_and_give_steam`: the boiler's steam (110 °C) cooled in
+  the 20 °C air and condensed into water, so less steam was left. Steam does not condense in this
+  test's own copy of the content.
+- `machines.rs`, `a_burner_heats_the_oven_above_it`: the burner writes 800 °C at its heat port,
+  then the heat pass of the same tick moves a little of it away (794 °C). The test accepts 780 to
+  800 °C.
+
+For the factory task: a boiler that should give steam that stays steam for a while needs to make
+it hotter than 110 °C (steam condenses below 95 °C). A heat port that should hold a temperature
+must write it in every tick (as the burner does).
+
+## 7. Scene tests: pending checks that pass now
 
 `assets/scenes/tests/lava_meets_water.ron`: both pending checks pass with heat alone (lava next to
 water freezes into stone, water boils into steam). Remove `pending: true` if the reactions task
@@ -80,7 +102,7 @@ does not change them.
 `gas_rises.ron`: with heat, the steam at 400 °C cools at the stone walls; 616 of 640 steam cells
 are still in the top rows after 300 ticks (the check wants 600). It passes, but it is close.
 
-## 7. Game: heat numbers in the debug panel (optional)
+## 8. Game: heat numbers in the debug panel (optional)
 
 `heat::step` returns `HeatStats` (chunks worked, cells changed, phase changes, chunks that stay
 heat-active). `Simulation::tick` ignores it now. It could go into `SimStats` for the timings panel.
