@@ -17,7 +17,7 @@
 
 use crate::args::{Args, UiState};
 use crate::controls::{CameraControl, MAX_ZOOM, Stroke};
-use crate::debug_panel::{self, DebugAction, StatsView};
+use crate::debug_panel::{self, DebugAction, PanelState, StatsView};
 use crate::demo;
 use crate::factory_host::{FactoryCommand, FactoryHost, GameCommand};
 use crate::construct::Mods;
@@ -25,6 +25,7 @@ use crate::keys::{Action, Bindings, KeyBind, KeyNames, Press};
 use crate::settings::{self, SavedSettings};
 use crate::normal::NormalMode;
 use crate::overlay;
+use crate::render_setup;
 use crate::saves::{self, SaveMeta};
 use crate::sim_thread::SimThread;
 use crate::smoke::{Smoke, Step};
@@ -205,7 +206,7 @@ struct World {
     chunks: (i32, i32),
     /// Paused with the pause key (Space), not with the pause menu.
     user_paused: bool,
-    /// The chunk overlay of the debug panel is on.
+    /// The awake chunks view (F4) is on. The simulation sends debug data only then.
     overlay: bool,
     /// The normal mode (robot and factory). `None` in the sandbox mode.
     normal: Option<NormalMode>,
@@ -547,6 +548,20 @@ impl Game {
                         self.save_settings();
                         continue;
                     }
+                    Action::DebugChunks if self.playing() => {
+                        self.debug_action(DebugAction::ToggleAwakeChunks);
+                        continue;
+                    }
+                    Action::DebugHeat | Action::DebugGrid if self.playing() => {
+                        let mut r = *self.renderer.settings();
+                        if *a == Action::DebugHeat {
+                            r.heat_map = !r.heat_map;
+                        } else {
+                            r.chunk_grid = !r.chunk_grid;
+                        }
+                        self.debug_action(DebugAction::Render(r));
+                        continue;
+                    }
                     _ => continue,
                 };
                 self.ui.ui.press_key(key);
@@ -676,6 +691,8 @@ impl Game {
     /// `normal`: the normal mode starts closer (the robot is small).
     fn reset_view(&mut self, center: DVec2, world_cells: DVec2, normal: bool) {
         self.renderer.clear_chunks();
+        self.renderer.set_surface_level(render_setup::surface_level((world_cells.x as i32, world_cells.y as i32)));
+        self.renderer.set_lights(&[]);
         self.cells.clear();
         self.debug_chunks.clear();
         self.last_view = None;
@@ -965,13 +982,14 @@ impl Game {
                     w.sim.send(Command::Step);
                 }
             }
-            DebugAction::ToggleOverlay => {
+            DebugAction::ToggleAwakeChunks => {
                 w.overlay = !w.overlay;
                 w.sim.send(Command::SetDebug(w.overlay));
                 if !w.overlay {
                     self.debug_chunks.clear();
                 }
             }
+            DebugAction::Render(settings) => *self.renderer.settings_mut() = settings,
         }
     }
 
@@ -1011,6 +1029,7 @@ impl Game {
         self.stats.awake_chunks = snapshot.stats.awake_chunks;
         self.stats.loaded_chunks = snapshot.stats.loaded_chunks;
         self.stats.packed_chunks = snapshot.stats.packed_chunks;
+        self.stats.sections.clone_from(&snapshot.stats.sections);
         let (w, h) = snapshot.world_cells;
         self.controls.world = DVec2::new(w as f64, h as f64);
         if world.overlay {
@@ -1080,6 +1099,8 @@ impl Game {
         s.gpu_chunks = r.resident_chunks;
         s.gpu_capacity = r.chunk_capacity;
         s.drawn_chunks = r.drawn_chunks;
+        s.particles = r.drawn_particles;
+        s.light_size = r.light_size;
         s.zoom = self.controls.camera.zoom;
         let c = self.controls.camera.screen_to_cell(self.mouse);
         s.cursor = Some((c.x.floor() as i32, c.y.floor() as i32));
@@ -1119,6 +1140,13 @@ impl Game {
         let show_brush = self.playing() && self.mouse_inside;
         let show_debug = self.ui.model.settings.show_debug && self.world.is_some();
         let (paused, overlay) = self.world.as_ref().map_or((false, false), |w| (w.user_paused, w.overlay));
+        let panel = PanelState {
+            paused,
+            awake_chunks: overlay,
+            render: *self.renderer.settings(),
+            view_keys: [Action::DebugChunks, Action::DebugHeat, Action::DebugGrid]
+                .map(|a| self.key_names.action_name(&self.bindings, a)),
+        };
         let mouse_cell = self.mouse_cell();
         let mut actions = Vec::new();
         let mut debug_actions = Vec::new();
@@ -1131,7 +1159,7 @@ impl Game {
             let content = &*self.content;
             self.egui_ctx.run_ui(raw_input, |root| {
                 if show_debug {
-                    debug_panel::draw(root, stats, paused, overlay, &mut debug_actions);
+                    debug_panel::draw(root, stats, &panel, &mut debug_actions);
                 }
                 actions = ui.ui.show(root.ctx(), &ui.model);
                 let painter = root.ctx().layer_painter(egui::LayerId::background());
@@ -1229,6 +1257,14 @@ impl Game {
 
         let has_world = self.world.is_some();
         if has_world {
+            // The robot's lamp (normal mode), where the robot is drawn.
+            let normal = self.world.as_ref().and_then(|w| w.normal.as_ref());
+            let lamp = normal.and_then(|n| {
+                let (x, y) = n.robot_pos(frame_start)?;
+                let facing = n.frame.robot.as_ref()?.facing;
+                Some(render_setup::robot_lamp((x + crate::player::ROBOT_W as f32 * 0.5, y + crate::player::ROBOT_H as f32 * 0.5), facing))
+            });
+            self.renderer.set_lights(lamp.as_slice());
             self.renderer.set_time(frame_start.duration_since(self.timing.start).as_secs_f64());
             self.renderer.render(&mut encoder, &target, &self.controls.camera);
         }
