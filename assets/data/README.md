@@ -33,6 +33,26 @@ assets/data/
 Each file is a RON list of `Material(...)` or `Reaction(...)` values (see `defs.rs`).
 Material ids must be unique across every file, even though the files are split by topic.
 
+## Reactions
+
+A `Reaction(a, b, ...)` happens when a cell of `a` touches a cell of `b` (8 neighbors, also
+diagonal). `a` and `b` are a material id, `"tag:<name>"` or `"any"`. Either cell can start it.
+Each tick an updated cell picks one random neighbor and rolls `chance` for the rules of that pair.
+
+| Field | Meaning |
+|---|---|
+| `chance` | Chance per tick when the cell picks this neighbor. |
+| `min_temp`, `max_temp` | The temperature of cell A must be in this range (°C). |
+| `needs_air` | An air cell (or oxygen, or fire) must be next to A. |
+| `into_a`, `into_b` | What A and B become. A material id, or a word that uses the matched cell's own data: `"$freeze"`, `"$melt"`, `"$boil"`, `"$condense"`, `"$broken"`. A material without that data is left out of the rule. Example: `a: "tag:metal", into_a: Some("$freeze")` freezes each molten metal into its own block. |
+| `heat` | Added to the temperature of both cells (°C). A new hot material (steam, fire) is at least at its own `temperature`; a new cell is kept below its own melt/boil point. |
+| `extra` | Extra results: `[("molten_slag", 0.5)]`. Each one that happens (with its chance) goes into a free cell next to A (air, or else a gas). |
+| `alt` | A second outcome: `alt: Some((chance: 0.3, into_a: Some("salt")))`. When the reaction happens, with this chance A and B become the `alt` results instead. |
+| `event` | `"explosion_small"`, `"explosion_medium"` or `"explosion_large"`. |
+
+A rule with `b: "any"` is a rule for `a` alone (for example brine that boils at 105 °C).
+Every reaction that happens also sends a `Reaction` event (the game uses it for discovery).
+
 ## Tags
 
 The tag list is fixed. Reactions can match `"tag:<name>"` for the `a` or `b` field.
@@ -90,8 +110,18 @@ Ids are `snake_case`: lower case letters, digits and `_` only (the loader checks
   between two materials at the same temperature. This project uses a 10 °C gap for metals.
 - **life** is a `(min, max)` tick count for a material that fades away on its own (smoke,
   fire, ember). It is a `u8`, so it can only count up to 255 ticks (about 4.25 seconds at
-  60 ticks/s). A longer timer needs a low-chance reaction with `b: "any"` instead (see
-  `wet_concrete` in `liquids.ron` and `reactions/minerals.ron`).
+  60 ticks/s). For a longer time use a **timer** instead. A material with `life` cannot
+  have `burn` or `timer`.
+- **timer** is a slow change after a time: `timer: Some((ticks: 1800, into: "concrete"))`
+  (wet concrete sets after 30 seconds). With `needs_air: true` the time only counts while an
+  air cell is next to the cell. The real time varies by about 10% from cell to cell.
+- **burn** (see `BurnDef` in `defs.rs`): `ignite_at`, `fire_temp`, `chance` (per tick, of
+  being used up), `into` (ash or air), `needs_air` (default true: only cells with air next
+  to them burn, so a liquid burns at its surface). Gases while it burns: `smoke` and
+  `smoke_chance`, and more in `gases: [("carbon_dioxide", 0.05), ...]` (at most 4 in all).
+  `char_into: Some("charcoal")`: a cell at or above `ignite_at` with no air next to it for
+  `char_ticks` ticks (default 600) becomes this material. Fire, and burning cells, set
+  burnable neighbors on fire. Water and the tag `fire_out` put burning cells out.
 - **drag_limit** (liquids only) lets light powders move with the liquid when it flows
   sideways. Water uses 1700, so sand and lighter powders wash along with it.
 - **colors** are 3 to 4 shades that are close to each other, so a pile of the material

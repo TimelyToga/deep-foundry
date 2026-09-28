@@ -30,7 +30,6 @@ mod burn;
 mod tests;
 
 use crate::SimEvent;
-use crate::chunk::FLAG_BURNING;
 use crate::hood::Hood;
 use foundry_content::{Content, Matcher, MaterialTable, OwnChange, Phase};
 use foundry_core::{CellPos, DEFAULT_TEMPERATURE, MaterialId};
@@ -336,6 +335,10 @@ pub fn try_react(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> Outcome {
 
 /// `try_react` for a material with work to do.
 fn react_slow(h: &mut Hood, t: &ReactTable, x: i32, y: i32, m: MaterialId, work: u8) -> Outcome {
+    if work & (W_FIRE | W_BURN | W_TIMER) == 0 {
+        // Only pair rules (water, lava, salt, ...): the common case.
+        return pairs(h, t, x, y, m, work);
+    }
     if work & W_FIRE != 0 {
         return burn::fire_cell(h, t, x, y, m);
     }
@@ -346,11 +349,6 @@ fn react_slow(h: &mut Hood, t: &ReactTable, x: i32, y: i32, m: MaterialId, work:
             Outcome::KeepAwake => out = Outcome::KeepAwake,
             Outcome::Changed => return Outcome::Changed,
         }
-    } else if h.flags(x, y) & FLAG_BURNING != 0 {
-        // A flag left behind by a burning cell that moved away.
-        let f = h.flags(x, y);
-        h.set_flags(x, y, f & !FLAG_BURNING);
-        h.mark_changed(x, y);
     }
     if work & W_TIMER != 0 {
         match burn::timer(h, t, x, y, m) {
@@ -382,6 +380,7 @@ enum Fired {
 
 /// Pair rules with one random neighbor. A keeper looks at all neighbors if that one has no rule
 /// that can fire now.
+#[inline]
 fn pairs(h: &mut Hood, t: &ReactTable, x: i32, y: i32, m: MaterialId, work: u8) -> Outcome {
     let (dx, dy) = DIRS[h.rng.below(8) as usize];
     let (nx, ny) = (x + dx, y + dy);

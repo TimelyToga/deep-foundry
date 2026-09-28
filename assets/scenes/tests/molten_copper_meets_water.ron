@@ -1,0 +1,20 @@
+// Molten metal that touches water freezes into its block and makes steam (rule 7).
+// Picture (100 x 60): open stone box, inside x 4..96, walls from y 20, floor at y 56.
+// Water y 40..56 (92 x 16 = 1472 cells). A block of molten copper (x 40..60, y 10..20,
+// 200 cells) falls into it.
+Scene(
+    note: "Molten copper falls into water: it freezes into copper block, and the water turns into steam.",
+    legend: {
+        "#2f6fd6": "water",
+        "#ff8a3d": "molten_copper",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "copper_block", min: 100),
+        Total(material: "steam", min: 20),
+        // No copper is lost: each molten cell becomes one block cell.
+        // (Molten copper that did not touch water yet may be left.)
+        Total(material: "molten_copper", max: 100),
+    ],
+)

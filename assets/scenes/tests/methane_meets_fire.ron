@@ -1,0 +1,17 @@
+// Methane that touches fire turns into fire (and sends small explosion events).
+// Picture (100 x 80): a closed stone box, inside x 4..96, y 4..76. Methane fills the top half
+// (y 4..40, 92 x 36 = 3312 cells). A wood block (x 44..56, y 66..76, 120 cells) at 400 °C burns
+// on the floor. Its fire rises into the methane.
+Scene(
+    note: "Fire from burning wood reaches a methane pocket. The methane burns away.",
+    legend: {
+        "#c9e0c0": "methane",
+        "#ff9040": (material: "wood", temperature: 400),
+        "#6b6a70": "stone",
+    },
+    ticks: 600,
+    checks: [
+        // Almost all methane is gone.
+        Total(material: "methane", max: 300),
+    ],
+)
