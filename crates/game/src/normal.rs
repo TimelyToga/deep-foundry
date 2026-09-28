@@ -442,8 +442,9 @@ impl NormalMode {
     }
 }
 
+/// Where the robot is drawn (with the step smoothing).
 fn top_left(r: &crate::player::Robot) -> (f32, f32) {
-    (r.left as f32 + r.rem.0, r.top as f32 + r.rem.1)
+    r.draw_top_left()
 }
 
 fn click_of(c: SlotClick) -> Click {
