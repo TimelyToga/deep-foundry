@@ -515,7 +515,7 @@ impl Simulation {
         let t_explode = ms(start);
         self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp, self.pool.as_ref());
         let t_particles = ms(start);
-        heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
+        heat::step(&mut self.world, mats, &self.react, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
         let t_heat = ms(start);
         let every = self.settings.unload_every_ticks as u64;
         if every > 0 && self.tick.is_multiple_of(every) {

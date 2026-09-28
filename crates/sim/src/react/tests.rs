@@ -474,3 +474,19 @@ fn a_new_cell_does_not_keep_the_burning_flag() {
         }
     }
 }
+
+/// Heat warms wood next to a hot block. The heat pass wakes the wood cells when they reach their
+/// ignite temperature, so the wood catches fire although its chunk sleeps.
+#[test]
+fn heat_wakes_wood_that_reaches_its_ignite_temperature() {
+    let mut w = World::new(2, 2);
+    w.stone_box(20, 60, 100, 120);
+    w.fill(40, 110, 60, 120, "wood", None);
+    w.fill(60, 104, 70, 120, "stone", Some(1100));
+    let mut ticks = 0;
+    while w.burning(40, 110, 60, 120).0 == 0 && ticks < 1500 {
+        w.ticks(1);
+        ticks += 1;
+    }
+    assert!(ticks < 1500, "the wood next to the hot stone catches fire");
+}
