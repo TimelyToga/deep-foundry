@@ -18,6 +18,8 @@ use crate::tools;
 
 #[path = "host_build.rs"]
 mod build;
+#[path = "factory_activity.rs"]
+mod activity;
 use foundry_content::{Content, ItemRef, Layer, Stack};
 use foundry_core::{BuildingId, BuildingKindId, CellPos, CellRect, Command, MaterialId, PartId, RecipeId, TILE_SIZE, TechId, TilePos};
 use foundry_factory::progress::{Discovered, LockReason, MilestoneView, ResearchStatus, TechView};
@@ -395,6 +397,7 @@ pub struct FactoryHost {
     guide_due: bool,
     /// The anchor that keeps the chunks around the robot in memory and awake.
     anchor: Option<AnchorId>,
+    factory_activity: activity::FactoryActivity,
     /// The last material the scan tool looked at (so a held key reports it once).
     last_scan: Option<MaterialId>,
     notices: Vec<String>,
@@ -437,6 +440,7 @@ impl FactoryHost {
             guide_open: false,
             guide_due: true,
             anchor: None,
+            factory_activity: activity::FactoryActivity::default(),
             last_scan: None,
             notices: vec![],
             shown: HashMap::new(),
@@ -599,6 +603,7 @@ impl FactoryHost {
     }
 
     fn update_anchor(&mut self, sim: &mut Simulation) {
+        self.factory_activity.sync(&self.factory, sim);
         let area = self.robot.rect().expand(4 * TILE_SIZE);
         match self.anchor {
             Some(id) if sim.move_anchor(id, area) => {}
