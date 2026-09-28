@@ -85,7 +85,12 @@ impl Samples {
 
 /// Play the dig script once. `workers`: run the cell update on these pools (`None`: call it from
 /// this thread, which is outside every rayon pool).
-fn measure(mut workers: Option<&mut Workers>) {
+fn measure(workers: Option<&mut Workers>) {
+    measure_in(workers, None);
+}
+
+/// `material`: fill the ground around the robot with this material first (for example "wood").
+fn measure_in(mut workers: Option<&mut Workers>, material: Option<&str>) {
     let content = Arc::new(Content::load_default().unwrap());
     let guide = Arc::new(Guide::load_default().unwrap());
     let d = demo::build(content.clone(), Shape::Infinite { depth_chunks: 128 }, 1);
@@ -93,6 +98,19 @@ fn measure(mut workers: Option<&mut Workers>) {
     let mut host = FactoryHost::new_game(content.clone(), guide, &mut sim, d.start_center.0 as i32).unwrap();
     let (w, h) = sim.size_cells();
     let (x, y) = host.robot.center();
+    if let Some(m) = material {
+        // A block of the material under and beside the robot, where the script digs.
+        let m = content.expect_material(m);
+        let r = host.robot.rect();
+        for py in r.y0 - 12..r.y1 + 60 {
+            for px in r.x0 - 150..r.x1 + 150 {
+                let beside = px < r.x0 - 2 || px >= r.x1 + 2;
+                if py >= r.y1 || beside {
+                    sim.set_cell(CellPos::new(px, py), m, None);
+                }
+            }
+        }
+    }
     let mut controls = CameraControl::new(DVec2::new(x as f64, y as f64), ZOOM, UVec2::new(SCREEN.0, SCREEN.1), DVec2::new(w as f64, h as f64));
 
     let ctx = egui::Context::default();
@@ -238,6 +256,14 @@ fn dig_perf() {
 
 /// A large flood and a falling sand column (as the `ocean` and `pile_collapse` benchmarks of
 /// `foundry_headless`), so that many chunks are awake.
+#[test]
+#[ignore = "a measure, not a check: run it with --release --ignored --nocapture"]
+fn dig_wood_perf() {
+    println!("--- dig_wood_perf: digging in wood, on the pools of sim_pool.rs ---");
+    let m = std::env::var("DIG_PERF_MATERIAL").unwrap_or_else(|_| "wood".into());
+    sim_pool::run(|w| measure_in(Some(w), Some(&m)));
+}
+
 fn big_scene(content: &Arc<Content>) -> foundry_sim::Simulation {
     let mut sim = foundry_sim::Simulation::new(content.clone(), foundry_sim::SimConfig::finite(32, 16, 1));
     let h = sim.size_cells().1;
