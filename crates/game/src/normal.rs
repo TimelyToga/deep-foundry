@@ -578,7 +578,8 @@ fn building_view(
             .collect(),
         buffers,
         progress: b.progress,
-        speed: 1.0,
+        // A room machine works faster in a bigger room.
+        speed: b.room.as_ref().map_or(1.0, |r| r.speed),
         power: None,
         temperature: Some(b.temperature as f32),
         milestone: milestone.map(milestone_view),

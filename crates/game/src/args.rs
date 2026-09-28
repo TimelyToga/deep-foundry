@@ -131,6 +131,8 @@ pub enum UiState {
     GuideDone,
     /// Normal mode: a campfire that fires raw clay bricks, with its window open.
     Campfire,
+    /// Normal mode: a kiln room that fires clay bricks with charcoal, with its window open.
+    Kiln,
 }
 
 impl UiState {
@@ -158,6 +160,7 @@ impl UiState {
             "guide-workbench" => UiState::GuideWorkbench,
             "guide-done" => UiState::GuideDone,
             "campfire" => UiState::Campfire,
+            "kiln" => UiState::Kiln,
             _ => return None,
         })
     }
@@ -184,6 +187,7 @@ impl UiState {
                 | UiState::GuideWorkbench
                 | UiState::GuideDone
                 | UiState::Campfire
+                | UiState::Kiln
         )
     }
 }
