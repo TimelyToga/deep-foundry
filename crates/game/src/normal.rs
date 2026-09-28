@@ -47,10 +47,9 @@ pub struct NormalMode {
     pub aim_override: Option<CellPos>,
     last_input: Option<PlayerInput>,
     last_windows: Option<(bool, bool)>,
-    /// When the frame with a new tick arrived, and the robot position (top left, in cells) of the
-    /// tick before. The robot is drawn between the two, so it moves smoothly on fast displays.
-    pub frame_time: Option<Instant>,
-    prev_robot: Option<(f32, f32)>,
+    /// The robot positions of the last ticks, so the robot moves smoothly on any display
+    /// (`motion.rs`).
+    track: crate::motion::Track,
 }
 
 impl NormalMode {
@@ -74,23 +73,16 @@ impl NormalMode {
         {
             d.stop = Some((s.at, s.reason.clone()));
         }
-        if frame.tick != self.frame.tick || self.frame_time.is_none() {
-            self.prev_robot = self.frame.robot.map(|r| top_left(&r));
-            self.frame_time = Some(now);
+        if let Some(r) = &frame.robot {
+            self.track.push(frame.tick, top_left(r), now);
         }
         self.frame = frame;
         notices
     }
 
-    /// The robot's top-left corner (in cells) to draw now: between the last two ticks.
+    /// The robot's top-left corner (in cells) to draw now: between two ticks (`motion.rs`).
     pub fn robot_pos(&self, now: Instant) -> Option<(f32, f32)> {
-        let cur = top_left(self.frame.robot.as_ref()?);
-        let (Some(prev), Some(at)) = (self.prev_robot, self.frame_time) else { return Some(cur) };
-        if (cur.0 - prev.0).abs() + (cur.1 - prev.1).abs() > 16.0 {
-            return Some(cur);
-        }
-        let t = (now.saturating_duration_since(at).as_secs_f32() / foundry_core::TICK_SECONDS as f32).clamp(0.0, 1.0);
-        Some((prev.0 + (cur.0 - prev.0) * t, prev.1 + (cur.1 - prev.1) * t))
+        self.track.at(now).or_else(|| self.frame.robot.map(|r| top_left(&r)))
     }
 
     /// The building kind of the part in the hand, if it is a building.
