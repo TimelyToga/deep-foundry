@@ -1,4 +1,5 @@
 //! Trees: a broad tree with a round crown in the temperate biome, a conifer in the tundra.
+//! Also small things on the ground: bushes (leaves) and boulders (stone).
 //!
 //! Each slot of `SLOT` cells along x can hold one tree. The tree, its size and its shape come
 //! from the seed and the slot number, so every chunk draws the same tree. A chunk draws all
@@ -76,9 +77,14 @@ pub(crate) fn in_slot(ctx: &Ctx, k: i32) -> Option<Tree> {
             Tree { x, base, height, kind: Kind::Conifer, half: 1, crown: 9 + height / 8, h }
         }
         _ => {
-            let height = 34 + r(8, 26);
+            // Most trees are of middle size; some are small and some are tall.
+            let height = match r(20, 10) {
+                0..2 => 26 + r(8, 10),
+                2..8 => 36 + r(8, 18),
+                _ => 54 + r(8, 16),
+            };
             let half = if height > 50 { 2 } else { 1 };
-            Tree { x, base, height, kind: Kind::Broad, half, crown: 11 + height / 5, h }
+            Tree { x, base, height, kind: Kind::Broad, half, crown: (9 + height / 4).min(REACH - 2), h }
         }
     })
 }
@@ -181,6 +187,79 @@ impl Tree {
                     if row[i] != m.water && (y <= self.base || row[i] != 0) {
                         row[i] = m.wood;
                     }
+                }
+            }
+        }
+    }
+}
+
+/// A bush or a boulder on the ground. Positions are world cells.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Decor {
+    cx: i32,
+    cy: i32,
+    rx: i32,
+    ry: i32,
+    boulder: bool,
+    h: u32,
+}
+
+/// The bush or boulder of slot `k`, if the slot has one. It stands between the trees of the
+/// slots (at the middle of the slot, where no trunk is).
+pub(crate) fn decor_in_slot(ctx: &Ctx, k: i32) -> Option<Decor> {
+    let h = hash1(ctx.sd.get(sd::DECOR), k);
+    let x = k * SLOT + (SLOT / 2 + 20 + (h % 12) as i32 - 6).rem_euclid(SLOT);
+    if x.abs() < HUB_CLEAR {
+        return None;
+    }
+    let roll = unit(hash1(h, 2));
+    let gr = ctx.ground_at(x);
+    let (left, right) = (ctx.ground_at(x - 2).g, ctx.ground_at(x + 2).g);
+    let col = ctx.column(x, gr, left, right);
+    let (bush, boulder) = match col.biome {
+        Biome::Temperate => (0.4, 0.08),
+        Biome::Tundra => (0.08, 0.12),
+        Biome::Desert => (0.0, 0.06),
+    };
+    if roll >= bush + boulder {
+        return None;
+    }
+    let g = &col.gr;
+    if col.steep || g.water < g.g || g.bed > 0 || g.salt > 0 {
+        return None;
+    }
+    let r = |shift: u32, n: u32| ((h >> shift) % n) as i32;
+    let top = g.g.min(left).min(right);
+    Some(if roll < bush {
+        let ry = 3 + r(8, 3);
+        Decor { cx: x, cy: top - ry + 1, rx: 5 + r(12, 5), ry, boulder: false, h }
+    } else {
+        let ry = 3 + r(8, 4);
+        Decor { cx: x, cy: g.g.max(left).max(right) - ry / 2 + 1, rx: 4 + r(12, 6), ry, boulder: true, h }
+    })
+}
+
+impl Decor {
+    /// Draw into a grid like `Tree::draw`. Leaves go only into air; a boulder goes into air and
+    /// ground but not into water.
+    pub fn draw(&self, m: &Mats, grid: &mut [u16], xl: i32, y0: i32, rows: usize) {
+        let (xa, xb) = ((self.cx - self.rx).max(xl), (self.cx + self.rx + 1).min(xl + GW as i32));
+        let (ya, yb) = ((self.cy - self.ry).max(y0), (self.cy + self.ry + 1).min(y0 + rows as i32));
+        for y in ya..yb {
+            let dy = (y - self.cy) as f32 / self.ry as f32;
+            let edge = (hash2(self.h, y, 0) % 3) as f32 * 0.4;
+            let half = self.rx as f32 * (1.0 - dy * dy).max(0.0).sqrt() + edge - 0.4;
+            for x in xa..xb {
+                if ((x - self.cx) as f32).abs() > half {
+                    continue;
+                }
+                let i = ((y - y0) as usize) * GW + (x - xl) as usize;
+                if self.boulder {
+                    if grid[i] != m.water && grid[i] != m.wood && grid[i] != m.leaves {
+                        grid[i] = m.stone;
+                    }
+                } else if grid[i] == 0 && hash2(self.h ^ 0xb005, x, y) % 100 >= 12 {
+                    grid[i] = m.leaves;
                 }
             }
         }

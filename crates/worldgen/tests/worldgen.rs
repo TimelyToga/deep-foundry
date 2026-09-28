@@ -197,7 +197,8 @@ fn no_seams_at_chunk_borders() {
     // The ground in the cells matches `ground_y` in every column, also at chunk borders.
     let c = content();
     let a = Area::new(&wg, seed, -24, sy - 5, 48, 9);
-    let (wood, leaves) = (c.expect_material("wood").0, c.expect_material("leaves").0);
+    // Trees, bushes and boulders stand on the ground.
+    let (wood, leaves, stone) = (c.expect_material("wood").0, c.expect_material("leaves").0, c.expect_material("stone").0);
     for x in a.x0..a.x0 + a.w {
         let g = wg.ground_y(seed, x);
         let v = a.at(x, g);
@@ -205,7 +206,7 @@ fn no_seams_at_chunk_borders() {
         let above = a.at(x, g - 1);
         let top = wg.water_y(seed, x).map_or(g, |w| w);
         assert!(
-            above == 0 || above == wood || above == leaves || top < g,
+            above == 0 || above == wood || above == leaves || above == stone || top < g,
             "column {x}: {} above the ground",
             c.materials.ids[above as usize]
         );

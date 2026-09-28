@@ -69,6 +69,7 @@ pub(crate) mod sd {
     pub const BED: usize = 40;
     pub const SED: usize = 41;
     pub const SED_WARP: usize = 42;
+    pub const DECOR: usize = 37;
     pub const COUNT: usize = 43;
 }
 
@@ -169,8 +170,8 @@ pub(crate) struct Start {
     pub lake: Feature,
     pub river: Feature,
     pub outcrop: Feature,
-    /// Two malachite blobs and one clay blob.
-    pub blobs: [Blob; 3],
+    /// Two malachite blobs, a clay blob and a sand patch.
+    pub blobs: [Blob; 4],
 }
 
 /// The ground of one column, with the features.
@@ -363,7 +364,7 @@ impl<'a> Ctx<'a> {
 
     /// Hills are lower near the start.
     fn calm(x: i32) -> f64 {
-        0.5 + 0.5 * smoothstep((x.abs() - 900) as f32 / 600.0) as f64
+        0.7 + 0.3 * smoothstep((x.abs() - 900) as f32 / 600.0) as f64
     }
 
     /// The ground shape of one biome: (offset from the base level, dune height).
@@ -467,6 +468,8 @@ impl<'a> Ctx<'a> {
                 blob(-300 + jit(3, 20.0), 11, 17, 8, m.malachite),
                 blob(330 + jit(4, 20.0), 12, 13, 7, m.malachite),
                 blob(62, 8, 22, 5, m.clay),
+                // Sand at the surface left of the Hub, for the first goal of the guide.
+                blob(-78 + jit(5, 6.0), 2, 26, 7, m.sand),
             ];
             Start { lake, river, outcrop, blobs }
         })

@@ -27,10 +27,10 @@ const STRATUM: i32 = 22;
 const LIME_SPACING: i32 = 48;
 const COAL_SPACING: i32 = 150;
 /// Largest shift (up or down) of the strata, the limestone bands and the coal seams.
-const SED_WARP: i32 = 45;
+const SED_WARP: i32 = 210;
 const LIME_WARP: i32 = 59;
 const COAL_WARP: i32 = 69;
-const SED_TABLE: usize = 10;
+const SED_TABLE: usize = 25;
 /// Largest half-width of a tunnel, in noise units, and the smallest one (thinner tunnels are
 /// left out, so there are no hair-thin cracks).
 const TUNNEL_W: f32 = 0.07;
@@ -201,6 +201,9 @@ impl<'a, 'b> Fill<'a, 'b> {
         let layer = sampled_columns(self.x0, n(sd::LAYER_WARP, 900));
         let sed_a = sampled_columns(self.x0, n(sd::SED_WARP, 400));
         let sed_b = sampled_columns(self.x0, n2(sd::SED_WARP, 90));
+        // The strata also dip and rise slowly along x, so the same depth has other strata in
+        // other places.
+        let sed_c = sampled_columns(self.x0, move |x| noise1(seeds.get(sd::SED_WARP) ^ 0x1B87_3593, x, 4200));
         let lime_a = sampled_columns(self.x0, n(sd::LIME_WARP, 500));
         let lime_b = sampled_columns(self.x0, n2(sd::LIME_WARP, 110));
         let coal_a = sampled_columns(self.x0, n(sd::COAL_WARP, 700));
@@ -213,7 +216,7 @@ impl<'a, 'b> Fill<'a, 'b> {
         }
         for c in 0..GW {
             self.layer_warp[c] = (60.0 * layer[c]) as i32;
-            self.sed_warp[c] = ((28.0 * sed_a[c] + 12.0 * sed_b[c]) as i32).clamp(-SED_WARP, SED_WARP);
+            self.sed_warp[c] = ((28.0 * sed_a[c] + 12.0 * sed_b[c] + 150.0 * sed_c[c]) as i32).clamp(-SED_WARP, SED_WARP);
             self.lime_warp[c] = ((40.0 * lime_a[c] + 12.0 * lime_b[c]) as i32).clamp(-LIME_WARP, LIME_WARP);
             self.coal_warp[c] = ((50.0 * coal_a[c] + 12.0 * coal_b[c]) as i32).clamp(-COAL_WARP, COAL_WARP);
         }
@@ -709,7 +712,7 @@ impl<'a, 'b> Fill<'a, 'b> {
         }
         // Trees stand on the ground and reach at most MAX_HEIGHT above it.
         let y1 = self.y0 + GH as i32;
-        if self.y0 > self.max_ground + 8 || y1 < self.min_top - trees::MAX_HEIGHT - 8 {
+        if self.y0 > self.max_ground + 16 || y1 < self.min_top - trees::MAX_HEIGHT - 8 {
             return;
         }
         let k0 = (self.xl - trees::REACH).div_euclid(trees::SLOT);
@@ -717,6 +720,9 @@ impl<'a, 'b> Fill<'a, 'b> {
         for k in k0..=k1 {
             if let Some(t) = trees::in_slot(self.ctx, k) {
                 t.draw(&self.m, &mut self.grid, self.xl, self.y0, GH);
+            }
+            if let Some(d) = trees::decor_in_slot(self.ctx, k) {
+                d.draw(&self.m, &mut self.grid, self.xl, self.y0, GH);
             }
         }
     }
