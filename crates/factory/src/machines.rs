@@ -411,10 +411,8 @@ impl Machine {
         {
             return Status::TooCold;
         }
-        if self.fuel.is_some() {
-            if !self.burn_tick() {
-                return Status::NoFuel;
-            }
+        if self.fuel.is_some() && !self.burn_tick() {
+            return Status::NoFuel;
         }
         if !self.running {
             self.start(recipe);
