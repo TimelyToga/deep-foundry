@@ -225,6 +225,11 @@ pub struct MainPerf {
     pub uploads: u32,
     /// When the dig script started.
     pub script_start: Option<Instant>,
+    /// Frames in which the drawn robot moved much more or much less than its speed says, while
+    /// it walked. Each one is a visible jerk.
+    pub jerks: u32,
+    /// The drawn robot x of the last frame.
+    last_x: Option<f32>,
 }
 
 impl MainPerf {
@@ -236,7 +241,22 @@ impl MainPerf {
             max_interval_ms: 0.0,
             uploads: 0,
             script_start: None,
+            jerks: 0,
+            last_x: None,
         }
+    }
+
+    /// Numbers of a frame: the new ticks, the drawn robot x and its speed (cells per tick), and
+    /// the time since the last frame (seconds).
+    pub fn frame_data(&mut self, new_ticks: u64, robot: Option<(f32, f32)>, dt: f32) {
+        self.ticks_per_frame[(new_ticks as usize).min(2)] += 1;
+        if let (Some((x, vel)), Some(last)) = (robot, self.last_x) {
+            let expected = vel * dt / foundry_core::TICK_SECONDS as f32;
+            if vel.abs() > 0.5 && ((x - last) - expected).abs() > 0.5 * expected.abs() {
+                self.jerks += 1;
+            }
+        }
+        self.last_x = robot.map(|r| r.0);
     }
 
     /// A frame ends. Print the line once per second.
@@ -246,16 +266,18 @@ impl MainPerf {
         if self.since.elapsed().as_secs_f64() >= 1.0 {
             let [none, one, more] = self.ticks_per_frame;
             println!(
-                "perf main: {} | frames {} (0 ticks {none}, 1 tick {one}, 2+ ticks {more}) longest gap {:.1} ms uploads {}",
+                "perf main: {} | frames {} (0 ticks {none}, 1 tick {one}, 2+ ticks {more}) longest gap {:.1} ms uploads {} robot jerks {}",
                 self.parts.line(),
                 self.parts.count,
                 self.max_interval_ms,
-                self.uploads
+                self.uploads,
+                self.jerks
             );
             self.parts.reset();
             self.ticks_per_frame = [0; 3];
             self.max_interval_ms = 0.0;
             self.uploads = 0;
+            self.jerks = 0;
             self.since = Instant::now();
         }
     }
