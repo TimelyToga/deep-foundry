@@ -25,7 +25,7 @@ use foundry_factory::{
     BuildingView, Click, CraftJobView, Factory, FactoryEvent, FactorySave, GoalView, Guide, InventoryView, PartStack, PortView,
     ProgressEvent, RobotSlot, Status,
 };
-use foundry_sim::{AnchorId, Simulation};
+use foundry_sim::{AnchorId, SimEvent, Simulation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -961,9 +961,12 @@ impl FactoryHost {
         self.tick_removal(sim);
 
         self.factory.tick(sim);
-        // The simulation has no reaction events yet (`SimEvent::Reaction`, see
-        // docs/design/requests/factory-core.md). When it has them, call
-        // `self.factory.observe_reaction(index, at)` here for each event of `sim.events()`.
+        // Reactions of the last simulation tick: the player discovers the ones near the robot.
+        for e in sim.events() {
+            if let SimEvent::Reaction { index, at } = *e {
+                self.factory.observe_reaction(index, at);
+            }
+        }
         for e in self.factory.take_events() {
             match e {
                 FactoryEvent::Broke { kind, .. } => {
