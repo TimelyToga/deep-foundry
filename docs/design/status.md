@@ -18,12 +18,13 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
   - Open: clay-brick loop (clay bricks come only from the kiln; the kiln needs 8). Lead decision: a campfire fires raw clay bricks slowly (pit firing). Goal texts describe the demo world; redo them after worldgen.
 - character: robot sprite sheet 16x20 (tools/sprites/make_robot.py -> assets/sprites/robot.png/.ron), animations, tool arm in 16 directions, sprite pass crates/render/src/sprite.rs (drawn into the world texture before the scale pass), movement tuning block in player.rs (steps 1-3 cells, jump buffer, coyote time, stuck fixes), jetpack fuel 50 ticks + gauge next to the robot, screenshot --pose/--face/--robot. 373 tests pass.
   - Open: no jetpack bar in the crates/ui HUD. When wave B (light) merges: the robot must be lit by the light map; flame/beam/sparks not darkened; visor glow mask.
+- stutter fix: sim loop on its own 1-thread pool, big ticks on an 8-thread pool (sim_pool.rs); dig circle and sprite beam use this frame's mouse (overlay::aim_point); robot drawn 1.25 ticks behind a steady clock (motion.rs); DEEP_FOUNDRY_PERF=1, DEEP_FOUNDRY_DIG_SCRIPT=1, dig_perf tests (--ignored). Worst dig tick 24-31 ms -> 0.5-2 ms under heavy load. 379 tests pass.
+  - Open: hover box shows the cell for 1-2 ticks before building data arrives; 60 Hz fix checked only by the clock-model test.
 
 ## Running (branch or worktree)
 | Work | Where | Merge notes |
 |---|---|---|
 | Play-test round 2 (Opus): keep/drop per material when digging, HUD bar transfers with a building window open, guide texts after the workbench, campfire fires raw clay bricks | agent worktree | crates/factory, crates/ui, guide data, small crates/game edits. |
-| Stutter when mining (Opus): measure sim vs main thread while digging; pointer/dig target must follow the mouse every frame | agent worktree | Small changes in crates/game; may touch app.rs, sim_thread.rs, factory_host.rs. |
 | Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
 
 ## Next
