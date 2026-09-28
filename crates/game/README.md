@@ -180,6 +180,30 @@ cargo run -p deep_foundry --release -- --exit-after 10 --size 2560x1440
 cargo run -p deep_foundry --release -- --exit-after 10 --size 2560x1440 --no-vsync
 ```
 
+## Find slow parts
+
+Timing logs in the window: `DEEP_FOUNDRY_PERF=1` prints two lines each second. The main thread
+line has the parts of a frame (snapshot upload, UI model, egui, actions, wait for the display,
+draw, present), the frames with no or two new ticks, and the robot jerks. The simulation line has
+the parts of a tick (commands, cell update, factory, snapshot, factory frame, publish), the late
+ticks and the lost time. Each part shows "average/worst" in milliseconds.
+`DEEP_FOUNDRY_DIG_SCRIPT=1` plays a fixed script in the normal mode: the robot digs down, then
+digs and walks right, then left, and the mouse moves around it.
+
+```sh
+DEEP_FOUNDRY_PERF=1 DEEP_FOUNDRY_DIG_SCRIPT=1 cargo run -p deep_foundry --release -- \
+    --ui-state playing --mode normal --exit-after 14
+```
+
+The same script with no window, with the time of each part of a tick and a frame:
+
+```sh
+cargo test --release -p deep_foundry dig_perf -- --ignored --nocapture
+```
+
+Waits between threads are long only when the CPU is busy. To see them, run it while other
+programs use all cores (for example one `yes > /dev/null` per core).
+
 ## Check the menus and saves
 
 ```sh
