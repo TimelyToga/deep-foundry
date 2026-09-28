@@ -149,15 +149,16 @@ impl Fuel {
         (t > 0).then_some((m, t))
     }
 
-    /// Make sure a unit burns for this tick. False if there is no fuel.
-    fn light(&mut self) -> bool {
+    /// Burn fuel for this tick. False if there is no fuel.
+    fn burn_tick(&mut self) -> bool {
         if self.burn > 0 {
+            self.burn -= 1;
             return true;
         }
         if self.take(1).is_none() {
             return false;
         }
-        self.burn = self.ticks_per_unit;
+        self.burn = self.ticks_per_unit.saturating_sub(1);
         true
     }
 }
@@ -238,6 +239,11 @@ impl Machine {
     pub fn with_fuel(mut self, fuel: Fuel) -> Self {
         self.fuel = Some(fuel);
         self
+    }
+
+    /// Burn one fuel tick without advancing a recipe, for a fire that is heating its surroundings.
+    pub fn burn_tick(&mut self) -> bool {
+        self.fuel.as_mut().is_some_and(Fuel::burn_tick)
     }
 
     /// Capacity of input buffer `k`.
@@ -405,11 +411,10 @@ impl Machine {
         {
             return Status::TooCold;
         }
-        if let Some(f) = &mut self.fuel {
-            if !f.light() {
+        if self.fuel.is_some() {
+            if !self.burn_tick() {
                 return Status::NoFuel;
             }
-            f.burn -= 1;
         }
         if !self.running {
             self.start(recipe);

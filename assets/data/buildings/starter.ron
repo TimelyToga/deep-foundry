@@ -27,7 +27,7 @@
             (kind: FluidOut, tile: (0, 0), side: Right, name: Some("Tap")),
             (kind: Heat, tile: (0, 0), side: Down),
         ],
-        crafts: ["alloying"],
+        crafts: ["alloying", "crucible_smelting"],
         params: {"capacity": 200.0},
     ),
     Building(
@@ -51,7 +51,7 @@
         tier: 0,
         // A ring of stones: a wood body would catch fire from its own heat port.
         body: "stone",
-        max_temp: 900,
+        max_temp: 1300,
         ports: [
             (kind: BulkIn, tile: (0, 0), side: Up, filter: ["wood", "charcoal", "raw_coal", "coke"]),
             (kind: Heat, tile: (0, 0), side: Up),
@@ -62,7 +62,7 @@
         // of wood or charcoal, and one unit burns for 300 ticks (5 seconds). The buffers hold 8
         // bricks.
         crafts: ["pit_firing"],
-        params: {"buffer_crafts": 8.0, "fuel_capacity": 100.0, "fuel_ticks": 300.0},
+        params: {"buffer_crafts": 8.0, "fuel_capacity": 100.0, "fuel_ticks": 300.0, "heat_temp": 900.0},
     ),
     Building(
         id: "wood_wall",
@@ -111,7 +111,7 @@
     Building(
         id: "bellows",
         name: "Bellows",
-        description: "Water turns its wheel. It makes the fire in its room up to 300 degrees C hotter.",
+        description: "Placed within 3 tiles of a fire, it blows air into the fire and raises its temperature by 300 °C.",
         kind: "bellows",
         size: (1, 1),
         tier: 0,
