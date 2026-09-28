@@ -678,10 +678,10 @@ fn flow_chunk(s: &mut Scratch, air: &[f32; 64], seed: u32, temp: &mut [i16; CHUN
         let mut new = [0i16; 64];
         let row = if s.mixed & (1 << y) != 0 {
             let (inv_c, relax) = (&s.inv_c[o..o + 64], &s.relax[o..o + 64]);
-            new_temps(tc, flows, |x| inv_c[x], |x| relax[x], air, seed, o, &mut new)
+            new_temps(tc, flows, |x| inv_c[x], |x| relax[x], air, seed, o as u32, &mut new)
         } else {
             let (inv_c, relax) = (s.row_inv_c[y], s.row_relax[y]);
-            new_temps(tc, flows, |_| inv_c, |_| relax, air, seed, o, &mut new)
+            new_temps(tc, flows, |_| inv_c, |_| relax, air, seed, o as u32, &mut new)
         };
         from_above = to_below;
         s.lo[y] = row.lo as i16;
@@ -728,7 +728,7 @@ fn new_temps(
     relax: impl Fn(usize) -> f32,
     air: f32,
     seed: u32,
-    first: usize,
+    first: u32,
     out: &mut [i16; 64],
 ) -> RowResult {
     let c = &c[..64];
@@ -736,7 +736,7 @@ fn new_temps(
     for x in 0..64 {
         let sum = f.across[x] - f.across[x + 1] + f.above[x] - f.below[x];
         let dt = sum * inv_c(x) + relax(x) * (air - c[x]);
-        let v = (c[x] + (dt + unit(seed, (first + x) as u32)).floor()).max(MIN_TEMP as f32).min(MAX_TEMP as f32);
+        let v = (c[x] + (dt + unit(seed, first + x as u32)).floor()).max(MIN_TEMP as f32).min(MAX_TEMP as f32);
         let (new, old) = (v as i32, c[x] as i32);
         out[x] = new as i16;
         let d = (new - old).abs();
