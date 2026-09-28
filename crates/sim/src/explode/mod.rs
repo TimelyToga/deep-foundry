@@ -21,8 +21,9 @@
 //!      from the center. The direction turns toward the open side (where the rays found air), so
 //!      a buried explosion throws its cells out of the hole. A solid flies as its broken form
 //!      (stone as gravel). The particles land again as cells, so no material is lost.
-//! 3. In the core, air and gas get the heat, and some air cells become fire. Flammable gas then
-//!    ignites through the normal reactions in the next ticks, so chain reactions spread over ticks.
+//! 3. In the core, air and gas get the heat, and some air cells become fire or smoke. Flammable
+//!    gas then ignites through the normal reactions in the next ticks, so chain reactions spread
+//!    over ticks.
 //! 4. Visual particles: sparks (if there is heat), smoke puffs and dust.
 //!
 //! Cells of buildings (`FLAG_BUILDING`) do not change and stop rays. Each explosion that runs
@@ -74,6 +75,8 @@ const ABSORB_PER_HARDNESS: f32 = 0.15;
 const RAYS_PER_CELL: f32 = 1.5;
 /// Chance that an air cell at the center becomes fire (it falls to 0 at the edge of the core).
 const FIRE_CHANCE: f32 = 0.35;
+/// Chance that an air cell at the center becomes smoke (it falls to 0 at the edge of the core).
+const SMOKE_CHANCE: f32 = 0.2;
 /// Chance that a flammable cell in the core turns into fire (else it is thrown).
 const BURN_CHANCE: f32 = 0.5;
 /// Thrown cells get this part of their speed as an extra upward speed.
@@ -327,11 +330,17 @@ impl Explosions {
                             if !in_core {
                                 continue;
                             }
+                            let near = 1.0 - d / core.max(1.0);
+                            let roll = rng.unit();
                             if let Some(fire) = self.fire
-                                && rng.chance(FIRE_CHANCE * (1.0 - d / core.max(1.0)))
+                                && roll < FIRE_CHANCE * near
                             {
                                 let temp = heat.max(mats.temperature[fire.index()]);
                                 self.edits.push(Edit::Cell { i: i16x, mat: fire, temp, life: new_life(mats, fire, &mut rng) });
+                            } else if let Some(smoke) = self.smoke
+                                && roll > 1.0 - SMOKE_CHANCE * near
+                            {
+                                self.edits.push(Edit::Cell { i: i16x, mat: smoke, temp: heat, life: new_life(mats, smoke, &mut rng) });
                             } else if heat > ch.temp[i] {
                                 self.edits.push(Edit::Temp { i: i16x, temp: heat });
                             }

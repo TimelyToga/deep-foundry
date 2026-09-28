@@ -37,7 +37,7 @@ pub enum SimEvent {
     /// An explosion at a cell. Task 1C (explosions) handles the queue after movement.
     Explosion { at: CellPos, strength: f32, heat: i16 },
     /// An explosion ran in this tick (for damage, sound and screen shake). `radius` is in cells.
-    /// See `explode.rs` for the strength scale.
+    /// See `explode/mod.rs` for the strength scale.
     Exploded { at: CellPos, radius: f32, strength: f32 },
 }
 
@@ -560,7 +560,7 @@ impl Simulation {
         &mut self.particles
     }
 
-    /// Run an explosion now (for tools, tests and the debug brush). See `explode.rs` for the
+    /// Run an explosion now (for tools, tests and the debug brush). See `explode/mod.rs` for the
     /// strength scale; `heat` is in °C (0: no heat). The thrown cells fly from the next tick on.
     /// If the center is in a chunk that does not update, the explosion waits in the queue until
     /// an anchor comes near, and this returns false.
