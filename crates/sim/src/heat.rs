@@ -336,6 +336,9 @@ struct Scratch {
     inv_c: [f32; CHUNK_AREA],
     /// For rows with more than one material: `MatHeat::relax` of each cell.
     relax: [f32; CHUNK_AREA],
+    /// For rows with more than one material: `MatHeat::up` and `MatHeat::down` of each cell.
+    up: [i16; CHUNK_AREA],
+    down: [i16; CHUNK_AREA],
     /// For rows with one material: 1 / heat capacity and `MatHeat::relax` of the row.
     row_inv_c: [f32; 64],
     row_relax: [f32; 64],
@@ -358,6 +361,8 @@ fn with_scratch<R>(f: impl FnOnce(&mut Scratch) -> R) -> R {
                 mixed: 0,
                 inv_c: [0.0; CHUNK_AREA],
                 relax: [0.0; CHUNK_AREA],
+                up: [0; CHUNK_AREA],
+                down: [0; CHUNK_AREA],
                 row_inv_c: [0.0; 64],
                 row_relax: [0.0; 64],
                 lo: [0; 64],
@@ -465,13 +470,20 @@ impl ChunkJob<'_> {
                 s.row_relax[y] = e.relax;
                 air |= m0 == 0;
             } else {
+                // Several materials: fill each run of one material.
                 s.mixed |= 1 << y;
-                for (x, &m) in mrow.iter().enumerate() {
+                let mut x = 0;
+                while x < 64 {
+                    let m = mrow[x];
+                    let end = x + 1 + mrow[x + 1..].iter().take_while(|&&n| n == m).count();
                     let e = table.mats[m as usize];
-                    s.g[dst + x] = e.g;
-                    s.inv_c[src + x] = e.inv_c;
-                    s.relax[src + x] = e.relax;
+                    s.g[dst + x..dst + end].fill(e.g);
+                    s.inv_c[src + x..src + end].fill(e.inv_c);
+                    s.relax[src + x..src + end].fill(e.relax);
+                    s.up[src + x..src + end].fill(e.up);
+                    s.down[src + x..src + end].fill(e.down);
                     air |= m == 0;
+                    x = end;
                 }
             }
         }
@@ -531,19 +543,27 @@ impl ChunkJob<'_> {
         // Phase changes.
         for y in 0..64 {
             let o = y * 64;
-            let (t, mrow) = (&temp[o..o + 64], &mat[o..o + 64]);
+            let t = &temp[o..o + 64];
+            let (mut ups, mut downs) = (0u64, 0u64);
             if s.mixed & (1 << y) == 0 {
                 // One material: compare the lowest and highest temperature of the row.
-                let e = table.mats[mrow[0] as usize];
+                let e = table.mats[mat[o] as usize];
                 if s.hi[y] < e.up && s.lo[y] >= e.down {
                     continue;
                 }
-            }
-            let (mut ups, mut downs) = (0u64, 0u64);
-            for (x, (&v, &m)) in t.iter().zip(mrow).enumerate() {
-                let e = table.mats[m as usize];
-                ups |= ((v >= e.up) as u64) << x;
-                downs |= ((v < e.down) as u64) << x;
+                for (x, &v) in t.iter().enumerate() {
+                    ups |= ((v >= e.up) as u64) << x;
+                    downs |= ((v < e.down) as u64) << x;
+                }
+            } else {
+                let (up, down) = (&s.up[o..o + 64], &s.down[o..o + 64]);
+                if !t.iter().zip(up.iter().zip(down)).fold(false, |hit, (&v, (&u, &d))| hit | (v >= u) | (v < d)) {
+                    continue;
+                }
+                for (x, (&v, (&u, &d))) in t.iter().zip(up.iter().zip(down)).enumerate() {
+                    ups |= ((v >= u) as u64) << x;
+                    downs |= ((v < d) as u64) << x;
+                }
             }
             let mut bits = ups | downs;
             while bits != 0 {
@@ -675,8 +695,24 @@ fn flow_chunk(s: &mut Scratch, air: &[f32; 64], seed: u32, temp: &mut [i16; CHUN
 
         let o = y * 64;
         let tc = &tr[1..65];
+        let mixed = s.mixed & (1 << y) != 0;
+        // A row with no flow and no air that moves toward the air temperature does not change.
+        // Skip it (the result is the same: the random rounding adds 0 then).
+        let flowing = nonzero(&across) | nonzero(&from_above) | nonzero(&to_below);
+        let relaxing = if mixed {
+            let relax = &s.relax[o..o + 64];
+            tc.iter().zip(relax).fold(0, |any, (&c, &r)| any | bits(r * (air - c))) != 0
+        } else {
+            s.row_relax[y] != 0.0 && tc.iter().fold(0, |any, &c| any | bits(c - air)) != 0
+        };
+        if !flowing && !relaxing {
+            let (lo, hi) = temp[o..o + 64].iter().fold((i16::MAX, i16::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+            (s.lo[y], s.hi[y]) = (lo, hi);
+            from_above = to_below;
+            continue;
+        }
         let mut new = [0i16; 64];
-        let row = if s.mixed & (1 << y) != 0 {
+        let row = if mixed {
             let (inv_c, relax) = (&s.inv_c[o..o + 64], &s.relax[o..o + 64]);
             new_temps(tc, flows, |x| inv_c[x], |x| relax[x], air, seed, o as u32, &mut new)
         } else {
@@ -693,6 +729,19 @@ fn flow_chunk(s: &mut Scratch, air: &[f32; 64], seed: u32, temp: &mut [i16; CHUN
         }
     }
     (changed, hot)
+}
+
+/// The bits of a number without its sign: 0 for 0.0 and -0.0. (Integer bits, so that a check of
+/// many numbers uses SIMD instructions.)
+#[inline(always)]
+fn bits(v: f32) -> u32 {
+    v.to_bits() << 1
+}
+
+/// True if a number in `v` is not 0.
+#[inline(always)]
+fn nonzero(v: &[f32]) -> bool {
+    v.iter().fold(0, |any, &f| any | bits(f)) != 0
 }
 
 /// The flows of one row (see `flow_chunk`).
