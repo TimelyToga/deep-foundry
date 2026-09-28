@@ -97,6 +97,73 @@ fn boiler_heats_water_and_runs_a_crusher_through_bronze_pipes() {
 }
 
 #[test]
+fn boiler_on_the_right_feeds_a_left_hand_crusher_with_reverse_pipe_placement() {
+    let c = content();
+    let mut sim = world(&c, Some(112));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let crusher = f
+        .place(
+            kind(&c, "steam_crusher"),
+            TilePos::new(3, 10),
+            0,
+            false,
+            &mut sim,
+        )
+        .unwrap();
+    f.set_recipe(crusher, c.factory.recipe("crushed_magnetite"))
+        .unwrap();
+    let boiler = f
+        .place(
+            kind(&c, "small_boiler"),
+            TilePos::new(9, 10),
+            0,
+            false,
+            &mut sim,
+        )
+        .unwrap();
+    let pipe_tiles = [
+        TilePos::new(3, 11),
+        TilePos::new(4, 11),
+        TilePos::new(5, 11),
+        TilePos::new(6, 11),
+        TilePos::new(7, 11),
+        TilePos::new(7, 10),
+        TilePos::new(8, 10),
+        TilePos::new(9, 10),
+        TilePos::new(10, 10),
+        TilePos::new(9, 11),
+    ];
+    for tile in pipe_tiles.into_iter().rev() {
+        f.place(kind(&c, "bronze_pipe"), tile, 0, false, &mut sim)
+            .unwrap();
+    }
+
+    let charcoal = mat(&c, "charcoal");
+    let water = mat(&c, "water");
+    let ore = mat(&c, "raw_magnetite");
+    for y in 76..80 {
+        for x in 72..80 {
+            sim.set_cell(CellPos::new(x, y), charcoal, None);
+        }
+        for x in 24..32 {
+            sim.set_cell(CellPos::new(x, y), ore, None);
+        }
+    }
+    for y in 88..96 {
+        for x in 68..72 {
+            sim.set_cell(CellPos::new(x, y), water, None);
+        }
+    }
+    run(&mut f, &mut sim, 1600);
+    assert!(matches!(f.buildings.get(boiler).unwrap().steam, SteamState::Boiler { .. }));
+    assert!(
+        count_all(&sim, mat(&c, "crushed_magnetite")) > 0,
+        "a right-hand boiler feeds a left-facing steam machine across pipes created in reverse"
+    );
+}
+
+#[test]
 fn steam_lab_stops_without_steam_then_researches_and_iron_belt_moves_cells() {
     let c = content();
     let mut sim = world(&c, Some(112));
