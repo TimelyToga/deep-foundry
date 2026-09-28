@@ -505,13 +505,17 @@ impl<'a> Ctx<'a> {
             Lake | FrozenLake => (pick(70, 140, 0), pick(22, 40, 8), 50),
             River => (pick(30, 50, 0), pick(12, 18, 8), 30),
             Oasis => (pick(40, 70, 0), pick(12, 20, 8), 40),
-            SaltFlat => (pick(100, 180, 0), 0, 60),
+            SaltFlat => (pick(90, 150, 0), 0, 90),
             CoalOutcrop => (170, pick(6, 11, 8), 0),
         };
         let room = (REGION / 2 - hw - margin - 8).max(0);
         let cx = mid + (signed(hash1(h2, 7)) * room as f32) as i32;
         Some(match kind {
-            SaltFlat => Feature { kind, cx, hw, depth, margin, flat: self.natural(cx).0.round() as i32, extra: 0 },
+            SaltFlat => {
+                // A low, flat basin: a little below the lowest natural ground across it.
+                let low = (-2..=2).map(|i| self.natural(cx + i * hw / 2).0).fold(f64::MIN, f64::max);
+                Feature { kind, cx, hw, depth, margin, flat: low.round() as i32 + 4, extra: 0 }
+            }
             CoalOutcrop => {
                 let dir = if h & (1 << 20) != 0 { 1 } else { -1 };
                 Feature { kind, cx, hw, depth, margin, flat: self.natural(cx).0.round() as i32, extra: dir }
@@ -593,7 +597,7 @@ impl<'a> Ctx<'a> {
                 }
             } else if f.kind == FeatureKind::SaltFlat {
                 h = flat;
-                gr.salt = if d < f.hw - 4 { 4 } else { 2 };
+                gr.salt = 1 + (3.0 * smoothstep((f.hw - d) as f32 / 24.0)).round() as i32;
             }
         }
         let s = self.surface_y;
@@ -638,7 +642,7 @@ impl<'a> Ctx<'a> {
             c.snow = 0;
         }
         if gr.salt > 0 {
-            c.soil = c.soil.max(gr.salt + 8 + 6);
+            c.soil = c.soil.max(gr.salt * 3 + 6);
         }
         c
     }

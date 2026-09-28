@@ -487,7 +487,8 @@ impl<'a, 'b> Fill<'a, 'b> {
             if d < g.salt {
                 return m.salt;
             }
-            if d < g.salt + 8 {
+            // Clay under the salt, thinner at the edges of the flat.
+            if d < g.salt * 3 {
                 return m.clay;
             }
             return m.sand;
