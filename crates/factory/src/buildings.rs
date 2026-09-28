@@ -161,6 +161,9 @@ pub struct Building {
     exhaust_blocked: bool,
     next_pull: u64,
     next_push: u64,
+    /// The room of a room machine controller (see `rooms`). `None` for other buildings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<Box<crate::rooms::RoomState>>,
 }
 
 impl Building {
@@ -189,6 +192,7 @@ impl Building {
             exhaust_blocked: false,
             next_pull: 0,
             next_push: 0,
+            room: crate::rooms::RoomState::for_kind(def),
         }
     }
 
@@ -246,6 +250,9 @@ pub struct Buildings {
     /// Seed for random numbers (byproduct chances).
     pub(crate) seed: u64,
     pub(crate) events: Vec<FactoryEvent>,
+    /// Goes up when a building is placed or removed. Rooms check their walls again when it
+    /// changes. Not saved.
+    pub(crate) layout: u64,
 }
 
 /// The saved form of `Buildings`. The tile maps, the workbench list and the counts of each
@@ -281,6 +288,7 @@ impl From<BuildingsSave> for Buildings {
             now: s.now,
             seed: s.seed,
             events: vec![],
+            layout: 0,
         };
         for i in 0..b.slots.len() {
             let generation = b.slots[i].generation;
@@ -316,6 +324,7 @@ impl Default for Buildings {
             now: 0,
             seed: 0x6275_696c_6469_6e67,
             events: vec![],
+            layout: 0,
         }
     }
 }
@@ -432,13 +441,16 @@ fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub: &Hub
     }
     match logic {
         Logic::Machine(m) => {
-            // Recipe inputs first, then the fuel slot.
-            let taken = m.recipe.map_or(0, |r| m.add_input(content.factory.recipe_def(r), item, n));
+            // Recipe inputs first, then the fuel slot. An item that is both (wood in a kiln that
+            // makes charcoal) fills both evenly (see `rooms::input_share`).
+            let first = crate::rooms::input_share(m, content, item, n);
+            let taken = m.recipe.map_or(0, |r| m.add_input(content.factory.recipe_def(r), item, first));
             let fuel = match (item, m.fuel.as_mut()) {
                 (ItemRef::Material(mat), Some(f)) if taken < n && is_fuel(content, mat) => f.add(mat, n - taken),
                 _ => 0,
             };
-            taken + fuel
+            let more = m.recipe.map_or(0, |r| m.add_input(content.factory.recipe_def(r), item, n - taken - fuel));
+            taken + fuel + more
         }
         Logic::Storage(inv) | Logic::Hub(inv) => n - inv.insert(content, item, n),
         Logic::Lab(lab) => match item {
@@ -1277,6 +1289,11 @@ impl Buildings {
         let power_scale = if electric { b.power_factor.max(0.0) as f64 } else { 1.0 };
         let too_hot = b.temperature > def.max_temp;
         let idle_w = power.map_or(0.0, |p| p.idle_w);
+        if b.room.is_some() {
+            // A room machine controller: its heat comes from the room.
+            b.busy |= crate::rooms::work(b, content, def, seed) == Status::Working;
+            return;
+        }
         match &mut b.logic {
             Logic::Machine(m) => {
                 let Some(r) = m.recipe else {
@@ -1704,6 +1721,7 @@ impl Buildings {
             hit_points: b.hit_points.ceil() as u32,
             max_hit_points: def.hit_points,
             ports: b.ports.iter().map(|p| PortView::new(def, p)).collect(),
+            room: None,
         };
         match &b.logic {
             Logic::Machine(m) => {

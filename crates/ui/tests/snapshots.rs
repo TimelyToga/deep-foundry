@@ -146,6 +146,24 @@ fn building_boiler() {
 }
 
 #[test]
+fn building_kiln() {
+    let mut model = playing();
+    model.building = Some(mock::kiln_view(&model.content));
+    let mut h = harness(HD, model, |_| {});
+    settle(&mut h);
+    h.snapshot_options("building_kiln_1920", &options());
+}
+
+#[test]
+fn building_kiln_with_a_hole() {
+    let mut model = playing();
+    model.building = Some(mock::kiln_hole_view(&model.content));
+    let mut h = harness(HD, model, |_| {});
+    settle(&mut h);
+    h.snapshot_options("building_kiln_hole_1920", &options());
+}
+
+#[test]
 fn building_electric_furnace() {
     let mut model = playing();
     model.building = Some(mock::electric_furnace_view(&model.content));

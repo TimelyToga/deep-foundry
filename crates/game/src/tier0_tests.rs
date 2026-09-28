@@ -7,7 +7,8 @@
 //! other Tier 0 goal has a script here and that the script completes it.
 //!
 //! It also checks the guide: before each goal, the guide shows that goal as the next one; at
-//! the end, the guide says what comes next ("Next: the kiln. It comes in a later update.").
+//! the end, the guide says what comes next ("Next: smelting in the crucible. It comes in a later
+//! update.").
 
 use super::*;
 use crate::demo::{self, Shape};
@@ -267,6 +268,87 @@ impl Player {
         }
     }
 
+    /// The kiln controller, if one is placed.
+    fn kiln(&self) -> Option<BuildingId> {
+        let kind = self.content.factory.building("kiln_controller")?;
+        self.host.factory.buildings.iter().find(|(_, b)| b.kind == kind).map(|(id, _)| id)
+    }
+
+    /// Build a kiln: fire the 24 clay bricks it needs in the campfire (8 at a time), craft the
+    /// controller, the hatch and 6 walls, and place them as a ring of 3 × 3 tiles right of the
+    /// start: the controller in the left wall, the hatch in the roof. The middle tile is the room.
+    fn build_kiln(&mut self) -> Result<(), String> {
+        while self.count("clay_brick") < 24 {
+            let n = (24 - self.count("clay_brick")).min(8);
+            let has_clay = move |p: &Player| p.count("clay") >= n * 16;
+            self.dig("clay", has_clay)?;
+            self.craft("raw_clay_brick", n)?;
+            self.fire_bricks(n)?;
+        }
+        self.dig("wood", |p| p.count("wood") >= 4)?;
+        self.craft("kiln_controller", 1)?;
+        self.craft("kiln_hatch", 1)?;
+        self.craft("clay_brick_wall", 6)?;
+        self.walk_to(self.start.x)?;
+        // The ring stands one tile above the highest ground under it.
+        let tile = foundry_core::TILE_SIZE;
+        let x0 = self.host.robot.rect().x1.div_euclid(tile) + 2;
+        let top = (x0 * tile..(x0 + 3) * tile).map(|x| crate::factory_host::ground_top(&self.sim, &self.content, x)).min().unwrap_or(0);
+        let y0 = top.div_euclid(tile) - 3;
+        for dy in 0..3 {
+            for dx in 0..3 {
+                let part = match (dx, dy) {
+                    (1, 1) => continue,
+                    (0, 1) => "kiln_controller",
+                    (1, 0) => "kiln_hatch",
+                    _ => "clay_brick_wall",
+                };
+                let p = self.content.factory.part(part).ok_or(format!("no part {part}"))?;
+                let kind = self.content.factory.building(part).ok_or(format!("no building {part}"))?;
+                self.apply(FactoryCommand::PickToCursor(p));
+                self.apply(FactoryCommand::Place(Placement::new(kind, TilePos::new(x0 + dx, y0 + dy), 0)));
+            }
+        }
+        self.apply(FactoryCommand::ClearCursor);
+        self.ticks(2);
+        let id = self.kiln().ok_or_else(|| format!("the controller was not placed; notices: {:?}", self.host.frame(&self.sim, 0).notices))?;
+        match self.host.factory.building_view(id).and_then(|v| v.room) {
+            Some(r) if r.valid => Ok(()),
+            r => Err(format!("the kiln room is not valid: {r:?}; notices: {:?}", self.host.frame(&self.sim, 0).notices)),
+        }
+    }
+
+    /// Make charcoal in the kiln: open the controller, choose the charcoal recipe, click the
+    /// wood tank (the wood goes into the input and the fuel slot), wait, and click the output.
+    fn make_charcoal(&mut self, n: u32) -> Result<(), String> {
+        self.dig("wood", |p| p.count("wood") >= 150)?;
+        self.walk_to(self.start.x)?;
+        let id = self.kiln().ok_or("no kiln")?;
+        let r = self.host.factory.buildings.get(id).ok_or("no kiln")?.cell_rect();
+        let id = self.open(CellPos::new(r.x0 + 3, r.y0 + 3))?;
+        let recipe = self.content.factory.recipe("charcoal").ok_or("no charcoal recipe")?;
+        let wood = ItemRef::Material(self.content.expect_material("wood"));
+        let tank = self.normal.frame.inventory.tanks.iter().position(|t| t.item == Some(wood)).ok_or("no wood tank")?;
+        self.ui(&[
+            UiAction::SetRecipe { building: id, recipe: Some(recipe) },
+            UiAction::ClickSlot { slot: SlotRef::Tank(tank), click: SlotClick::LEFT },
+        ]);
+        let before = self.count("charcoal");
+        for _ in 0..120 {
+            if self.host.factory.building_view(id).is_some_and(|v| v.outputs.first().is_some_and(|o| o.count >= n)) {
+                break;
+            }
+            self.ticks(30);
+        }
+        let output = foundry_ui::BuildingSlots::Output;
+        self.ui(&[UiAction::ClickSlot { slot: SlotRef::Building { building: id, group: output, index: 0 }, click: SlotClick::LEFT }]);
+        if self.count("charcoal") >= before + n {
+            Ok(())
+        } else {
+            Err(format!("the kiln made {} charcoal: {:?}", self.count("charcoal") - before, self.host.factory.building_view(id)))
+        }
+    }
+
     /// Play one goal with the player actions. `None`: there is no script for this goal.
     fn process_ore(&mut self, wash: bool) -> Result<(), String> {
         for i in 0..self.content.factory.techs.len() {
@@ -395,6 +477,8 @@ impl Player {
             "t0_stamp_mill" => self.process_ore(false),
             "t0_wash_ore" => self.process_ore(true),
             "t0_research_labs" => self.research("research"),
+            "t0_kiln" => self.build_kiln(),
+            "t0_charcoal" => self.make_charcoal(32),
             _ => return None,
         })
     }
@@ -447,7 +531,7 @@ fn tier0_goals_can_be_done() {
     // Every goal that the game can do is done: the guide says what comes next.
     let model = p.ui_guide();
     let NextGoal::Waiting(next) = next_goal(&model.guide) else { panic!("the guide should say what comes next") };
-    assert_eq!(next.next_text().unwrap(), "Next: the kiln. It comes in a later update.");
+    assert_eq!(next.next_text().unwrap(), "Next: smelting in the crucible. It comes in a later update.");
     println!("Tier 0: {} goals can be done, {} wait: {waiting:?}", goals.len() - waiting.len(), waiting.len());
 }
 

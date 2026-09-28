@@ -1,7 +1,8 @@
 //! The building window (Factorio entity GUI), with the player inventory next to it.
 //!
-//! Layout from top to bottom: status line, picture, Hub repair stage, recipe selector, input
-//! slots, progress, output slots, fuel slots, material buffers, power bar, temperature bar.
+//! Layout from top to bottom: status line, picture, room panel (room machines, `room.rs`), Hub
+//! repair stage, recipe selector, input slots, progress, output slots, fuel slots, material
+//! buffers, power bar, temperature bar.
 
 use super::inventory::{self, slot_click};
 use super::{Cx, window_id};
@@ -99,6 +100,9 @@ fn is_hub(cx: &Cx, b: &BuildingView) -> bool {
 
 fn content_height(ctx: &egui::Context, b: &BuildingView, recipes: &[RecipeId]) -> f32 {
     let mut h = STATUS_H + PICTURE_H + GAP;
+    if let Some(room) = &b.room {
+        h += super::room::height(ctx, room, WIDTH) + GAP;
+    }
     if let Some(m) = &b.milestone {
         h += milestone_h(ctx, m) + GAP;
     }
@@ -204,6 +208,13 @@ fn building_panel(ui: &mut Ui, cx: &mut Cx, st: &mut UiState, b: &BuildingView, 
         widgets::text_shadow(&p, pic.left_bottom() + vec2(8.0, -6.0), Align2::LEFT_BOTTOM, &format!("Speed ×{}", b.speed), font_bold(text::SMALL), color::TEXT_DIM);
     }
     y += PICTURE_H + GAP;
+
+    // Room machines: the room.
+    if let Some(room) = &b.room {
+        let panel = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), super::room::height(cx.ctx, room, r.width())));
+        super::room::panel(ui, cx, room, panel, def.map(|d| d.max_temp as f32).unwrap_or(1000.0));
+        y += panel.height() + GAP;
+    }
 
     // Hub: the next repair stage.
     if let Some(m) = &b.milestone {

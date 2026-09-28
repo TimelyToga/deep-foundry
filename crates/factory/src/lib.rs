@@ -30,6 +30,7 @@ pub mod placement;
 pub mod progress;
 pub mod progress_link;
 pub mod steam;
+pub mod rooms;
 pub mod transfer;
 pub mod views;
 
@@ -153,6 +154,7 @@ impl Factory {
             }
         }
         self.buildings.tick(&self.content, sim, &mut self.progress);
+        rooms::tick(&self.content, &mut self.buildings, sim);
         // The Hub may have delivered items in this tick.
         self.update_hub_rule();
         if !self.hand.is_idle() {
@@ -195,6 +197,7 @@ impl Factory {
         self.player.grow_tanks(inventory::PLAYER_TANKS, inventory::PLAYER_TANK_UNITS);
         self.buildings.upgrade_storage(&self.content);
         self.buildings.upgrade_machines(&self.content);
+        rooms::upgrade(&self.content, &mut self.buildings);
         self.update_hub_rule();
     }
 
@@ -360,6 +363,7 @@ impl Factory {
     pub fn building_view(&self, id: BuildingId) -> Option<BuildingView> {
         let mut v = self.buildings.view(&self.content, id)?;
         v.recipes.retain(|r| self.is_recipe_known(*r));
+        rooms::fill_view(&self.content, &self.buildings, &mut v);
         Some(v)
     }
 

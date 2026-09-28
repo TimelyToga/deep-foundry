@@ -13,6 +13,7 @@ pub(crate) mod menus;
 pub(crate) mod power;
 pub(crate) mod production;
 pub(crate) mod research;
+pub(crate) mod room;
 pub mod tank;
 
 use crate::action::{UiAction, WindowKind};
