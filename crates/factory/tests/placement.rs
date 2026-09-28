@@ -33,6 +33,10 @@ fn place_on_stone_ground_writes_the_body_and_takes_the_tiles() {
     let err = f.can_place(kind(&c, "test_crate"), TilePos::new(5, 11), 0, false, &sim).unwrap_err();
     assert!(matches!(err, PlaceError::TileTaken { by, .. } if by == id));
     assert_eq!(err.to_string(), "Tile taken by Test press");
+    // The body cells are marked as building cells (for explosions and the light).
+    let r = tile_cells(at, 2, 2);
+    assert!(sim.is_building_cell(CellPos::new(r.x0, r.y0)) && sim.is_building_cell(CellPos::new(r.x1 - 1, r.y1 - 1)));
+    assert!(!sim.is_building_cell(CellPos::new(r.x0 - 1, r.y0)), "the cell next to it is not");
     // The building still stands after some ticks.
     run(&mut f, &mut sim, 100);
     assert!(f.buildings.get(id).is_some());
@@ -123,6 +127,8 @@ fn remove_gives_back_the_item_and_the_contents() {
     assert_eq!(got[0], Stack { item: ItemRef::Part(c.factory.part("test_crate").unwrap()), count: 1 });
     assert_eq!(got[1], Stack { item: plate, count: 250 });
     assert_eq!(sim.count_material(tile_cells(at, 1, 1), mat(&c, "wood_block")), 0, "the body is air again");
+    let r = tile_cells(at, 1, 1);
+    assert!(!sim.is_building_cell(CellPos::new(r.x0, r.y0)), "the air is not a building cell");
     assert_eq!(f.remove(id, &mut sim), Err(RemoveError::NotFound));
     // The tile is free again, and a new building gets a new id.
     let id2 = f.place(crate_kind, at, 0, false, &mut sim).unwrap();
