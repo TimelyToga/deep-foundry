@@ -119,6 +119,7 @@ pub fn take_from_side(
 }
 
 /// Like take_from_side, but the accept function also receives the cell temperature.
+#[allow(clippy::too_many_arguments)]
 pub fn take_from_side_with_temperature(
     sim: &mut Simulation,
     content: &Content,

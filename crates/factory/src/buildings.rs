@@ -1009,6 +1009,7 @@ impl Buildings {
                 }
                 _ => continue,
             };
+            let mut hot_mold_input = None;
             let taken = match &mut b.logic {
                 Logic::Machine(m) => {
                     let recipe = m.recipe.map(|r| content.factory.recipe_def(r));
@@ -1023,12 +1024,15 @@ impl Buildings {
                     if !wanted && !fuel_room {
                         continue;
                     }
-                    cells::take_from_side(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, phases, |mat| {
+                    cells::take_from_side_with_temperature(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, phases, |mat, temperature| {
                         let item = ItemRef::Material(mat);
                         if !port_allows(def, &port, item) {
                             return false;
                         }
                         if recipe.is_some_and(|r| m.add_input(r, item, 1) == 1) {
+                            if def.kind == "mold" && content.materials.freeze[mat.index()].is_some() {
+                                hot_mold_input = Some(hot_mold_input.map_or(temperature, |t: i16| t.max(temperature)));
+                            }
                             return true;
                         }
                         is_fuel(content, mat) && m.fuel.as_mut().is_some_and(|f| f.add(mat, 1) == 1)
@@ -1072,6 +1076,12 @@ impl Buildings {
                 }
                 _ => 0,
             };
+            if taken > 0
+                && let Some(temperature) = hot_mold_input
+            {
+                crate::hot_metal::prime_mold(sim, def.body, b.cell_rect(), temperature);
+                b.temperature = b.temperature.max(temperature);
+            }
             if taken > 0 {
                 b.busy = true;
             }
@@ -1179,6 +1189,16 @@ impl Buildings {
                     return;
                 };
                 let recipe = content.factory.recipe_def(r);
+                if def.kind == "mold"
+                    && m.inputs.iter().zip(&recipe.inputs).all(|(have, need)| *have >= need.count)
+                    && let Some(freeze_at) = crate::hot_metal::casting_freeze_point(content, recipe)
+                    && b.temperature >= freeze_at
+                {
+                    b.heat = b.temperature;
+                    b.status = Status::TooHot;
+                    b.power_w = idle_w;
+                    return;
+                }
                 if b.exhaust_blocked {
                     b.status = Status::OutputBlocked;
                     b.power_w = idle_w;
@@ -1586,6 +1606,9 @@ impl Buildings {
                         Status::TooCold => {
                             format!("Too cold: {} °C, needs {} °C", b.heat, recipe.min_temp.unwrap_or(0))
                         }
+                        Status::TooHot if def.kind == "mold" => crate::hot_metal::casting_freeze_point(content, recipe)
+                            .map(|freeze_at| format!("Cooling: {} °C; mold needs below {} °C", b.temperature, freeze_at))
+                            .unwrap_or_else(|| format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp)),
                         Status::TooHot => format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp),
                         Status::NoFuel => match fuel_hint(content, def) {
                             Some(f) => format!("No fuel: put {} in the fuel slot", content.materials.names[f.index()].to_lowercase()),
@@ -1642,7 +1665,7 @@ impl Buildings {
             SteamState::None => {}
         }
         if let Some(reason) = &b.steam_reason { v.reason = reason.clone(); }
-        if b.status == Status::TooHot {
+        if b.status == Status::TooHot && def.kind != "mold" {
             v.reason = format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp);
         }
         Some(v)
