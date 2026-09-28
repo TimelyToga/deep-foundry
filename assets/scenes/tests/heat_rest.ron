@@ -1,0 +1,22 @@
+// Temperatures even out, and then nothing changes (the chunk goes to heat-sleep).
+// Picture (64 x 64): the whole world, with no air and no bedrock border. Copper at 100 °C with a
+// hot spot at 160 °C (x 28..36, y 28..36).
+Scene(
+    note: "A hot spot in copper spreads out; then the chunk rests.",
+    legend: {
+        "#c87533": (material: "copper_block", temperature: 100),
+        "#ffd070": (material: "copper_block", temperature: 160),
+    },
+    size: Chunks(1, 1),
+    at: (x: 0, y: 0),
+    bedrock_border: false,
+    ticks: 1000,
+    checks: [
+        // The spot spread out (it rests with a slope of at most 1 °C per cell).
+        Temperature(rect: (x: 28, y: 28, w: 8, h: 8), max: 125),
+        Temperature(rect: (x: 0, y: 0, w: 8, h: 8), min: 100, max: 104, of: Each),
+        // No heat is made or lost: the mean stays near 100 + 60 × 64 / 4096 = 100.9 °C.
+        Temperature(min: 100, max: 102),
+        NoChange(last_ticks: 100),
+    ],
+)

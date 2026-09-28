@@ -29,8 +29,17 @@ struct Outcome {
 }
 
 fn scene(name: &'static str, width_chunks: i32, height_chunks: i32, liquids: &[&str]) -> Scene {
-    let content = Arc::new(Content::load_default().unwrap());
+    let mut content = Content::load_default().unwrap();
     let kept = liquids.iter().map(|n| content.expect_material(n)).collect::<Vec<_>>();
+    // These tests check movement only. The kept liquids start at 20 °C like the rest of the world
+    // and get no phase changes here, so heat has no work (hot lava on the cold floor would cool
+    // for a long time and freeze into stone).
+    for m in &kept {
+        let (t, i) = (&mut content.materials, m.index());
+        t.temperature[i] = foundry_core::DEFAULT_TEMPERATURE;
+        (t.melt[i], t.freeze[i], t.boil[i], t.condense[i]) = (None, None, None, None);
+    }
+    let content = Arc::new(content);
     let sim = Simulation::new(content, SimConfig::finite(width_chunks, height_chunks, 4));
     Scene { name, sim, kept, sheet: vec![] }
 }
