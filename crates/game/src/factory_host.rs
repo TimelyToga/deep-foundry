@@ -381,12 +381,25 @@ pub fn side_file(world: &Path) -> PathBuf {
     world.with_extension(GAME_EXTENSION)
 }
 
+/// Buttons that went down in an input since the last tick. The main thread can send a press and
+/// its release before one tick runs (a short tap, or a late tick). The tick then still acts on
+/// the press, for one tick.
+#[derive(Debug, Clone, Copy, Default)]
+struct Taps {
+    pub jump: bool,
+    pub dig: bool,
+    pub scan: bool,
+    pub spray: Option<MaterialId>,
+}
+
 /// The factory, the robot and what the UI asked to see.
 pub struct FactoryHost {
     pub factory: Factory,
     pub robot: Robot,
     pub hotbar: Vec<Option<ItemRef>>,
     input: PlayerInput,
+    /// Presses since the last tick (see `Taps`).
+    taps: Taps,
     /// The building whose window is open.
     open: Option<BuildingId>,
     research_open: bool,
@@ -432,6 +445,7 @@ impl FactoryHost {
             robot,
             hotbar,
             input: PlayerInput::default(),
+            taps: Taps::default(),
             open: None,
             research_open: false,
             guide_open: false,
@@ -924,14 +938,18 @@ impl FactoryHost {
     pub fn tick(&mut self, sim: &mut Simulation) {
         self.ticks += 1;
         let content = self.factory.content.clone();
-        self.robot.step(self.input.movement, sim);
+        // The held buttons, plus the presses since the last tick (see `Taps`).
+        let taps = std::mem::take(&mut self.taps);
+        let movement = MoveInput { jump: self.input.movement.jump || taps.jump, ..self.input.movement };
+        let (dig, scan, spray) = (self.input.dig || taps.dig, self.input.scan || taps.scan, self.input.spray.or(taps.spray));
+        self.robot.step(movement, sim);
         self.update_anchor(sim);
         self.factory.player_pos = Some(self.robot.center_cell());
 
         self.digging = false;
         self.dug_material = None;
         self.spraying = false;
-        if self.input.dig {
+        if dig {
             let r = tools::dig(&mut self.factory, sim, &self.robot, self.input.aim);
             self.digging = r.dug > 0;
             if r.tank_full.is_some() {
@@ -950,10 +968,10 @@ impl FactoryHost {
                 }
             }
         }
-        if let Some(m) = self.input.spray {
+        if let Some(m) = spray {
             self.spraying = tools::spray(&mut self.factory, sim, &self.robot, self.input.aim, m) > 0;
         }
-        if self.input.scan {
+        if scan {
             self.scan(sim);
         } else {
             self.last_scan = None;
