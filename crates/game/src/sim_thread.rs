@@ -158,7 +158,7 @@ fn run(
             perf.mark();
             let frame = host.as_mut().map(|h| h.frame(&sim, snapshot.tick));
             perf.mark();
-            perf.snapshot(&snapshot, ticked, workers.parallel());
+            perf.snapshot(&snapshot, ticked, workers.on_crew());
             if let Some(f) = frame {
                 factory.publish(f);
             }

@@ -262,7 +262,7 @@ fn measure_big(mut workers: Option<&mut Workers>) {
         match workers.as_mut() {
             Some(w) => {
                 w.tick(sim.stats().awake_chunks, || sim.advance());
-                crew += w.parallel() as u32;
+                crew += w.on_crew() as u32;
             }
             None => {
                 sim.advance();
