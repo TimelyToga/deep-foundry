@@ -38,7 +38,7 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
             return;
         }
         let inv_rect = Rect::from_min_size(f.content.min, inv);
-        inventory::panel(ui, cx, inv_rect, "");
+        inventory::panel(ui, cx, st, inv_rect, "");
         let craft_rect = Rect::from_min_size(pos2(inv_rect.right() + 16.0, f.content.top()), vec2(CRAFT_W, craft_h));
         crafting_panel(ui, cx, st, craft_rect);
     });
@@ -62,7 +62,7 @@ fn show_sandbox(cx: &mut Cx, st: &mut UiState) {
             return;
         }
         let inv_rect = Rect::from_min_size(f.content.min, inv);
-        inventory::panel(ui, cx, inv_rect, "");
+        inventory::panel(ui, cx, st, inv_rect, "");
         let brush = Rect::from_min_size(pos2(inv_rect.right() + 16.0, f.content.top()), vec2(BRUSH_W, content.y));
         brush_panel(ui, cx, brush);
     });

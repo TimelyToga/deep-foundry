@@ -19,8 +19,8 @@ use foundry_content::{Content, ItemRef, Layer, Stack};
 use foundry_core::{BuildingId, BuildingKindId, CellPos, CellRect, Command, MaterialId, PartId, RecipeId, TILE_SIZE, TechId, TilePos};
 use foundry_factory::progress::{Discovered, LockReason, MilestoneView, ResearchStatus, TechView};
 use foundry_factory::{
-    BuildingView, Click, CraftJobView, Factory, FactoryEvent, FactorySave, GoalView, Guide, InvTarget, InventoryView, PartStack,
-    PortView, ProgressEvent, Status,
+    BuildingView, Click, CraftJobView, Factory, FactoryEvent, FactorySave, GoalView, Guide, InventoryView, PartStack, PortView,
+    ProgressEvent, RobotSlot, Status,
 };
 use foundry_sim::{AnchorId, Simulation};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,10 @@ pub const TECH_PERIOD: u64 = 10;
 const NOTICE_REPEAT: u64 = 120;
 /// Quickbar slots.
 pub const HOTBAR_SLOTS: usize = 20;
+/// The HUD shows "Tanks full" for this many ticks after the dig tool found no room.
+const TANKS_FULL_TICKS: u64 = 90;
+/// The message when the dig tool finds no room in the tanks.
+pub use foundry_ui::TANKS_FULL;
 /// Start inventory of a new game: materials in the tank, then parts.
 const START_MATERIALS: [(&str, u32); 1] = [("wood", 30)];
 const START_PARTS: [(&str, u32); 1] = [("crate", 1)];
@@ -139,6 +143,8 @@ pub enum FactoryCommand {
     /// Which windows are open, so the host sends their views.
     Windows { research: bool, guide: bool },
     SetHotbar { index: usize, item: Option<ItemRef> },
+    /// Delete the material in this robot tank (the trash button).
+    EmptyTank(usize),
 }
 
 /// The ghost of the building in the hand, with the placement check.
@@ -178,6 +184,8 @@ pub struct FactoryFrame {
     pub robot: Option<Robot>,
     pub digging: bool,
     pub spraying: bool,
+    /// The dig tool found no room in the tanks a moment ago.
+    pub tanks_full: bool,
     /// The aim point of the tools, moved into reach.
     pub aim: CellPos,
     /// °C of the cell at the middle of the robot.
@@ -199,6 +207,8 @@ pub struct FactoryFrame {
     pub building: Option<BuildingView>,
     /// The next Hub repair stage, when the open building is the Hub.
     pub milestone: Option<MilestoneView>,
+    /// The Hub repair stages after the next one, when the open building is the Hub.
+    pub later_milestones: Vec<MilestoneView>,
     pub ghost: Option<GhostView>,
     pub hover: Option<HoverBuilding>,
     pub marks: Vec<BuildingMark>,
@@ -299,6 +309,8 @@ pub struct FactoryHost {
     ticks: u64,
     digging: bool,
     spraying: bool,
+    /// The dig tool found no room in the tanks; the HUD says so until this tick.
+    tanks_full_until: u64,
     last_placed: Option<(BuildingKindId, CellRect)>,
     /// Buildings that were already put on the quickbar once (as in Factorio, a building goes to a
     /// free quickbar slot the first time the player gets it).
@@ -325,6 +337,7 @@ impl FactoryHost {
             ticks: 0,
             digging: false,
             spraying: false,
+            tanks_full_until: 0,
             last_placed: None,
             on_quickbar: Default::default(),
             ghost_check: None,
@@ -534,6 +547,14 @@ impl FactoryHost {
                     *slot = item;
                 }
             }
+            FactoryCommand::EmptyTank(tank) => {
+                let content = self.factory.content.clone();
+                let material = self.factory.player.tanks.get(tank).and_then(|t| t.material);
+                let n = self.factory.empty_tank(tank);
+                if let Some(m) = material.filter(|_| n > 0) {
+                    self.notice(format!("Emptied a tank: {n} units of {} are gone", content.materials.names[m.index()]));
+                }
+            }
         }
     }
 
@@ -546,70 +567,39 @@ impl FactoryHost {
     fn click(&mut self, target: SlotTarget, click: Click) {
         let content = self.factory.content.clone();
         let open = self.open;
-        let open_storage = open.filter(|id| self.factory.buildings.inventory(*id).is_some());
-        match target {
-            SlotTarget::Inventory(slot) => {
-                let moving = matches!(click, Click::Shift | Click::Ctrl);
-                match (moving, open, open_storage) {
-                    (true, Some(_), Some(id)) => {
-                        self.factory.click(InvTarget::Player, slot, click, Some(InvTarget::Building(id)));
-                    }
-                    (true, Some(id), None) => {
-                        // A machine: put the stack (or all of this part) into its input buffers.
-                        let Some(Some(s)) = self.factory.player.slots.get(slot).copied() else { return };
-                        let item = ItemRef::Part(s.part);
-                        let count = if click == Click::Ctrl { self.factory.player.count(item) } else { s.count };
-                        if self.factory.insert_from_player(id, item, count) == 0 {
-                            self.notice(format!("{} does not take {}", self.building_name(id), content.item_name(item)));
-                        }
-                    }
-                    _ => {
-                        self.factory.click(InvTarget::Player, slot, click, None);
-                    }
+        // The rules are in `foundry_factory::transfer`.
+        let result = match target {
+            SlotTarget::Inventory(slot) => self.factory.click_robot_slot(RobotSlot::Part(slot), click, open),
+            SlotTarget::Tank(tank) => self.factory.click_robot_slot(RobotSlot::Tank(tank), click, open),
+            SlotTarget::Building { id, group: SlotGroup::Input, index } if self.factory.buildings.inventory(id).is_some() => {
+                self.factory.click_storage_slot(id, index, click)
+            }
+            SlotTarget::Building { .. } => Ok(false),
+        };
+        if let Err(text) = result {
+            self.notice(text);
+        }
+        // A machine window: the hand into an input slot, or an output slot to the robot.
+        let SlotTarget::Building { id, group, index } = target else { return };
+        if self.factory.buildings.inventory(id).is_some() {
+            return;
+        }
+        let Some(view) = self.factory.building_view(id) else { return };
+        match group {
+            SlotGroup::Input => {
+                let Some(buf) = view.inputs.get(index) else { return };
+                self.cursor_into_building(id, buf.item, click);
+            }
+            SlotGroup::Output => {
+                let Some(buf) = view.outputs.get(index) else { return };
+                let room = self.factory.player.room_for(&content, buf.item, buf.count);
+                let n = self.factory.buildings.take_output(&content, id, buf.item, room);
+                self.factory.player.insert(&content, buf.item, n);
+                if n < buf.count && room < buf.count {
+                    self.notice("The inventory is full");
                 }
             }
-            SlotTarget::Tank(tank) => {
-                // Shift or Ctrl click moves the material into the open building. Other clicks
-                // only select the material for the spray tool (the main thread does that).
-                let (Some(id), Click::Shift | Click::Ctrl) = (open, click) else { return };
-                let Some(t) = self.factory.player.tanks.get(tank).copied() else { return };
-                let Some(m) = t.material else { return };
-                let moved = if let Some(inv) = self.factory.buildings.inventory_mut(id) {
-                    let n = self.factory.player.shift_click_tank(&content, tank, inv);
-                    self.factory.buildings.wake(id);
-                    n
-                } else {
-                    self.factory.insert_from_player(id, ItemRef::Material(m), t.units)
-                };
-                if moved == 0 {
-                    self.notice(format!("{} does not take {}", self.building_name(id), content.materials.names[m.index()]));
-                }
-            }
-            SlotTarget::Building { id, group, index } => {
-                if self.factory.buildings.inventory(id).is_some() {
-                    if group == SlotGroup::Input {
-                        self.factory.click(InvTarget::Building(id), index, click, Some(InvTarget::Player));
-                    }
-                    return;
-                }
-                let Some(view) = self.factory.building_view(id) else { return };
-                match group {
-                    SlotGroup::Input => {
-                        let Some(buf) = view.inputs.get(index) else { return };
-                        self.cursor_into_building(id, buf.item, click);
-                    }
-                    SlotGroup::Output => {
-                        let Some(buf) = view.outputs.get(index) else { return };
-                        let room = self.factory.player.room_for(&content, buf.item, buf.count);
-                        let n = self.factory.buildings.take_output(&content, id, buf.item, room);
-                        self.factory.player.insert(&content, buf.item, n);
-                        if n < buf.count && room < buf.count {
-                            self.notice("The inventory is full");
-                        }
-                    }
-                    SlotGroup::Fuel => {}
-                }
-            }
+            SlotGroup::Fuel => {}
         }
     }
 
@@ -627,14 +617,6 @@ impl FactoryHost {
         let n = self.factory.buildings.insert(&content, id, item, n);
         let left = c.count - n;
         self.factory.cursor = (left > 0).then_some(PartStack::new(c.part, left));
-    }
-
-    fn building_name(&self, id: BuildingId) -> String {
-        self.factory
-            .buildings
-            .get(id)
-            .map(|b| self.factory.content.factory.building_def(b.kind).name.clone())
-            .unwrap_or_default()
     }
 
     fn start_research(&mut self, tech: TechId) {
@@ -831,11 +813,14 @@ impl FactoryHost {
         if self.input.dig {
             let r = tools::dig(&mut self.factory, sim, &self.robot, self.input.aim);
             self.digging = r.dug > 0;
+            if r.tank_full.is_some() {
+                self.tanks_full_until = self.ticks + TANKS_FULL_TICKS;
+            }
             if r.dug == 0 {
                 if let Some(m) = r.too_hard {
                     self.notice(format!("{} is too hard: research a better drill head", content.materials.names[m.index()]));
-                } else if let Some(m) = r.tank_full {
-                    self.notice(format!("The tank is full: no room for {}", content.materials.names[m.index()]));
+                } else if r.tank_full.is_some() {
+                    self.notice(TANKS_FULL);
                 } else if let Some(m) = r.too_hot {
                     self.notice(format!("{} is too hot for the tank", content.materials.names[m.index()]));
                 }
@@ -901,10 +886,9 @@ impl FactoryHost {
         if building.is_none() {
             self.open = None;
         }
-        let milestone = building
-            .as_ref()
-            .filter(|b| content.factory.building_def(b.kind).kind == "hub")
-            .and_then(|_| f.progress.milestone_view(&content));
+        let is_hub = building.as_ref().is_some_and(|b| content.factory.building_def(b.kind).kind == "hub");
+        let milestone = if is_hub { f.progress.milestone_view(&content) } else { None };
+        let later_milestones = if is_hub { f.progress.later_milestone_views(&content) } else { vec![] };
         let techs = (self.research_open && tick.is_multiple_of(TECH_PERIOD)).then(|| f.progress.tech_views(&content));
         let guide = self.guide_due.then(|| f.guide_view());
         self.guide_due = false;
@@ -961,6 +945,7 @@ impl FactoryHost {
             robot: Some(self.robot),
             digging: self.digging,
             spraying: self.spraying,
+            tanks_full: self.ticks < self.tanks_full_until,
             aim: tools::clamp_aim(&self.robot, self.input.aim),
             robot_temperature: sim.cell(self.robot.center_cell()).temperature as f32,
             inventory: f.player_view(),
@@ -975,6 +960,7 @@ impl FactoryHost {
             guide,
             building,
             milestone,
+            later_milestones,
             ghost,
             hover,
             marks,

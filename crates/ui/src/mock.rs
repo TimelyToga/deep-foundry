@@ -148,7 +148,12 @@ fn sum_series(parts: &[&TimeSeries]) -> TimeSeries {
 }
 
 fn slot(stack: Option<Stack>, filter: Option<ItemRef>) -> BuildingSlot {
-    BuildingSlot { stack, filter }
+    BuildingSlot { stack, filter, capacity: 0 }
+}
+
+/// A storage slot with some units of a material.
+fn material_slot(c: &Content, id: &str, units: u32, capacity: u32) -> BuildingSlot {
+    BuildingSlot { stack: Some(Stack { item: ItemRef::Material(c.expect_material(id)), count: units }), filter: None, capacity }
 }
 
 /// A steam assembler that makes vacuum tubes.
@@ -178,6 +183,7 @@ pub fn steam_assembler_view(c: &Content) -> BuildingView {
         power: None,
         temperature: Some(96.0),
         milestone: None,
+        later_stages: vec![],
     }
 }
 
@@ -201,6 +207,7 @@ pub fn boiler_view(c: &Content) -> BuildingView {
         power: None,
         temperature: Some(212.0),
         milestone: None,
+        later_stages: vec![],
     }
 }
 
@@ -225,29 +232,30 @@ pub fn electric_furnace_view(c: &Content) -> BuildingView {
         power: Some(PowerUse { use_w: 7740.0, max_w: 9000.0, voltage: Voltage::Lv, network_voltage: Some(Voltage::Lv), satisfaction: 0.86 }),
         temperature: Some(1140.0),
         milestone: None,
+        later_stages: vec![],
     }
 }
 
-/// The Hub with its 16 slots, 4 tanks and the first repair stage (from the real milestone data).
+/// The Hub with its 16 slots and the first repair stage (from the real milestone data). It holds
+/// items for the next stage and copper wire for the stage after it.
 pub fn hub_view(c: &Content) -> BuildingView {
+    let view = |m: &foundry_content::Milestone, delivered: &dyn Fn(usize, u32) -> u32| MilestoneView {
+        stage: m.stage,
+        name: m.name.clone(),
+        description: m.description.clone(),
+        items: m.deliver.iter().enumerate().map(|(i, s)| Delivery { item: s.item, delivered: delivered(i, s.count), need: s.count }).collect(),
+    };
+    // Delivered so far: all of the first item, some of the second, a few of the rest.
     let milestone = c.factory.milestones.first().map(|m| {
-        // Delivered so far: all of the first item, some of the second, a few of the rest.
-        let delivered = |i: usize, need: u32| match i {
+        view(m, &|i, need| match i {
             0 => need,
             1 => need * 3 / 5,
             _ => need * 9 / 25,
-        };
-        MilestoneView {
-            stage: m.stage,
-            name: m.name.clone(),
-            description: m.description.clone(),
-            items: m.deliver.iter().enumerate().map(|(i, s)| Delivery { item: s.item, delivered: delivered(i, s.count), need: s.count }).collect(),
-        }
+        })
     });
-    let mut inputs = vec![slot(st(c, "bronze_gear", 12), None), slot(st(c, "clay_brick", 36), None), slot(st(c, "tin_plate", 20), None)];
+    let later_stages = c.factory.milestones.iter().skip(1).map(|m| view(m, &|_, _| 0)).collect();
+    let mut inputs = vec![slot(st(c, "bronze_gear", 12), None), slot(st(c, "clay_brick", 36), None), slot(st(c, "copper_wire", 120), None)];
     inputs.resize(16, BuildingSlot::default());
-    let m = |id: &str| Some(c.expect_material(id));
-    let tank = |i: usize, material, units| MaterialBuffer { label: format!("Tank {i}"), material, units, capacity: 1000, output: false };
     BuildingView {
         id: BuildingId { index: 1, generation: 1 },
         kind: bk(c, "hub"),
@@ -257,12 +265,44 @@ pub fn hub_view(c: &Content) -> BuildingView {
         inputs,
         outputs: vec![],
         fuel: vec![],
-        buffers: vec![tank(1, m("clay"), 420), tank(2, m("charcoal"), 150), tank(3, None, 0), tank(4, None, 0)],
+        buffers: vec![],
         progress: 0.0,
         speed: 1.0,
         power: None,
         temperature: None,
         milestone,
+        later_stages,
+    }
+}
+
+/// A crate with bulk materials and parts: each of its 8 slots holds a part stack or up to 6,000
+/// units of one material.
+pub fn crate_view(c: &Content) -> BuildingView {
+    let mut inputs = vec![
+        material_slot(c, "clay", 6000, 6000),
+        material_slot(c, "clay", 2300, 6000),
+        material_slot(c, "sand", 4100, 6000),
+        material_slot(c, "raw_malachite", 950, 6000),
+        slot(st(c, "raw_clay_brick", 24), None),
+        slot(st(c, "workbench", 1), None),
+    ];
+    inputs.resize(8, BuildingSlot::default());
+    BuildingView {
+        id: BuildingId { index: 9, generation: 1 },
+        kind: bk(c, "crate"),
+        status: MachineStatus::Idle,
+        status_detail: String::new(),
+        recipe: None,
+        inputs,
+        outputs: vec![],
+        fuel: vec![],
+        buffers: vec![],
+        progress: 0.0,
+        speed: 1.0,
+        power: None,
+        temperature: Some(21.0),
+        milestone: None,
+        later_stages: vec![],
     }
 }
 
@@ -317,6 +357,7 @@ pub fn guide_goals() -> Vec<GuideGoal> {
         done,
         count,
         reward_points,
+        waits_for: None,
     };
     vec![
         g("t0_dig", 0, "Dig", "Hold the left mouse button to dig. The cells you dig go into your material tank. Dig 100 units of sand.", true, Some((100, 100)), 1),
@@ -324,6 +365,10 @@ pub fn guide_goals() -> Vec<GuideGoal> {
         g("t0_wood", 0, "Cut a tree", "Dig the trunk of a tree to get wood. Wood is fuel, and your first buildings are made of it. Collect 60 units of wood.", true, Some((60, 60)), 1),
         g("t0_workbench", 0, "Build a workbench", "Open the crafting menu and make a workbench from 20 wood. Place it. Hand crafting is 2 times faster near a workbench.", true, Some((1, 1)), 1),
         g("t0_research_bronze", 0, "Research Bronze", "Open the tech tree and research Bronze. It needs scans of copper ore and tin ore.", true, None, 1),
+        GuideGoal {
+            waits_for: Some("heat: fire and kilns do not work yet".into()),
+            ..g("t0_kiln", 0, "Build a kiln", "Build a closed room from clay brick walls. Put a kiln controller in the wall.", false, Some((0, 1)), 2)
+        },
         g("t0_kits", 0, "Make research kits", "A bronze research kit needs a bronze gear, a clay brick and a tin plate. Put the kits in your labs.", false, Some((6, 10)), 1),
         g(
             "t0_hub",
@@ -478,12 +523,14 @@ pub fn model(content: Arc<Content>) -> UiModel {
     ];
     inventory.resize(60, None);
     let m = |id: &str| Some(c.expect_material(id));
-    let tank = vec![
-        TankSlot { material: m("clay"), units: 1240, capacity: 2000 },
-        TankSlot { material: m("raw_malachite"), units: 860, capacity: 2000 },
-        TankSlot { material: m("charcoal"), units: 1999, capacity: 2000 },
-        TankSlot { material: m("wood"), units: 420, capacity: 2000 },
+    let mut tank = vec![
+        TankSlot { material: m("clay"), units: 4240, capacity: 6000 },
+        TankSlot { material: m("raw_malachite"), units: 860, capacity: 6000 },
+        TankSlot { material: m("charcoal"), units: 5990, capacity: 6000 },
+        TankSlot { material: m("wood"), units: 420, capacity: 6000 },
+        TankSlot { material: m("sand"), units: 2600, capacity: 6000 },
     ];
+    tank.resize(8, TankSlot { material: None, units: 0, capacity: 6000 });
     let hb = |id: &str| Some(it(c, id));
     let hotbar = vec![
         hb("wood_belt"),
@@ -516,6 +563,8 @@ pub fn model(content: Arc<Content>) -> UiModel {
         heat_limit: 80.0,
         inventory,
         tank,
+        spray: m("clay"),
+        tanks_full: false,
         hand: None,
         hotbar,
         selected_hotbar: Some(0),
@@ -648,6 +697,12 @@ impl MockGame {
             UiAction::CloseWindow(_) => {}
             UiAction::OpenPowerNetwork(_) => md.power = Some(power_view(&content)),
             UiAction::ClickSlot { slot, click } => self.click_slot(slot, click),
+            UiAction::EmptyTank(i) => {
+                if let Some(t) = md.player.tank.get_mut(i) {
+                    t.material = None;
+                    t.units = 0;
+                }
+            }
             UiAction::SelectHotbar(i) => {
                 if md.player.hotbar.get(i).copied().flatten().is_some() {
                     md.player.selected_hotbar = Some(i);
@@ -1048,7 +1103,11 @@ mod tests {
         assert!(m.guide.iter().any(|g| g.done) && m.guide.iter().any(|g| !g.done));
         let hub = hub_view(&c);
         assert_eq!(hub.inputs.len(), 16);
-        assert_eq!(hub.buffers.len(), 4);
+        assert!(hub.buffers.is_empty());
+        assert!(!hub.later_stages.is_empty());
+        let crate_ = crate_view(&c);
+        assert_eq!(crate_.inputs.len(), 8);
+        assert!(crate_.inputs.iter().any(|s| s.capacity > 0));
         assert_eq!(hub.milestone.as_ref().map(|m| m.stage), Some(1));
         let mut g = MockGame::new(c.clone());
         let drill = tid(&c, "bronze_drill_head");

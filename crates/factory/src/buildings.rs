@@ -15,7 +15,7 @@
 
 use crate::cells::{self, is_fluid, phase};
 use crate::geometry::{Transform, neighbor_tile, opposite, tiles_to_cells};
-use crate::inventory::Inventory;
+use crate::inventory::{Inventory, TankRule};
 use crate::logistics::{Belt, Hopper, Lab, steps_in_tick};
 use crate::machines::{self, Conditions, Machine, RecipeError, Status, output_stack};
 use crate::progress_link::{self, ProgressLink};
@@ -25,6 +25,7 @@ use foundry_core::{BuildingId, BuildingKindId, CellPos, MaterialId, PartId, Reci
 use foundry_sim::Simulation;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 /// Ticks between two damage checks of one building.
 pub const DAMAGE_PERIOD: u64 = 32;
@@ -58,19 +59,21 @@ impl Logic {
     /// The logic for a building type, from its data `kind`.
     /// Any kind with recipe categories (`crafts`) that is not listed here is a crafter.
     pub fn for_kind(def: &BuildingDef) -> Logic {
-        let inv = |slots: f32, tanks: f32| {
-            Inventory::new(
-                def.param("slots", slots).max(0.0) as usize,
-                def.param("tanks", tanks).max(0.0) as usize,
-                def.param("capacity", 1000.0).max(0.0) as u32,
-            )
-        };
+        let slots = def.param("slots", 8.0).max(0.0) as usize;
+        let capacity = def.param("capacity", 1000.0).max(0.0) as u32;
         match def.kind.as_str() {
             "workbench" => Logic::Workbench,
-            "storage" => Logic::Storage(inv(8.0, 0.0)),
+            // A storage with slots (a crate): each slot holds a part stack or bulk material.
+            // A storage with only tanks (a barrel) keeps liquids.
+            "storage" if slots > 0 => Logic::Storage(Inventory::mixed(slots, capacity, TankRule::Bulk)),
+            "storage" => {
+                let mut inv = Inventory::new(0, def.param("tanks", 1.0).max(0.0) as usize, capacity);
+                inv.takes = TankRule::Liquid;
+                Logic::Storage(inv)
+            }
             "hopper" => Logic::Hopper(Hopper::new(def.param("capacity", 64.0).max(1.0) as u32)),
             "belt" => Logic::Belt(Belt::default()),
-            "hub" => Logic::Hub(inv(16.0, 4.0)),
+            "hub" => Logic::Hub(Inventory::mixed(def.param("slots", 16.0).max(0.0) as usize, capacity, TankRule::Any)),
             "lab" => Logic::Lab(Lab::new(def.param("kit_buffer", 10.0) as u32)),
             _ if !def.crafts.is_empty() => Logic::Machine(Machine::new(def.param("buffer_crafts", 2.0) as u32)),
             _ => Logic::Passive,
@@ -218,9 +221,8 @@ pub struct Buildings {
     pub(crate) workbenches: BTreeSet<u32>,
     /// Placed buildings of each type.
     pub(crate) kind_counts: HashMap<BuildingKindId, u32>,
-    /// The last Hub repair stage that is done (0: none), from the progression at the start of
-    /// each tick. The Hub takes only items that a later stage asks for. Not saved.
-    pub(crate) hub_stage: u8,
+    /// What the Hub takes, from the progression at the start of each tick. Not saved.
+    pub(crate) hub: HubRule,
     /// Ticks run.
     pub(crate) now: u64,
     /// Seed for random numbers (byproduct chances).
@@ -257,7 +259,7 @@ impl From<BuildingsSave> for Buildings {
             timers: s.timers,
             workbenches: BTreeSet::new(),
             kind_counts: HashMap::new(),
-            hub_stage: 0,
+            hub: HubRule::default(),
             now: s.now,
             seed: s.seed,
             events: vec![],
@@ -292,7 +294,7 @@ impl Default for Buildings {
             timers: BTreeSet::new(),
             workbenches: BTreeSet::new(),
             kind_counts: HashMap::new(),
-            hub_stage: 0,
+            hub: HubRule::default(),
             now: 0,
             seed: 0x6275_696c_6469_6e67,
             events: vec![],
@@ -340,15 +342,39 @@ pub fn is_deliverable(content: &Content, item: ItemRef, done_stage: u8) -> bool 
     content.factory.milestones.iter().any(|m| m.stage > done_stage && m.deliver.iter().any(|s| s.item == item))
 }
 
-/// How many of an item a building can take now. `hub_stage`: see `Buildings::hub_stage`.
-fn accept_room(logic: &Logic, content: &Content, item: ItemRef, hub_stage: u8) -> u32 {
+/// What the Hub takes: only items that a repair stage after `stage` needs, and (when `need` is
+/// known) only as many as the stages still need.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HubRule {
+    /// The last Hub repair stage that is done (0: none).
+    pub stage: u8,
+    /// What the stages still need: the rest of the next stage and all of the later stages.
+    /// `None`: not known yet (before the first tick); then only the stage number counts.
+    pub need: Option<Arc<Vec<Stack>>>,
+}
+
+impl HubRule {
+    /// How many more of `item` the Hub takes, when it holds `held` of it.
+    fn room(&self, content: &Content, item: ItemRef, held: u32) -> u32 {
+        if !is_deliverable(content, item, self.stage) {
+            return 0;
+        }
+        match &self.need {
+            Some(list) => list.iter().filter(|s| s.item == item).map(|s| s.count).sum::<u32>().saturating_sub(held),
+            None => u32::MAX,
+        }
+    }
+}
+
+/// How many of an item a building can take now.
+fn accept_room(logic: &Logic, content: &Content, item: ItemRef, hub: &HubRule) -> u32 {
     match logic {
         Logic::Machine(m) => match m.recipe {
             Some(r) => m.input_room(content.factory.recipe_def(r), item),
             None => 0,
         },
         Logic::Storage(inv) => inv.room_for(content, item, u32::MAX),
-        Logic::Hub(inv) if is_deliverable(content, item, hub_stage) => inv.room_for(content, item, u32::MAX),
+        Logic::Hub(inv) => hub.room(content, item, inv.count(item)).min(inv.room_for(content, item, u32::MAX)),
         Logic::Lab(lab) => match item {
             ItemRef::Part(p) if is_kit(content, p) => lab.kit_limit.saturating_sub(lab.kits.count(p)),
             _ => 0,
@@ -364,8 +390,8 @@ fn accept_room(logic: &Logic, content: &Content, item: ItemRef, hub_stage: u8) -
 }
 
 /// Give up to `n` of an item to a building. Returns the count taken.
-fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub_stage: u8) -> u32 {
-    let n = n.min(accept_room(logic, content, item, hub_stage));
+fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub: &HubRule) -> u32 {
+    let n = n.min(accept_room(logic, content, item, hub));
     if n == 0 {
         return 0;
     }
@@ -653,9 +679,9 @@ impl Buildings {
     /// Put up to `count` of an item into a building (machine input, storage, hub, lab kits,
     /// hopper). Returns the count taken.
     pub fn insert(&mut self, content: &Content, id: BuildingId, item: ItemRef, count: u32) -> u32 {
-        let hub_stage = self.hub_stage;
+        let hub = self.hub.clone();
         let Some(b) = self.get_mut(id) else { return 0 };
-        let n = accept(&mut b.logic, content, item, count, hub_stage);
+        let n = accept(&mut b.logic, content, item, count, &hub);
         if n > 0 {
             self.wake(id);
         }
@@ -664,7 +690,7 @@ impl Buildings {
 
     /// How many of an item a building can take now.
     pub fn room_for(&self, content: &Content, id: BuildingId, item: ItemRef) -> u32 {
-        self.get(id).map_or(0, |b| accept_room(&b.logic, content, item, self.hub_stage))
+        self.get(id).map_or(0, |b| accept_room(&b.logic, content, item, &self.hub))
     }
 
     /// The finished products in a machine (outputs and byproducts that are not empty).
@@ -732,6 +758,66 @@ impl Buildings {
         }
     }
 
+    /// How many of an item the storage buildings (crates and barrels) hold.
+    pub fn stored_count(&self, item: ItemRef) -> u32 {
+        self.slots
+            .iter()
+            .filter_map(|s| s.building.as_ref())
+            .map(|b| match &b.logic {
+                Logic::Storage(inv) => inv.count(item),
+                _ => 0,
+            })
+            .fold(0u32, u32::saturating_add)
+    }
+
+    /// True if the building is the Hub.
+    pub fn is_hub(&self, id: BuildingId) -> bool {
+        self.get(id).is_some_and(|b| matches!(b.logic, Logic::Hub(_)))
+    }
+
+    /// Set what the Hub takes (the game does this at the start of each tick; the factory also
+    /// after a load).
+    pub fn set_hub_rule(&mut self, rule: HubRule) {
+        self.hub = rule;
+    }
+
+    /// After a load: give storage buildings and the Hub the slots and tanks that their data
+    /// asks for now, and keep their items. (Older saves have crates with part slots only.)
+    /// A building keeps its old inventory if its items do not fit into the new one.
+    pub fn upgrade_storage(&mut self, content: &Content) {
+        for slot in &mut self.slots {
+            let Some(b) = slot.building.as_mut() else { continue };
+            let (Logic::Storage(old) | Logic::Hub(old)) = &mut b.logic else { continue };
+            let (Logic::Storage(mut new) | Logic::Hub(mut new)) = Logic::for_kind(content.factory.building_def(b.kind)) else { continue };
+            let same_shape = old.mixed == new.mixed
+                && old.takes == new.takes
+                && old.slots.len() == new.slots.len()
+                && old.tanks.len() == new.tanks.len()
+                && old.tanks.iter().zip(&new.tanks).all(|(a, n)| a.capacity == n.capacity);
+            if same_shape {
+                continue;
+            }
+            // Part stacks keep their slot when they can.
+            let mut fits = true;
+            for (i, s) in old.slots.iter().enumerate() {
+                let Some(s) = *s else { continue };
+                if i < new.slots.len() && new.slots[i].is_none() {
+                    new.slots[i] = Some(s);
+                } else {
+                    fits &= new.insert(content, ItemRef::Part(s.part), s.count) == 0;
+                }
+            }
+            for t in &old.tanks {
+                if let Some(m) = t.material {
+                    fits &= new.insert(content, ItemRef::Material(m), t.units) == 0;
+                }
+            }
+            if fits {
+                *old = new;
+            }
+        }
+    }
+
     /// Set the material filter of a hopper (`None`: all powders).
     pub fn set_hopper_filter(&mut self, id: BuildingId, filter: Option<MaterialId>) -> bool {
         let Some(b) = self.get_mut(id) else { return false };
@@ -761,7 +847,7 @@ impl Buildings {
     /// Run all building logic for one tick.
     pub fn tick<P: ProgressLink>(&mut self, content: &Content, sim: &mut Simulation, progress: &mut P) {
         self.now += 1;
-        self.hub_stage = progress.hub_stage();
+        self.hub = HubRule { stage: progress.hub_stage(), need: progress.hub_need(content).map(Arc::new) };
         let now = self.now;
         while let Some(&(t, i)) = self.timers.first() {
             if t > now {
@@ -800,7 +886,7 @@ impl Buildings {
 
     /// Ports take cells from the world, and part inputs take parts from a storage next to them.
     fn take_inputs(&mut self, i: u32, content: &Content, sim: &mut Simulation) {
-        let (now, hub_stage) = (self.now, self.hub_stage);
+        let (now, hub) = (self.now, self.hub.clone());
         let Some(b) = self.at_index_mut(i) else { return };
         let def = content.factory.building_def(b.kind);
         let mut pull_ports: Vec<PlacedPort> = vec![];
@@ -852,7 +938,7 @@ impl Buildings {
                     cells::take_from_side(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, phases, |mat| {
                         let item = ItemRef::Material(mat);
                         port_allows(def, &port, item)
-                            && is_deliverable(content, item, hub_stage)
+                            && hub.room(content, item, inv.count(item)) > 0
                             && inv.insert(content, item, 1) == 0
                     })
                 }
@@ -874,7 +960,7 @@ impl Buildings {
 
     /// A part input takes one part from a storage building on the other side of the port.
     fn pull_part(&mut self, i: u32, port: PlacedPort, content: &Content) -> bool {
-        let hub_stage = self.hub_stage;
+        let hub = self.hub.clone();
         let Some(&nid) = self.front.get(&neighbor_tile(port.tile, port.side)) else { return false };
         let Some((me, src)) = two_mut(&mut self.slots, i as usize, nid.index as usize) else { return false };
         let Logic::Storage(inv) = &mut src.logic else { return false };
@@ -882,7 +968,7 @@ impl Buildings {
         for s in 0..inv.slots.len() {
             let Some(st) = inv.slots[s] else { continue };
             let item = ItemRef::Part(st.part);
-            if !port_allows(def, &port, item) || accept(&mut me.logic, content, item, 1, hub_stage) == 0 {
+            if !port_allows(def, &port, item) || accept(&mut me.logic, content, item, 1, &hub) == 0 {
                 continue;
             }
             let left = st.count - 1;
@@ -895,7 +981,7 @@ impl Buildings {
     /// A part output gives one part to the building on the other side of the port, if that
     /// building is a storage or has a part input facing this port.
     fn push_part(&mut self, i: u32, port: PlacedPort, content: &Content) -> Option<u32> {
-        let hub_stage = self.hub_stage;
+        let hub = self.hub.clone();
         let n_tile = neighbor_tile(port.tile, port.side);
         let &nid = self.front.get(&n_tile)?;
         let (me, dst) = two_mut(&mut self.slots, i as usize, nid.index as usize)?;
@@ -917,7 +1003,7 @@ impl Buildings {
                     if m.outputs[j] == 0 || !matches!(item, ItemRef::Part(_)) || !passes(item) {
                         continue;
                     }
-                    if accept(&mut dst.logic, content, item, 1, hub_stage) == 1 {
+                    if accept(&mut dst.logic, content, item, 1, &hub) == 1 {
                         m.outputs[j] -= 1;
                         return Some(nid.index);
                     }
@@ -927,7 +1013,7 @@ impl Buildings {
                 for s in 0..inv.slots.len() {
                     let Some(st) = inv.slots[s] else { continue };
                     let item = ItemRef::Part(st.part);
-                    if passes(item) && accept(&mut dst.logic, content, item, 1, hub_stage) == 1 {
+                    if passes(item) && accept(&mut dst.logic, content, item, 1, &hub) == 1 {
                         inv.remove(item, 1);
                         return Some(nid.index);
                     }

@@ -109,6 +109,9 @@ pub struct GuideGoal {
     pub count: Option<(u32, u32)>,
     /// Discovery points the goal gives when it is done.
     pub reward_points: u32,
+    /// The game cannot do this goal yet: what it still needs (for example "heat"). The guide
+    /// shows the goal gray, and the HUD tracker skips it.
+    pub waits_for: Option<String>,
 }
 
 /// The next repair stage of the Hub, for the Hub window.
@@ -194,6 +197,10 @@ pub struct PlayerView {
     pub inventory: Vec<Option<Stack>>,
     /// Material tank slots.
     pub tank: Vec<TankSlot>,
+    /// The material the spray tool puts out now (right mouse button). The HUD marks its tanks.
+    pub spray: Option<MaterialId>,
+    /// The dig tool found no room in the tanks a moment ago. The HUD says what to do.
+    pub tanks_full: bool,
     /// The stack that the mouse holds (the "hand" or cursor stack), as in Factorio.
     pub hand: Option<Stack>,
     /// Quickbar slots: 20 slots (2 rows of 10). A slot holds an item type, not items.
@@ -210,7 +217,7 @@ pub struct PlayerView {
 impl PlayerView {
     /// The capacity of the first tank slot (the stack size of bulk materials in the hand).
     pub fn tank_capacity(&self) -> u32 {
-        self.tank.first().map(|t| t.capacity).unwrap_or(2000)
+        self.tank.first().map(|t| t.capacity).unwrap_or(6000)
     }
 }
 
@@ -393,6 +400,8 @@ pub enum BuildingSlots {
 pub struct BuildingSlot {
     pub stack: Option<Stack>,
     pub filter: Option<ItemRef>,
+    /// For a material in a storage slot: the units the slot holds (for the fill bar). 0 for parts.
+    pub capacity: u32,
 }
 
 /// A material buffer (tank) inside a building, for example the water of a boiler.
@@ -497,6 +506,8 @@ pub struct BuildingView {
     pub temperature: Option<f32>,
     /// The Hub: the next repair stage and what it still needs. `None` for other buildings.
     pub milestone: Option<MilestoneView>,
+    /// The Hub: the repair stages after the next one and what each needs.
+    pub later_stages: Vec<MilestoneView>,
 }
 
 impl BuildingView {

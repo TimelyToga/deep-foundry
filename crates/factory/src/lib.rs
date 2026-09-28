@@ -27,12 +27,14 @@ pub mod machines;
 pub mod placement;
 pub mod progress;
 pub mod progress_link;
+pub mod transfer;
 pub mod views;
 
 pub use buildings::{Building, Buildings, FactoryEvent, Logic};
 pub use crafting::{CraftError, CraftJobView, HandCrafting};
 pub use geometry::Transform;
-pub use inventory::{Click, Inventory, InventoryView, PartStack, SlotView, Tank, TankView};
+pub use inventory::{Click, Inventory, InventoryView, PartStack, Place, PlaceView, SlotView, Tank, TankRule, TankView};
+pub use transfer::RobotSlot;
 pub use machines::{RecipeError, Status};
 pub use placement::{PlaceError, RemoveError};
 pub use progress::{GoalView, Guide, GuideState, Progress, ProgressEvent};
@@ -104,7 +106,7 @@ pub struct FactorySave {
 
 impl Factory {
     pub fn new(content: Arc<Content>) -> Self {
-        Self {
+        let mut f = Self {
             buildings: buildings::Buildings::new(&content),
             progress: progress::Progress::new(&content),
             player: Inventory::player(),
@@ -114,7 +116,16 @@ impl Factory {
             guide: Arc::new(Guide::default()),
             last_research: None,
             content,
-        }
+        };
+        f.update_hub_rule();
+        f
+    }
+
+    /// Tell the buildings what the Hub takes now (the Hub repair stages and what they still
+    /// need).
+    fn update_hub_rule(&mut self) {
+        let need = self.progress.hub_need(&self.content);
+        self.buildings.set_hub_rule(buildings::HubRule { stage: self.progress.stage(), need: Some(Arc::new(need)) });
     }
 
     /// Run one tick. Call it before `Simulation::advance` in the same tick.
@@ -130,6 +141,8 @@ impl Factory {
             }
         }
         self.buildings.tick(&self.content, sim, &mut self.progress);
+        // The Hub may have delivered items in this tick.
+        self.update_hub_rule();
         if !self.hand.is_idle() {
             let speed = self.player_pos.map_or(1.0, |p| self.buildings.hand_speed(&self.content, p));
             self.hand.tick(&self.content, &mut self.player, speed);
@@ -161,6 +174,26 @@ impl Factory {
         self.cursor = save.cursor;
         self.hand = save.hand;
         self.player_pos = save.player_pos;
+        // Older saves have smaller robot tanks and crates for parts only.
+        self.player.grow_tanks(inventory::PLAYER_TANKS, inventory::PLAYER_TANK_UNITS);
+        self.buildings.upgrade_storage(&self.content);
+        self.update_hub_rule();
+    }
+
+    /// The robot dug one cell of `material`: one unit of its broken form (see
+    /// `broken_into` in the data) goes into the tanks. The first dig of a material discovers it,
+    /// the same as a scan. Returns false and takes nothing when the tanks have no room.
+    pub fn take_dug_cell(&mut self, material: MaterialId) -> bool {
+        let broken = self.content.materials.broken_into.get(material.index()).copied().unwrap_or(material);
+        let item = ItemRef::Material(broken);
+        if self.player.room_for(&self.content, item, 1) == 0 {
+            return false;
+        }
+        self.player.insert(&self.content, item, 1);
+        if !self.progress.is_material_discovered(material) {
+            self.scan(material);
+        }
+        true
     }
 
     /// Check if a building can be placed with its top-left tile at `at`.
@@ -389,13 +422,14 @@ struct GuideCounts<'a> {
 }
 
 impl GuideState for GuideCounts<'_> {
-    /// Items in the player's inventory (slots and material tanks) and on the cursor.
+    /// Items in the player's inventory (slots and material tanks), on the cursor, and in storage
+    /// buildings (crates and barrels).
     fn item_count(&self, item: ItemRef) -> u32 {
         let held = match (self.cursor, item) {
             (Some(c), ItemRef::Part(p)) if c.part == p => c.count,
             _ => 0,
         };
-        self.player.count(item).saturating_add(held)
+        self.player.count(item).saturating_add(held).saturating_add(self.buildings.stored_count(item))
     }
 
     fn building_count(&self, kind: BuildingKindId) -> u32 {

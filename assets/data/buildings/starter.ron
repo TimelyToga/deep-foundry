@@ -171,7 +171,7 @@
     Building(
         id: "barrel",
         name: "Barrel",
-        description: "Holds 500 units of liquid.",
+        description: "Holds 500 units of one liquid.",
         kind: "storage",
         size: (1, 1),
         tier: 0,
@@ -183,14 +183,16 @@
     Building(
         id: "crate",
         name: "Crate",
-        description: "Holds 8 stacks of parts.",
+        description: "Holds 8 slots. A slot holds a stack of parts or 6,000 units of a powder or a solid. Liquids go in a barrel.",
         kind: "storage",
         size: (1, 1),
         tier: 0,
         body: "wood_block",
         category: Some("logistics"),
         ports: [(kind: PartIn, tile: (0, 0), side: Up), (kind: PartOut, tile: (0, 0), side: Down)],
-        params: {"slots": 8.0, "tanks": 0.0, "capacity": 1000.0},
+        // Slots for parts or bulk material; "capacity" is the units of material in one slot
+        // (one full robot tank, see inventory::PLAYER_TANK_UNITS).
+        params: {"slots": 8.0, "capacity": 6000.0},
     ),
     Building(
         id: "hub",
@@ -202,7 +204,8 @@
         body: "steel_block",
         hit_points: 1000,
         ports: [(kind: PartIn, tile: (1, 2), side: Down), (kind: BulkIn, tile: (0, 2), side: Down)],
-        params: {"slots": 16.0, "tanks": 4.0, "capacity": 1000.0},
+        // 16 slots for deliveries. A slot holds a stack of parts or "capacity" units of a material.
+        params: {"slots": 16.0, "capacity": 1000.0},
     ),
 
     // --- Tier 1: Steam ---
