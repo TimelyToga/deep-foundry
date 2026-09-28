@@ -1,13 +1,14 @@
 // Generated content scene: freeze of molten_tin into tin_block at 222C.
-// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
 Scene(
     note: "molten_tin freezes into tin_block.",
     legend: {
         "#ffd9a0": (material: "molten_tin", temperature: 142),
         "#6b6a70": "stone",
     },
-    ticks: 300,
+    ticks: 3,
     checks: [
-        Total(material: "tin_block", min: 1, pending: true),
+        Total(material: "tin_block", min: 1),
     ],
 )

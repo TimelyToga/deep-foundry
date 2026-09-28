@@ -1,5 +1,6 @@
 // Generated content scene: reaction #9 (pig_iron_block + water).
-// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+// A touches B. The reaction is slow (a small chance each tick, or a timer), so the scene runs
+// 3000 ticks.
 Scene(
     note: "Reaction: pig_iron_block + water.",
     legend: {
@@ -7,8 +8,8 @@ Scene(
         "#2f6fd6": "water",
         "#6b6a70": "stone",
     },
-    ticks: 300,
+    ticks: 3000,
     checks: [
-        Total(material: "rust", min: 1, pending: true),
+        Total(material: "rust", min: 1),
     ],
 )

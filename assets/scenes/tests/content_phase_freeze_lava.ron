@@ -1,13 +1,14 @@
 // Generated content scene: freeze of lava into stone at 800C.
-// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
 Scene(
     note: "lava freezes into stone.",
     legend: {
         "#ff5a1a": (material: "lava", temperature: 720),
         "#6b6a70": "stone",
     },
-    ticks: 300,
+    ticks: 3,
     checks: [
-        Total(material: "stone", min: 1, pending: true),
+        Total(material: "stone", min: 1),
     ],
 )

@@ -1,5 +1,5 @@
 // Generated content scene: reaction #33 (molten_copper + water).
-// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+// A touches B.
 Scene(
     note: "Reaction: molten_copper + water.",
     legend: {
@@ -9,7 +9,7 @@ Scene(
     },
     ticks: 300,
     checks: [
-        Total(material: "copper_block", min: 1, pending: true),
-        Total(material: "steam", min: 1, pending: true),
+        Total(material: "copper_block", min: 1),
+        Total(material: "steam", min: 1),
     ],
 )
