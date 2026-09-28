@@ -316,6 +316,16 @@ pub fn tick(content: &Content, buildings: &mut Buildings, sim: &mut Simulation) 
     }
 }
 
+/// After a load: controllers from an older save get their room state.
+pub fn upgrade(content: &Content, buildings: &mut Buildings) {
+    for slot in &mut buildings.slots {
+        let Some(b) = slot.building.as_mut() else { continue };
+        if b.room.is_none() {
+            b.room = RoomState::for_kind(content.factory.building_def(b.kind));
+        }
+    }
+}
+
 /// Add the room part to a building window.
 pub fn fill_view(content: &Content, buildings: &Buildings, v: &mut BuildingView) {
     let Some(b) = buildings.get(v.id) else { return };

@@ -195,6 +195,7 @@ impl Factory {
         self.player.grow_tanks(inventory::PLAYER_TANKS, inventory::PLAYER_TANK_UNITS);
         self.buildings.upgrade_storage(&self.content);
         self.buildings.upgrade_machines(&self.content);
+        rooms::upgrade(&self.content, &mut self.buildings);
         self.update_hub_rule();
     }
 

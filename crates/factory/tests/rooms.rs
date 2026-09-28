@@ -115,6 +115,22 @@ fn a_kiln_fires_clay_bricks_with_charcoal() {
 }
 
 #[test]
+fn a_saved_kiln_keeps_its_fuel_and_finds_its_room_again() {
+    let (c, mut sim, mut f) = setup();
+    let id = kiln_plan().build(&mut f, &mut sim);
+    f.set_recipe(id, c.factory.recipe("clay_brick")).unwrap();
+    f.buildings.insert(&c, id, item(&c, "charcoal"), 300);
+    run(&mut f, &mut sim, 2);
+    let text = ron::to_string(&f.save()).unwrap();
+    let mut g = Factory::new(c.clone());
+    g.load(ron::from_str(&text).unwrap());
+    assert!(!g.buildings.room(id).unwrap().is_valid(), "the shape is not saved");
+    run(&mut g, &mut sim, 1);
+    assert!(g.buildings.room(id).unwrap().is_valid());
+    assert_eq!(g.building_view(id).unwrap().fuel.unwrap().units, 300);
+}
+
+#[test]
 fn an_open_room_shows_the_hole() {
     let (_c, mut sim, mut f) = setup();
     let mut plan = kiln_plan();
