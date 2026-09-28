@@ -1,5 +1,9 @@
 # Deep Foundry
 
+[![Deep Foundry gameplay at 60 fps: click to watch the video](docs/media/demo-preview.webp)](docs/media/deep-foundry-demo.mp4)
+
+[Watch the gameplay video (20 seconds, 60 fps)](docs/media/deep-foundry-demo.mp4)
+
 A 2D side-view factory game in a world where every cell moves. Sand falls, water flows, fire burns and metal melts, as in Noita. On top of that you build a factory and work through a long production tree, as in Factorio and GregTech.
 
 Written in Rust with wgpu and egui.
