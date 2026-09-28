@@ -226,3 +226,56 @@ fn dig_perf() {
     println!("--- dig_perf: cell update on the pools of sim_pool.rs ---");
     sim_pool::run(|w| measure(Some(w)));
 }
+
+/// A large flood and a falling sand column (as the `ocean` and `pile_collapse` benchmarks of
+/// `foundry_headless`), so that many chunks are awake.
+fn big_scene(content: &Arc<Content>) -> foundry_sim::Simulation {
+    let mut sim = foundry_sim::Simulation::new(content.clone(), foundry_sim::SimConfig::finite(32, 16, 1));
+    let h = sim.size_cells().1;
+    let (water, sand) = (content.expect_material("water"), content.expect_material("sand"));
+    for y in 320..h - 2 {
+        for x in 2..1400 {
+            sim.set_cell(CellPos::new(x, y), water, None);
+        }
+    }
+    for y in 64..h - 2 {
+        for x in 1612..1812 {
+            sim.set_cell(CellPos::new(x, y), sand, None);
+        }
+    }
+    sim
+}
+
+/// Run 300 ticks of the big scene and print the tick times. `workers`: as in `measure`.
+fn measure_big(mut workers: Option<&mut Workers>) {
+    let content = Arc::new(Content::load_default().unwrap());
+    let mut sim = big_scene(&content);
+    let mut ticks = Samples::new("cell update");
+    let (mut awake, mut crew) = (0u64, 0u32);
+    for _ in 0..300 {
+        let t = Instant::now();
+        match workers.as_mut() {
+            Some(w) => {
+                w.tick(sim.stats().awake_chunks, || sim.advance());
+                crew += w.parallel() as u32;
+            }
+            None => {
+                sim.advance();
+            }
+        }
+        ticks.add(t);
+        awake += sim.stats().awake_chunks as u64;
+    }
+    println!("  300 ticks, {} awake chunks per tick on average, {crew} ticks on the crew pool", awake / 300);
+    ticks.print();
+}
+
+/// Large scenes (the sandbox) must still use many threads and must not be slower.
+#[test]
+#[ignore = "a measure, not a check: run it with --release --ignored --nocapture"]
+fn big_scene_perf() {
+    println!("--- big_scene_perf: cell update called from outside the pool (as before sim_pool.rs) ---");
+    measure_big(None);
+    println!("--- big_scene_perf: cell update on the pools of sim_pool.rs ---");
+    sim_pool::run(|w| measure_big(Some(w)));
+}
