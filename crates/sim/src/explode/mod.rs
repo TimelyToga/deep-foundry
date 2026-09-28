@@ -61,7 +61,7 @@ mod tests;
 pub const MAX_RADIUS: f32 = 48.0;
 /// Cells that explosions may look at in one tick (ray steps plus cells in the square around each
 /// explosion). The explosion that goes over it still runs; the next ones wait.
-pub const WORK_PER_TICK: usize = 200_000;
+pub const WORK_PER_TICK: usize = 60_000;
 /// Most explosions in the queue. Explosion events that come when the queue is full are dropped.
 pub const MAX_QUEUED: usize = 4096;
 /// The core is the part of the radius where heat, fire and burning happen.
