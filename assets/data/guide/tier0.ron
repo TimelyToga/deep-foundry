@@ -99,8 +99,8 @@
     Goal(
         id: "t0_sluice",
         tier: 0,
-        title: "Build a sluice",
-        text: "Press {key:character}. In the Production tab, click Sluice (20 wood). Place it on the ground near you. Later, water that flows through a sluice washes ore. Washing does not work in this version yet.",
+        title: "Wash ore",
+        text: "Place a sluice beside your ore line. Feed it crushed ore at the side marked In and water at the top inlet. Washed ore and sand tailings leave at the marked outlets; connect the powder outlet to a crate.",
         condition: Build("sluice", 1),
         reward_points: 1,
     ),
@@ -181,10 +181,9 @@
         id: "t0_stamp_mill",
         tier: 0,
         title: "Crush ore",
-        text: "Build a stamp mill. Water must flow through its wheel. It crushes ore. Crushed ore gives more metal than raw ore.",
+        text: "Build a stamp mill. Drop raw ore onto its top input, then carry the crushed ore from its lower output on a belt to the sluice.",
         condition: Build("stamp_mill", 1),
         reward_points: 1,
-        waits_for: Some("bronze gears (smelting)"),
     ),
     Goal(
         id: "t0_lab",

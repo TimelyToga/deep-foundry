@@ -133,22 +133,29 @@
     Building(
         id: "stamp_mill",
         name: "Stamp mill",
-        description: "A crusher that water drives. Water must flow through its wheel.",
+        description: "Crushes ore powder at a steady rate. Connect a hopper and a belt to its marked ports.",
         kind: "stamp_mill",
         size: (2, 3),
         tier: 0,
         body: "wood_block",
+        ports: [(kind: BulkIn, tile: (0, 0), side: Up), (kind: BulkOut, tile: (1, 2), side: Down)],
         crafts: ["crushing"],
         speed: 0.5,
     ),
     Building(
         id: "sluice",
         name: "Sluice",
-        description: "Water flows through it. Heavy powder stays. Light powder washes out.",
+        description: "Water flows through it. It washes crushed ore and carries light waste away.",
         kind: "sluice",
         size: (3, 1),
         tier: 0,
         body: "wood_block",
+        ports: [
+            (kind: BulkIn, tile: (0, 0), side: Left),
+            (kind: FluidIn, tile: (0, 0), side: Up),
+            (kind: BulkOut, tile: (2, 0), side: Right),
+            (kind: FluidOut, tile: (2, 0), side: Down),
+        ],
         crafts: ["washing"],
     ),
     Building(
@@ -195,7 +202,11 @@
         tier: 0,
         body: "wood_block",
         category: Some("logistics"),
-        ports: [(kind: PartIn, tile: (0, 0), side: Up), (kind: PartOut, tile: (0, 0), side: Down)],
+        ports: [
+            (kind: PartIn, tile: (0, 0), side: Up),
+            (kind: PartOut, tile: (0, 0), side: Down),
+            (kind: BulkIn, tile: (0, 0), side: Left),
+        ],
         // Slots for parts or bulk material; "capacity" is the units of material in one slot
         // (one full robot tank, see inventory::PLAYER_TANK_UNITS).
         params: {"slots": 8.0, "capacity": 6000.0},
