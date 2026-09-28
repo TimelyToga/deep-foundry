@@ -77,6 +77,8 @@
         heat_capacity: 1.0,
         conductivity: 0.3,
         boil: Some((at: 100, into: "steam")),
+        // Ice melts at 0 °C: the gap of 2 °C stops a cell from changing back and forth.
+        freeze: Some((at: -2, into: "ice")),
         drag_limit: 1700,
         tags: ["conductive"],
     ),
