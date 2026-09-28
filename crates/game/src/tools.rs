@@ -38,6 +38,8 @@ pub const DIG_HARDNESS: [u8; 5] = [30, 60, 100, 150, 250];
 pub struct DigResult {
     /// Cells dug.
     pub dug: u32,
+    /// The material of the first dug cell (for the picture: dug cells fly to the tool).
+    pub material: Option<MaterialId>,
     /// A material that was too hard for the drill head.
     pub too_hard: Option<MaterialId>,
     /// A material that did not fit into the tanks.
@@ -128,6 +130,7 @@ pub fn dig(factory: &mut Factory, sim: &mut Simulation, robot: &Robot, aim: Cell
         sim.set_cell(p, MaterialId::AIR, None);
         budget -= cost;
         out.dug += 1;
+        out.material.get_or_insert(m);
     }
     out
 }

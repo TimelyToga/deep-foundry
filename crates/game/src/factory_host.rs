@@ -262,6 +262,8 @@ pub struct FactoryFrame {
     pub tick: u64,
     pub robot: Option<Robot>,
     pub digging: bool,
+    /// The material the tool dug in the last tick.
+    pub dug_material: Option<MaterialId>,
     pub spraying: bool,
     /// The dig tool found no room in the tanks a moment ago.
     pub tanks_full: bool,
@@ -396,6 +398,7 @@ pub struct FactoryHost {
     shown: HashMap<String, u64>,
     ticks: u64,
     digging: bool,
+    dug_material: Option<MaterialId>,
     spraying: bool,
     /// The dig tool found no room in the tanks; the HUD says so until this tick.
     tanks_full_until: u64,
@@ -435,6 +438,7 @@ impl FactoryHost {
             shown: HashMap::new(),
             ticks: 0,
             digging: false,
+            dug_material: None,
             spraying: false,
             tanks_full_until: 0,
             last_placed: None,
@@ -916,6 +920,7 @@ impl FactoryHost {
         self.factory.player_pos = Some(self.robot.center_cell());
 
         self.digging = false;
+        self.dug_material = None;
         self.spraying = false;
         if self.input.dig {
             let r = tools::dig(&mut self.factory, sim, &self.robot, self.input.aim);
@@ -923,6 +928,7 @@ impl FactoryHost {
             if r.tank_full.is_some() {
                 self.tanks_full_until = self.ticks + TANKS_FULL_TICKS;
             }
+            self.dug_material = r.material;
             if r.dug == 0 {
                 // Full tanks first: the player can do something about it now.
                 if r.tank_full.is_some() {
@@ -1072,6 +1078,7 @@ impl FactoryHost {
             tick,
             robot: Some(self.robot),
             digging: self.digging,
+            dug_material: self.dug_material,
             spraying: self.spraying,
             tanks_full: self.ticks < self.tanks_full_until,
             aim: tools::clamp_aim(&self.robot, self.input.aim),
@@ -1113,7 +1120,7 @@ fn mark_output(f: &Factory, id: BuildingId, b: &foundry_factory::Building) -> Op
 }
 
 /// The top of the ground in a column: the first cell from the top that stops the robot.
-fn ground_top(sim: &Simulation, content: &Content, x: i32) -> i32 {
+pub(crate) fn ground_top(sim: &Simulation, content: &Content, x: i32) -> i32 {
     let (_, h) = sim.size_cells();
     (0..h).find(|&y| crate::player::blocks(content, sim.cell(CellPos::new(x, y)).material)).unwrap_or(h)
 }

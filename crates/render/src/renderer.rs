@@ -8,6 +8,7 @@ use crate::passes::background::BackgroundPass;
 use crate::passes::scale::ScalePass;
 use crate::passes::world::{WORLD_COLOR_FORMAT, WorldInputs, WorldPass};
 use crate::shaders;
+use crate::sprite::{Sprite, SpritePass};
 use foundry_content::Content;
 use foundry_core::{CHUNK_AREA, CHUNK_SIZE, CellRect, CellTexel, ChunkPos, Snapshot};
 use glam::{IVec2, UVec2};
@@ -68,6 +69,8 @@ pub struct Renderer {
     world_pass: WorldPass,
     background_pass: BackgroundPass,
     scale_pass: ScalePass,
+    /// Sprites (the robot) drawn into the world texture after the cells (`sprite.rs`).
+    sprite_pass: SpritePass,
 
     /// Reused staging memory for chunk uploads.
     belt: wgpu::util::StagingBelt,
@@ -202,6 +205,7 @@ impl Renderer {
         );
         let background_pass = BackgroundPass::new(device, &frame_layout, target_format, dir);
         let scale_pass = ScalePass::new(device, &frame_layout, target_format, dir);
+        let sprite_pass = SpritePass::new(device, &frame_layout, WORLD_COLOR_FORMAT, dir);
 
         Self {
             device: device.clone(),
@@ -217,6 +221,7 @@ impl Renderer {
             world_pass,
             background_pass,
             scale_pass,
+            sprite_pass,
             // 4 MiB holds 128 chunks.
             belt: wgpu::util::StagingBelt::new(device.clone(), 4 << 20),
             instances: Vec::with_capacity(capacity as usize),
@@ -259,6 +264,16 @@ impl Renderer {
     pub fn set_time(&mut self, seconds: f64) {
         // Wrap so that f32 keeps enough precision.
         self.time = (seconds % 3600.0) as f32;
+    }
+
+    /// Set the sprite sheet: RGBA8 texels (sRGB colors, not premultiplied), row by row from the top.
+    pub fn set_sprite_sheet(&mut self, width: u32, height: u32, rgba: &[u8]) {
+        self.sprite_pass.set_sheet(&self.device, &self.queue, width, height, rgba);
+    }
+
+    /// The sprites to draw from now on (until the next call). See `sprite.rs`.
+    pub fn set_sprites(&mut self, sprites: &[Sprite]) {
+        self.sprite_pass.set_sprites(&self.device, &self.queue, sprites);
     }
 
     /// Forget all chunk data, for example for a new world.
@@ -387,6 +402,7 @@ impl Renderer {
         // 1. World pass: cells into the offscreen texture.
         let world_view = &self.world_target.as_ref().expect("made by ensure_world_target").view;
         self.world_pass.draw(encoder, world_view, &self.frame_bind_group, used.to_array(), count);
+        self.sprite_pass.draw(encoder, world_view, &self.frame_bind_group, used.to_array());
 
         // 2. Background and 3. scale pass, into the target.
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
