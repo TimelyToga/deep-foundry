@@ -20,6 +20,7 @@ use crate::controls::{CameraControl, MAX_ZOOM, Stroke};
 use crate::debug_panel::{self, DebugAction, StatsView};
 use crate::demo;
 use crate::factory_host::{FactoryCommand, FactoryHost, GameCommand};
+use crate::construct::Mods;
 use crate::normal::NormalMode;
 use crate::overlay;
 use crate::saves::{self, SaveMeta};
@@ -116,6 +117,8 @@ struct Held {
     up: bool,
     down: bool,
     shift: bool,
+    /// Ctrl, or Cmd on macOS.
+    ctrl: bool,
     paint: bool,
     erase: bool,
     drag: bool,
@@ -377,7 +380,7 @@ impl Game {
             UiState::Research => self.ui.ui.open_window(WindowKind::Research),
             UiState::Guide => self.ui.ui.open_window(WindowKind::Guide),
             // Screens for `--screenshot`. In the window they start the normal game.
-            UiState::Building | UiState::Ghost | UiState::Hub => {}
+            UiState::Building | UiState::Ghost | UiState::Hub | UiState::GhostRed | UiState::Drag | UiState::Alt | UiState::Remove => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {
@@ -406,7 +409,10 @@ impl Game {
                 }
                 self.key(code, down, event.repeat);
             }
-            WindowEvent::ModifiersChanged(m) => self.held.shift = m.state().shift_key(),
+            WindowEvent::ModifiersChanged(m) => {
+                self.held.shift = m.state().shift_key();
+                self.held.ctrl = m.state().control_key() || m.state().super_key();
+            }
             WindowEvent::Focused(false) => {
                 // Key and button releases are not sent to a window without focus.
                 self.release_all();
@@ -436,14 +442,13 @@ impl Game {
                 if self.is_normal() && matches!(button, MouseButton::Left | MouseButton::Right) {
                     let left = button == MouseButton::Left;
                     let (content, mouse) = (self.content.clone(), self.mouse_cell());
+                    let mods = Mods { shift: self.held.shift, ctrl: self.held.ctrl };
                     let Some(n) = self.normal_mut() else { return };
                     if down {
-                        let cmds = n.press(&content, left, mouse);
+                        let cmds = n.press(&content, left, mouse, mods);
                         self.send_all(cmds);
-                    } else if left {
-                        n.held.dig = false;
                     } else {
-                        n.held.spray = false;
+                        n.release(left);
                     }
                     return;
                 }
@@ -507,30 +512,46 @@ impl Game {
     fn normal_key(&mut self, code: KeyCode, down: bool, repeat: bool) {
         let playing = self.playing();
         let content = self.content.clone();
+        let mouse = self.mouse_cell();
+        let (shift, ctrl) = (self.held.shift, self.held.ctrl);
         let Some(n) = self.normal_mut() else { return };
         match code {
             KeyCode::KeyA | KeyCode::ArrowLeft => n.held.left = down && playing,
             KeyCode::KeyD | KeyCode::ArrowRight => n.held.right = down && playing,
             KeyCode::KeyW | KeyCode::ArrowUp | KeyCode::Space => n.held.jump = down && playing,
-            KeyCode::KeyF => n.held.scan = down && playing,
+            // F flips the building in the hand; with no building in the hand it scans (hold).
+            KeyCode::KeyF => {
+                if down && n.building_in_hand(&content).is_some() {
+                    if !repeat && playing {
+                        n.flip(&content);
+                    }
+                    n.held.scan = false;
+                } else {
+                    n.held.scan = down && playing;
+                }
+            }
             _ => {}
         }
         if !down || repeat || !playing {
             return;
         }
-        match code {
-            KeyCode::KeyR if n.building_in_hand(&content).is_some() => n.rotation = (n.rotation + 1) % 4,
-            KeyCode::KeyQ => {
-                let mut cmds = vec![];
-                n.action(&UiAction::ClearHand, &mut cmds);
-                self.send_all(cmds);
+        let cmds = match code {
+            KeyCode::KeyR => n.rotate(&content, mouse, shift),
+            KeyCode::KeyQ => n.pipette(&content, mouse),
+            KeyCode::KeyZ if ctrl => n.undo(shift),
+            KeyCode::KeyY if ctrl => n.undo(true),
+            KeyCode::AltLeft | KeyCode::AltRight => {
+                n.build.alt = !n.build.alt;
+                vec![]
             }
             KeyCode::F3 => {
                 let s = &mut self.ui.model.settings;
                 s.show_debug = !s.show_debug;
+                vec![]
             }
-            _ => {}
-        }
+            _ => vec![],
+        };
+        self.send_all(cmds);
     }
 
     fn resize(&mut self, size: UVec2) {
@@ -958,7 +979,7 @@ impl Game {
             let debug_chunks = &self.debug_chunks;
             let camera = &self.controls.camera;
             let normal = self.world.as_ref().and_then(|w| w.normal.as_ref());
-            let content = &self.content;
+            let content = &*self.content;
             self.egui_ctx.run_ui(raw_input, |root| {
                 if show_debug {
                     debug_panel::draw(root, stats, paused, overlay, &mut debug_actions);
@@ -972,9 +993,16 @@ impl Game {
                 match normal {
                     Some(n) => {
                         let mouse = (show_brush && !over_ui).then_some(mouse_cell);
-                        let ghost = mouse.and_then(|m| n.ghost(content, m));
-                        let at = n.robot_pos(frame_start);
-                        overlay::draw(&painter, camera, root.ctx().pixels_per_point(), &n.frame, at, ghost.as_ref(), mouse);
+                        let build = n.build_view(content, mouse);
+                        let scene = overlay::Scene {
+                            camera,
+                            ppp: root.ctx().pixels_per_point(),
+                            robot_at: n.robot_pos(frame_start),
+                            build: &build,
+                            content,
+                            atlas: ui.ui.atlas(),
+                        };
+                        overlay::draw(&painter, &n.frame, &scene);
                     }
                     None => {
                         if show_brush && !over_ui {
@@ -1127,8 +1155,14 @@ impl Game {
         let (research, guide) = (self.ui.ui.is_open(WindowKind::Research), self.ui.ui.is_open(WindowKind::Guide));
         let Some(w) = self.world.as_mut() else { return };
         let Some(n) = w.normal.as_mut() else { return };
+        for c in n.update(mouse) {
+            w.sim.send(c);
+        }
         if let Some(c) = n.input(&content, mouse, view) {
             w.sim.send(c);
+        }
+        for m in std::mem::take(&mut n.messages) {
+            self.ui.message(m, Instant::now());
         }
         if let Some(c) = n.windows(research, guide) {
             w.sim.send(c);
@@ -1237,7 +1271,7 @@ impl Game {
                 n.aim_override = Some(center);
                 // Click when the host reports the building under the aim point.
                 if n.building_under(center) {
-                    cmds = n.press(&content, true, center);
+                    cmds = n.press(&content, true, center, Mods::default());
                     n.aim_override = None;
                     true
                 } else {

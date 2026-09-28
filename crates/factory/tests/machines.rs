@@ -311,3 +311,19 @@ fn a_burner_heats_the_oven_above_it() {
     assert_eq!(sim.cell(CellPos::new(44, 87)).temperature, 800);
     assert_eq!(sim.cell(CellPos::new(44, 88)).temperature, 800);
 }
+
+#[test]
+fn items_can_be_taken_back_out_of_the_input_buffers() {
+    let c = content();
+    let mut sim = world(&c, Some(GROUND));
+    let mut f = Factory::new(c.clone());
+    let id = f.place(kind(&c, "test_press"), TilePos::new(4, 10), 0, false, &mut sim).unwrap();
+    let sand = item(&c, "sand");
+    assert_eq!(f.buildings.take_input(&c, id, sand, 5), 0, "no recipe: no buffers");
+    f.set_recipe(id, c.factory.recipe("test_press_sand")).unwrap();
+    assert_eq!(f.buildings.insert(&c, id, sand, 7), 7);
+    assert_eq!(f.buildings.take_input(&c, id, sand, 5), 5);
+    assert_eq!(f.building_view(id).unwrap().inputs[0].count, 2);
+    assert_eq!(f.buildings.take_input(&c, id, sand, 5), 2);
+    assert_eq!(f.buildings.take_input(&c, id, item(&c, "gravel"), 5), 0, "not an input of the recipe");
+}

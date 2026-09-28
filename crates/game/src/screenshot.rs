@@ -9,9 +9,10 @@
 use crate::args::{Args, UiState};
 use crate::debug_panel::{self, StatsView};
 use crate::demo;
-use crate::factory_host::{FactoryCommand, FactoryFrame, FactoryHost, GhostRequest, PlayerInput};
+use crate::construct::{BuildView, Mods};
+use crate::factory_host::{FactoryCommand, FactoryFrame, FactoryHost, GameCommand, Placement, PlayerInput};
 use crate::normal::NormalMode;
-use crate::overlay::{self, LocalGhost};
+use crate::overlay;
 use crate::player::MoveInput;
 use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
@@ -85,8 +86,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     // The normal-mode screens: items, buildings and windows for the picture.
     let mut normal_view = None;
     if let Some(h) = host.as_mut() {
-        let (frame, ghost) = setup_normal_screen(h, &mut sim, state, camera.visible_rect());
-        normal_view = Some(NormalView { frame, ghost });
+        let (frame, build) = setup_normal_screen(h, &mut sim, state, camera.visible_rect());
+        normal_view = Some(NormalView { frame, build });
     }
     let snapshot = sim.take_snapshot();
 
@@ -136,8 +137,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             n.fill_model(&mut ui.model);
             ui.model.perf = None;
             ui.model.settings.show_fps = false;
-            // The HUD shows the building or the cell at the image center (there is no mouse).
-            let pos = CellPos::new(center.x.floor() as i32, center.y.floor() as i32);
+            // The HUD shows the building or the cell at the mouse, else at the image center.
+            let pos = nv.build.mouse.unwrap_or(CellPos::new(center.x.floor() as i32, center.y.floor() as i32));
             let cell = sim.cell(pos);
             ui.model.hover =
                 n.hover(pos).or(Some(HoverView::Cell { pos, material: cell.material, temperature: cell.temperature as f32 }));
@@ -153,7 +154,16 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
                     ui.ui.open_menu(MenuPage::Save);
                 }
             }
-            UiState::Playing | UiState::Inventory | UiState::Debug | UiState::Building | UiState::Ghost | UiState::Hub => {
+            UiState::Playing
+            | UiState::Inventory
+            | UiState::Debug
+            | UiState::Building
+            | UiState::Ghost
+            | UiState::Hub
+            | UiState::GhostRed
+            | UiState::Drag
+            | UiState::Alt
+            | UiState::Remove => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
@@ -211,25 +221,39 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
 /// The factory views of a normal-mode picture.
 struct NormalView {
     frame: FactoryFrame,
-    ghost: Option<LocalGhost>,
+    build: BuildView,
 }
 
 /// Make the normal-mode screen: put the items for the picture into the inventory, place and open
-/// buildings, and set the ghost. Returns the factory views and the ghost.
+/// buildings, and drive the main-thread side (`NormalMode`) like the mouse would. Returns the
+/// factory views and the construction shapes.
 fn setup_normal_screen(
     h: &mut FactoryHost,
     sim: &mut foundry_sim::Simulation,
     state: UiState,
     view: foundry_core::CellRect,
-) -> (FactoryFrame, Option<LocalGhost>) {
+) -> (FactoryFrame, BuildView) {
     let content = h.factory.content.clone();
     let part = |id: &str| content.factory.part(id).expect("part in the data");
+    let kind = |id: &str| content.factory.building(id).expect("building in the data");
     let mat = |id: &str| ItemRef::Material(content.expect_material(id));
     let give = |h: &mut FactoryHost, item: ItemRef, n: u32| {
         h.factory.player.insert(&content, item, n);
     };
-    let mut input = PlayerInput { view, ..Default::default() };
-    let mut ghost = None;
+    let run = |h: &mut FactoryHost, sim: &mut foundry_sim::Simulation, cmds: Vec<GameCommand>| {
+        for c in cmds {
+            if let GameCommand::Factory(c) = c {
+                h.apply(c, sim);
+            }
+        }
+    };
+    // The middle cell of a footprint.
+    let middle = |at: foundry_core::TilePos, k: foundry_core::BuildingKindId| {
+        let size = content.factory.building_def(k).size;
+        CellPos::new(at.x * TILE_SIZE + size.0 as i32 * 4, at.y * TILE_SIZE + size.1 as i32 * 4)
+    };
+    let mut n = NormalMode::new();
+    let mut mouse = None;
     match state {
         UiState::Inventory => {
             // The robot dug some clay and sand, and makes clay bricks.
@@ -244,10 +268,10 @@ fn setup_normal_screen(
             // A crate right of the robot, with some items in it.
             // The start inventory has one crate.
             h.apply(FactoryCommand::PickToCursor(part("crate")), sim);
-            if let Some(req) = free_place(h, sim, content.factory.building("crate").expect("crate")) {
-                h.apply(FactoryCommand::Place { kind: req.kind, at: req.at, rotation: 0 }, sim);
+            if let Some(at) = h.free_place(kind("crate"), sim) {
+                h.apply(FactoryCommand::Place(Placement::new(kind("crate"), at, 0)), sim);
                 h.apply(FactoryCommand::ClearCursor, sim);
-                let cell = req.at.origin();
+                let cell = at.origin();
                 h.apply(FactoryCommand::OpenAt(cell), sim);
                 if let Some(id) = h.building_at(cell)
                     && let Some(inv) = h.factory.buildings.inventory_mut(id)
@@ -267,15 +291,90 @@ fn setup_normal_screen(
                 h.apply(FactoryCommand::OpenAt(cell), sim);
             }
         }
-        UiState::Ghost => {
-            give(h, ItemRef::Part(part("workbench")), 2);
-            h.apply(FactoryCommand::PickToCursor(part("workbench")), sim);
-            let kind = content.factory.building("workbench").expect("workbench");
-            if let Some(req) = free_place(h, sim, kind) {
-                let def = content.factory.building_def(kind);
-                input.ghost = Some(req);
-                input.aim = CellPos::new(req.at.x * TILE_SIZE + def.size.0 as i32 * 4, req.at.y * TILE_SIZE + def.size.1 as i32 * 4);
-                ghost = Some(LocalGhost { request: req, size: def.size });
+        UiState::Ghost | UiState::GhostRed => {
+            // A steam crusher (three ports) in the hand, at a free place or down in the ground.
+            give(h, ItemRef::Part(part("steam_crusher")), 2);
+            h.apply(FactoryCommand::PickToCursor(part("steam_crusher")), sim);
+            let k = kind("steam_crusher");
+            if let Some(at) = h.free_place(k, sim) {
+                let at = if state == UiState::GhostRed { foundry_core::TilePos::new(at.x + 1, at.y + 2) } else { at };
+                mouse = Some(middle(at, k));
+            }
+        }
+        UiState::Drag => {
+            // A line of belts dragged to the right, starting next to the robot.
+            give(h, ItemRef::Part(part("wood_belt")), 40);
+            h.apply(FactoryCommand::PickToCursor(part("wood_belt")), sim);
+            n.take_frame(h.frame(sim, 0), Instant::now());
+            if let Some(at) = h.free_place(kind("wood_belt"), sim) {
+                let start = middle(at, kind("wood_belt"));
+                let cmds = n.press(&content, true, start, Mods::default());
+                run(h, sim, cmds);
+                for step in 1..=6 {
+                    let m = start.offset(step * TILE_SIZE, 0);
+                    let cmds = n.update(m);
+                    run(h, sim, cmds);
+                    n.take_frame(h.frame(sim, 0), Instant::now());
+                    mouse = Some(m);
+                }
+            }
+        }
+        UiState::Alt => {
+            // Machines with recipes, a crate and belts, seen in the alt mode.
+            let spots = [("steam_press", "bronze_plate"), ("steam_crusher", "")];
+            let mut x = None;
+            for (id, _) in spots {
+                give(h, ItemRef::Part(part(id)), 1);
+                h.apply(FactoryCommand::PickToCursor(part(id)), sim);
+                if let Some(at) = h.free_place(kind(id), sim) {
+                    h.apply(FactoryCommand::Place(Placement::new(kind(id), at, 0)), sim);
+                    x = Some(at);
+                }
+            }
+            // Recipes: the first recipe each machine can run (the alt icon is its product).
+            let ids: Vec<_> = h.factory.buildings.iter().map(|(id, b)| (id, b.kind)).collect();
+            for (id, k) in ids {
+                if let Some(r) = foundry_factory::Buildings::recipes_for(&content, k).first() {
+                    let _ = h.factory.buildings.set_recipe(&content, id, Some(*r));
+                }
+            }
+            give(h, ItemRef::Part(part("wood_belt")), 8);
+            h.apply(FactoryCommand::PickToCursor(part("wood_belt")), sim);
+            if let Some(at) = h.free_place(kind("wood_belt"), sim) {
+                for i in 0..3 {
+                    h.apply(FactoryCommand::Place(Placement::new(kind("wood_belt"), foundry_core::TilePos::new(at.x + i, at.y), 2)), sim);
+                }
+            }
+            h.apply(FactoryCommand::ClearCursor, sim);
+            for _ in 0..30 {
+                h.tick(sim);
+            }
+            n.build.alt = true;
+            mouse = x.map(|at| middle(at, kind("steam_crusher")));
+        }
+        UiState::Remove => {
+            // Four belts; the remove button went down on the first and moved over the others.
+            give(h, ItemRef::Part(part("wood_belt")), 8);
+            h.apply(FactoryCommand::PickToCursor(part("wood_belt")), sim);
+            if let Some(at) = h.free_place(kind("wood_belt"), sim) {
+                for i in 0..4 {
+                    h.apply(FactoryCommand::Place(Placement::new(kind("wood_belt"), foundry_core::TilePos::new(at.x + i, at.y), 0)), sim);
+                }
+                h.apply(FactoryCommand::ClearCursor, sim);
+                let first = middle(at, kind("wood_belt"));
+                h.apply(FactoryCommand::Input(PlayerInput { aim: first, ..Default::default() }), sim);
+                n.take_frame(h.frame(sim, 0), Instant::now());
+                n.press(&content, false, first, Mods::default());
+                for i in 0..4 {
+                    let m = first.offset(i * TILE_SIZE, 0);
+                    if let Some(c) = n.input(&content, m, view) {
+                        run(h, sim, vec![c]);
+                    }
+                    mouse = Some(m);
+                }
+                for _ in 0..6 {
+                    h.tick(sim);
+                }
             }
         }
         UiState::Research => {
@@ -287,18 +386,20 @@ fn setup_normal_screen(
         }
         _ => {}
     }
-    h.apply(FactoryCommand::Input(input), sim);
+    // The input of the mouse (the ghost at the mouse, the remove button, the alt mode).
+    n.take_frame(h.frame(sim, 0), Instant::now());
+    let aim = mouse.unwrap_or_default();
+    if let Some(c) = n.input(&content, aim, view) {
+        run(h, sim, vec![c]);
+    }
     // Tick 0 is a multiple of every view period, so all views are in this frame.
     let mut frame = h.frame(sim, 0);
     if frame.guide.is_none() {
         frame.guide = Some(h.factory.guide_view());
     }
-    (frame, ghost)
-}
-
-/// The first place right of the robot where a building fits, on the ground.
-fn free_place(h: &FactoryHost, sim: &foundry_sim::Simulation, kind: foundry_core::BuildingKindId) -> Option<GhostRequest> {
-    h.free_place(kind, sim).map(|at| GhostRequest { kind, at, rotation: 0 })
+    n.take_frame(frame.clone(), Instant::now());
+    let build = n.build_view(&content, mouse);
+    (frame, build)
 }
 
 /// The game UI, drawn with no window.
@@ -347,8 +448,16 @@ impl OffscreenUi {
                 let _ = ui.ui.show(root.ctx(), &ui.model);
                 if let Some((camera, nv)) = overlay_data {
                     let painter = root.ctx().layer_painter(egui::LayerId::background());
-                    let mouse = nv.ghost.as_ref().map(|g| g.request.at.origin());
-                    overlay::draw(&painter, camera, root.ctx().pixels_per_point(), &nv.frame, None, nv.ghost.as_ref(), mouse);
+                    let content = ui.model.content.clone();
+                    let scene = overlay::Scene {
+                        camera,
+                        ppp: root.ctx().pixels_per_point(),
+                        robot_at: None,
+                        build: &nv.build,
+                        content: &content,
+                        atlas: ui.ui.atlas(),
+                    };
+                    overlay::draw(&painter, &nv.frame, &scene);
                 }
             });
             for (id, deltas) in out.textures_delta.set.drain() {

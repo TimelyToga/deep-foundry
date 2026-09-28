@@ -4,11 +4,11 @@
 //! The factory runs on the simulation thread (`factory_host.rs`). This module only reads its
 //! `FactoryFrame`s and sends `FactoryCommand`s.
 
-use crate::factory_host::{FactoryCommand, FactoryFrame, GameCommand, GhostRequest, PlayerInput, SlotGroup, SlotTarget};
-use crate::overlay::LocalGhost;
+use crate::construct::{BuildView, Construct, DragLine, LocalGhost, Mods, footprint_at, turned_size};
+use crate::factory_host::{FactoryCommand, FactoryFrame, GameCommand, GhostRequest, Placement, PlayerInput, SlotGroup, SlotTarget, Turn};
 use crate::player::MoveInput;
 use foundry_content::{Content, ItemRef, Stack};
-use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId, TILE_SIZE, TilePos};
+use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId};
 use foundry_factory::progress::{GoalView, TechState as FactoryTechState, TechView};
 use foundry_factory::{Click, Status};
 use foundry_ui::{
@@ -36,8 +36,10 @@ pub struct NormalMode {
     /// The newest guide and technology lists (they are not in every frame).
     pub guide: Vec<GoalView>,
     pub techs: Vec<TechView>,
-    /// Rotation of the building in the hand (0 to 3).
-    pub rotation: u8,
+    /// Construction: rotation per building kind, drag line, remove button, alt mode.
+    pub build: Construct,
+    /// Messages for the player from the main thread (for example "cannot be flipped").
+    pub messages: Vec<String>,
     /// The material the spray tool puts out. `None`: the first tank that has material.
     pub spray: Option<MaterialId>,
     pub held: NormalHeld,
@@ -65,6 +67,13 @@ impl NormalMode {
             self.techs = t;
         }
         let notices = std::mem::take(&mut frame.notices);
+        // A drag line stops where the factory could not place.
+        if let (Some(d), Some(s)) = (self.build.drag.as_mut(), frame.drag_stop.as_ref())
+            && s.action == d.action
+            && d.stop.is_none()
+        {
+            d.stop = Some((s.at, s.reason.clone()));
+        }
         if frame.tick != self.frame.tick || self.frame_time.is_none() {
             self.prev_robot = self.frame.robot.map(|r| top_left(&r));
             self.frame_time = Some(now);
@@ -95,12 +104,24 @@ impl NormalMode {
     /// The ghost for the building in the hand, centered on the mouse cell.
     pub fn ghost(&self, content: &Content, mouse: CellPos) -> Option<LocalGhost> {
         let kind = self.building_in_hand(content)?;
-        let def = content.factory.building_def(kind);
-        let size = if self.rotation & 1 == 1 { (def.size.1, def.size.0) } else { def.size };
-        let t = TILE_SIZE as f32;
-        let x = (mouse.x as f32 / t - size.0 as f32 * 0.5 + 0.5).floor() as i32;
-        let y = (mouse.y as f32 / t - size.1 as f32 * 0.5 + 0.5).floor() as i32;
-        Some(LocalGhost { request: GhostRequest { kind, at: TilePos::new(x, y), rotation: self.rotation }, size })
+        let (rotation, flip) = self.build.transform(kind);
+        let size = turned_size(content.factory.building_def(kind), rotation);
+        let at = footprint_at(mouse, size);
+        Some(LocalGhost { request: GhostRequest { kind, at, rotation, flip }, size })
+    }
+
+    /// What the overlay draws for construction this frame. `mouse` is `None` when the mouse is
+    /// over the UI or outside the window.
+    pub fn build_view(&self, content: &Content, mouse: Option<CellPos>) -> BuildView {
+        let dragging = self.build.drag.is_some();
+        BuildView {
+            ghost: if dragging { None } else { mouse.and_then(|m| self.ghost(content, m)) },
+            drag: self.build.drag.clone(),
+            grid: self.building_in_hand(content).is_some() || dragging,
+            alt: self.build.alt,
+            mouse,
+            removing: self.build.removing.is_some(),
+        }
     }
 
     /// The material the spray tool puts out now.
@@ -126,8 +147,11 @@ impl NormalMode {
             dig: h.dig,
             spray: if h.spray { self.spray_material() } else { None },
             scan: h.scan,
-            ghost: self.ghost(content, mouse).map(|g| g.request),
+            // While a line is dragged, its buildings are placed at once; there is no ghost to check.
+            ghost: if self.build.drag.is_some() { None } else { self.ghost(content, mouse).map(|g| g.request) },
             view,
+            remove: self.build.removing,
+            alt: self.build.alt,
         };
         if self.last_input == Some(input) {
             return None;
@@ -151,25 +175,123 @@ impl NormalMode {
     }
 
     /// A mouse button went down in the world. Returns the commands.
-    /// Left: place the building in the hand, else open the building under the mouse, else dig.
-    /// Right: take the building under the mouse, else spray.
-    pub fn press(&mut self, content: &Content, left: bool, mouse: CellPos) -> Vec<GameCommand> {
+    /// - Left: Shift pastes the copied settings on the building under the mouse. Else a building
+    ///   in the hand is placed and a drag line starts. Else an empty hand opens the building under
+    ///   the mouse. Else the tool digs.
+    /// - Right: Shift copies the settings of the building under the mouse. Else, on a building,
+    ///   the remove button is down until the release. Else the tool sprays.
+    pub fn press(&mut self, content: &Content, left: bool, mouse: CellPos, mods: Mods) -> Vec<GameCommand> {
+        let mouse = self.aim_override.unwrap_or(mouse);
         let on_building = self.building_under(mouse);
         if left {
+            if mods.shift && on_building {
+                return vec![FactoryCommand::PasteSettings(mouse).into()];
+            }
             if let Some(g) = self.ghost(content, mouse) {
-                return vec![FactoryCommand::Place { kind: g.request.kind, at: g.request.at, rotation: g.request.rotation }.into()];
+                let r = g.request;
+                let action = self.build.next_action();
+                let mut line = DragLine::new(action, r.kind, content.factory.building_def(r.kind), r.at, r.rotation, r.flip);
+                line.recipe = self.build.recipe_for(r.kind);
+                let p = Placement { kind: r.kind, at: r.at, rotation: r.rotation, flip: r.flip, recipe: line.recipe, action };
+                self.build.drag = Some(line);
+                return vec![FactoryCommand::Place(p).into()];
             }
             if on_building && self.frame.cursor.is_none() {
                 return vec![FactoryCommand::OpenAt(mouse).into()];
             }
             self.held.dig = true;
         } else {
+            if mods.shift && on_building {
+                return vec![FactoryCommand::CopySettings(mouse).into()];
+            }
             if on_building {
-                return vec![FactoryCommand::RemoveAt(mouse).into()];
+                self.build.removing = Some(self.build.next_action());
+                return vec![];
             }
             self.held.spray = true;
         }
         vec![]
+    }
+
+    /// A mouse button went up (also over the UI).
+    pub fn release(&mut self, left: bool) {
+        if left {
+            self.held.dig = false;
+            self.build.drag = None;
+        } else {
+            self.held.spray = false;
+            self.build.removing = None;
+        }
+    }
+
+    /// Each frame: grow the drag line to the mouse. Returns the placements (and the turn of the
+    /// first belt when the drag direction is known).
+    pub fn update(&mut self, mouse: CellPos) -> Vec<GameCommand> {
+        let mouse = self.aim_override.unwrap_or(mouse);
+        let Some(d) = self.build.drag.as_mut() else { return vec![] };
+        let step = d.advance(footprint_at(mouse, d.size));
+        let (kind, start, action, rotation, flip, recipe) = (d.kind, d.start, d.action, d.rotation, d.flip, d.recipe);
+        let mut out: Vec<GameCommand> = vec![];
+        if let Some((r, f)) = step.turn_start {
+            // Belts face the drag direction; the next belt in the hand keeps it.
+            self.build.set_transform(kind, r, f);
+            out.push(FactoryCommand::Turn { at: start.origin(), turn: Turn::To { rotation: r, flip: f }, action }.into());
+        }
+        for at in step.place {
+            out.push(FactoryCommand::Place(Placement { kind, at, rotation, flip, recipe, action }).into());
+        }
+        out
+    }
+
+    /// R (Shift + R: `back`): turn the building in the hand, else the building under the mouse.
+    pub fn rotate(&mut self, content: &Content, mouse: CellPos, back: bool) -> Vec<GameCommand> {
+        if let Some(kind) = self.building_in_hand(content) {
+            self.build.rotate(content, kind, back);
+            return vec![];
+        }
+        let mouse = self.aim_override.unwrap_or(mouse);
+        if self.building_under(mouse) {
+            let turn = if back { Turn::CounterClockwise } else { Turn::Clockwise };
+            return vec![FactoryCommand::Turn { at: mouse, turn, action: self.build.next_action() }.into()];
+        }
+        vec![]
+    }
+
+    /// F with a building in the hand: flip it. Returns false with no building in the hand (then F
+    /// is the scan key).
+    pub fn flip(&mut self, content: &Content) -> bool {
+        let Some(kind) = self.building_in_hand(content) else { return false };
+        if !self.build.flip(content, kind) {
+            self.messages.push(format!("{} cannot be flipped", content.factory.building_def(kind).name));
+        }
+        true
+    }
+
+    /// Q, the pipette (as in Factorio). On a building: take that building kind from the
+    /// inventory into the hand, with the building's rotation, flip and recipe. Elsewhere: empty
+    /// the hand.
+    pub fn pipette(&mut self, content: &Content, mouse: CellPos) -> Vec<GameCommand> {
+        let mouse = self.aim_override.unwrap_or(mouse);
+        let mut out = vec![];
+        match self.frame.hover.as_ref().filter(|h| h.rect.contains(mouse)) {
+            Some(h) => {
+                let def = content.factory.building_def(h.kind);
+                self.build.set_transform(h.kind, h.rotation, h.flip);
+                self.build.hand_recipe = h.recipe.map(|r| (h.kind, r));
+                self.spray = None;
+                out.push(FactoryCommand::PickToCursor(def.part).into());
+            }
+            None => {
+                self.action(&UiAction::ClearHand, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Ctrl + Z and Ctrl + Y.
+    pub fn undo(&mut self, redo: bool) -> Vec<GameCommand> {
+        self.build.drag = None;
+        vec![if redo { FactoryCommand::Redo } else { FactoryCommand::Undo }.into()]
     }
 
     /// Turn a UI action into factory commands. Returns false if it is not a factory action.
@@ -200,6 +322,7 @@ impl NormalMode {
             }
             UiAction::SelectHotbar(i) => match self.frame.hotbar.get(i).copied().flatten() {
                 Some(ItemRef::Part(p)) => {
+                    self.build.hand_recipe = None;
                     self.spray = None;
                     out.push(FactoryCommand::PickToCursor(p).into());
                 }
@@ -212,6 +335,7 @@ impl NormalMode {
             UiAction::SetHotbar { index, item } => out.push(FactoryCommand::SetHotbar { index, item }.into()),
             UiAction::ClearHand => {
                 self.spray = None;
+                self.build.hand_recipe = None;
                 out.push(FactoryCommand::ClearCursor.into());
             }
             UiAction::Craft { recipe, count } => out.push(FactoryCommand::Craft { recipe, count }.into()),
@@ -402,11 +526,15 @@ pub fn key_bindings() -> Vec<(String, String)> {
         ("Spray material from the tank (hold)", "Right mouse"),
         ("Choose the spray material", "Click a tank slot"),
         ("Scan the material under the mouse", "F (hold)"),
-        ("Place the building in the hand", "Left mouse"),
-        ("Rotate the building in the hand", "R"),
+        ("Place the building in the hand (drag: a line)", "Left mouse"),
+        ("Rotate the building in the hand or under the mouse", "R / Shift + R"),
+        ("Flip the building in the hand", "F"),
         ("Open a building", "Left mouse on it (empty hand)"),
-        ("Take a building back", "Right mouse on it"),
-        ("Empty the hand", "Q"),
+        ("Remove buildings (hold and drag)", "Right mouse on a building"),
+        ("Pick the building under the mouse / empty the hand", "Q"),
+        ("Undo / redo", "Ctrl + Z / Ctrl + Y"),
+        ("Copy / paste the recipe", "Shift + right / left click"),
+        ("Alt mode: recipes and belt directions", "Alt"),
         ("Character screen", "E"),
         ("Research", "T"),
         ("Guide", "G"),
