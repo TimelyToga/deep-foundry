@@ -15,6 +15,8 @@ OPTIONS:
                              (default 128). The world has no limit to the left and right.
     --world WxH              A finite world of W x H chunks with bedrock walls, in place of the
                              world with no side limit (for tests)
+    --world gen              A world made by the world generator (surface biomes, caves, ores)
+                             in place of the demo world. New games and screenshots use it.
     --exit-after SECONDS     Quit after this time and print the average FPS and frame time
     --no-vsync               Do not wait for the display refresh (to measure the highest FPS)
     --size WxH               Window size in screen pixels (default 1600x900 points)
@@ -60,6 +62,8 @@ pub struct Args {
     pub depth: i32,
     /// A finite world of this many chunks (width, height). `None`: no limit to the left and right.
     pub world: Option<(i32, i32)>,
+    /// `--world gen`: new worlds come from the world generator, not the demo source.
+    pub generated: bool,
     pub exit_after: Option<f64>,
     pub no_vsync: bool,
     pub screenshot: Option<PathBuf>,
@@ -199,6 +203,7 @@ impl Default for Args {
             seed: 1,
             depth: foundry_sim::DEFAULT_DEPTH_CHUNKS,
             world: None,
+            generated: false,
             exit_after: None,
             no_vsync: false,
             screenshot: None,
@@ -244,6 +249,7 @@ impl Args {
     pub fn shape(&self) -> crate::demo::Shape {
         match self.world {
             Some((w, h)) => crate::demo::Shape::Box { width_chunks: w, height_chunks: h },
+            None if self.generated => crate::demo::Shape::Generated { depth_chunks: self.depth },
             None => crate::demo::Shape::Infinite { depth_chunks: self.depth },
         }
     }
@@ -272,11 +278,18 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 out.depth = d;
             }
             "--world" => {
-                let (w, h) = pair::<i32>(&value("--world")?, 'x', "--world")?;
+                let v = value("--world")?;
+                if v == "gen" {
+                    out.generated = true;
+                    out.world = None;
+                    continue;
+                }
+                let (w, h) = pair::<i32>(&v, 'x', "--world")?;
                 if !(1..=256).contains(&w) || !(1..=256).contains(&h) {
                     return Err("--world: each size must be 1 to 256 chunks".into());
                 }
                 out.world = Some((w, h));
+                out.generated = false;
             }
             "--exit-after" => {
                 let s: f64 = number(&value("--exit-after")?, "--exit-after")?;
@@ -435,6 +448,9 @@ mod tests {
         assert_eq!(run(&["--depth", "40"]).unwrap().shape(), crate::demo::Shape::Infinite { depth_chunks: 40 });
         let b = run(&["--world", "8x4"]).unwrap().shape();
         assert_eq!(b, crate::demo::Shape::Box { width_chunks: 8, height_chunks: 4 });
+        let g = run(&["--world", "gen", "--depth", "40"]).unwrap().shape();
+        assert_eq!(g, crate::demo::Shape::Generated { depth_chunks: 40 });
+        assert!(run(&["--world", "generated"]).is_err());
     }
 
     #[test]
