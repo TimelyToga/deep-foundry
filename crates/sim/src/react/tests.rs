@@ -1,6 +1,7 @@
 //! Tests of reactions, burning, charring and timers. They use the real data files.
 
 use super::burn::LIFE_BURNING;
+use crate::chunk::FLAG_BURNING;
 use super::*;
 use crate::{SimConfig, Simulation};
 use foundry_core::CellRect;

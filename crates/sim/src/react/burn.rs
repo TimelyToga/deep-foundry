@@ -212,6 +212,7 @@ fn burning(h: &mut Hood, t: &ReactTable, x: i32, y: i32, b: &Burn) -> Outcome {
     {
         let fire_temp = product_temp(h.mats, b.fire, b.fire_temp as i32);
         h.replace(x + dx, y + dy, b.fire, Some(fire_temp));
+        clear_flag(h, x + dx, y + dy);
     }
     for (gas, chance) in b.gases.into_iter().flatten() {
         if h.rng.chance(chance)
@@ -219,6 +220,7 @@ fn burning(h: &mut Hood, t: &ReactTable, x: i32, y: i32, b: &Burn) -> Outcome {
         {
             let gas_temp = product_temp(h.mats, gas, h.temp(x + dx, y + dy) as i32);
             h.replace(x + dx, y + dy, gas, Some(gas_temp));
+            clear_flag(h, x + dx, y + dy);
         }
     }
     // Set a burnable neighbor on fire.
@@ -247,6 +249,8 @@ fn ignite_neighbor(h: &mut Hood, t: &ReactTable, x: i32, y: i32, m: MaterialId, 
 /// A fire cell (phase Fire): it ignites burnable neighbors and dies in water. The pair rules of
 /// fire (fire + water, methane + fire, ...) come first.
 pub fn fire_cell(h: &mut Hood, t: &ReactTable, x: i32, y: i32, m: MaterialId) -> Outcome {
+    // A flag left behind by a burning cell (fire moves into such places).
+    clear_flag(h, x, y);
     let (dx, dy) = DIRS[h.rng.below(8) as usize];
     let (nx, ny) = (x + dx, y + dy);
     let n = h.mat(nx, ny);

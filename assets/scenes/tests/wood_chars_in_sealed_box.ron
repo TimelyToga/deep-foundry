@@ -1,0 +1,19 @@
+// Wood heated with no air next to it turns into charcoal after about 10 seconds (600 ticks).
+// Picture (64 x 64): a closed firebrick box (x 18..46, y 18..46, walls 4 cells thick) full of
+// wood (x 22..42, y 22..42, 400 cells). The wood and the walls start at 450 °C, above the
+// ignition point of wood (300 °C). No air cell touches the wood, so it cannot burn.
+Scene(
+    note: "Hot wood in a sealed box becomes charcoal and does not burn.",
+    legend: {
+        "#ff9040": (material: "wood", temperature: 450),
+        "#a0522d": (material: "firebrick_block", temperature: 450),
+    },
+    ticks: 1200,
+    checks: [
+        Count(material: "charcoal", rect: (x: 22, y: 22, w: 20, h: 20), min: 380),
+        Total(material: "wood", max: 20),
+        // Nothing burned: no ash, no smoke.
+        Total(material: "ash", exact: 0),
+        Total(material: "smoke", exact: 0),
+    ],
+)
