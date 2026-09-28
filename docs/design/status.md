@@ -23,17 +23,20 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
   - Open: hover box shows the cell for 1-2 ticks before building data arrives; 60 Hz fix checked only by the clock-model test.
 - play-test round 2: keep/drop per material when digging (crates/factory/src/digging.rs default = used by a recipe, port or reaction; dropped cells fly out behind the robot, spoil.rs; setting saved in .dfgame), HUD bar transfers and drag and drop (crates/ui/src/screens/drag.rs), guide tier0.ron rewritten with {key:ID}/{key1:ID}, "Next: the kiln. It comes in a later update.", campfire fuel slot + pit_fired_clay_brick (clay-brick loop solved). 395 tests pass.
   - Open: spoil lands 20-30 cells behind (piles near a wall); transfer hint not saved; guide texts describe the demo world (redo after worldgen).
+- wave B (merged at 8de119a; review and fix steps still running on lead/wave-b, merge their commits later): heat, reactions + burning + SimEvent::Reaction, explosions, light pass + F4-F6 debug views, worldgen ChunkSource, 195 content scenes.
+- rooms: kiln, coke oven, blast furnace (crates/factory/src/rooms, crates/ui/src/screens/room.rs, docs/design/requests/rooms.md). Bellows must call Buildings::room_at + set_blast. 512 tests pass.
+  - Open: fuel burns too fast (about 7 charcoal/s in a small kiln; lead suggests 5-10x longer burn for charcoal/coke); molten metal from taps freezes fast; hatches have no port data.
 
 ## Running (branch or worktree)
 | Work | Where | Merge notes |
 |---|---|---|
 | Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
 
-| Room machines (Claude Opus): kiln, coke oven, blast furnace; started from 8acbcf2 | `.claude/worktrees/agent-ab9bfa3218318ff88` | new files under crates/factory rooms + ui screen. |
 | Codex agents (started by the user): automation/hot-metal, automation/ore-processing, automation/steam, automation/integration | `../sand-game-*` worktrees | The user runs these. automation/integration already merged lead/wave-b at be09994. |
 
 - The user's second stutter session is merged (fix/walk-stutter, see "walk stutter fix" above). It changed only player.rs, player_tests.rs and this file.
 
+Rule from the user: after Codex branches merge, the lead reviews them against the design and fixes or improves what does not meet it.
 Rule from the user: the lead does not start agents or workflows. Write task text for the user instead.
 
 ## Next
