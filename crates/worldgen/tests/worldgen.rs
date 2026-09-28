@@ -375,9 +375,12 @@ fn a_generated_world_saves_and_loads() {
     };
     assert!(Simulation::load_with_resolver(c, &other, &mut bytes.as_slice()).is_err());
 }
+/// A changed cell: old material, new material, x, y.
+type Change = (u16, u16, i32, i32);
+
 /// Run 200 ticks with every generated chunk awake in `view`. Returns the cells that changed, the
-/// cells of material, and up to 6 examples (old material, new material, x, y).
-fn stability_at(seed: u64, view: CellRect) -> (usize, usize, Vec<(u16, u16, i32, i32)>) {
+/// cells of material, and up to 6 examples.
+fn stability_at(seed: u64, view: CellRect) -> (usize, usize, Vec<Change>) {
     let c = content();
     let config = SimConfig { depth_chunks: 40, ..SimConfig::infinite(seed, None) };
     let wg = WorldGen::new(&c, WorldGenSettings::for_world(config.sky_chunks, config.depth_chunks));
