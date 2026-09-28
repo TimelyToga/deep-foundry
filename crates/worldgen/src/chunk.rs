@@ -44,6 +44,16 @@ const CAVE_EDGE: f32 = 0.01;
 const VEIN_EDGE: f32 = 0.006;
 const LIME_TABLE: usize = 7;
 const COAL_TABLE: usize = 4;
+/// Depth of the cold ground in the tundra, below the ground row.
+const COLD_DEPTH: i32 = 160;
+/// Temperature of the water of a frozen lake (°C). Water freezes below -2 °C and ice melts at
+/// 0 °C, so both are safe at -1 °C.
+const LAKE_WATER: i32 = -1;
+/// Cells up to this far (steps to a side neighbor) from the water of a frozen lake are warmer
+/// than the tundra ground: `LAKE_WATER` minus 1 °C for each step (see `Fill::write`).
+const LAKE_REACH: i32 = 11;
+/// Grid columns plus `LAKE_REACH` columns on each side.
+const LAKE_W: usize = GW + 2 * LAKE_REACH as usize;
 
 /// Make the cells of one chunk. See the module documentation.
 pub(crate) fn generate(wg: &WorldGen, cells: &mut ChunkCells) {
@@ -126,6 +136,11 @@ struct Fill<'a, 'b> {
     lime: [i32; LIME_TABLE],
     coal_base: i32,
     coal: [i32; COAL_TABLE],
+    /// Rows of liquid water of the columns from `xl - LAKE_REACH` to `xl + GW + LAKE_REACH - 1`:
+    /// (first row, end row). Empty (first >= end) for a column without water. Only filled in
+    /// the tundra (`lake_near`).
+    lake: [(i32, i32); LAKE_W],
+    lake_near: bool,
 }
 
 impl<'a, 'b> Fill<'a, 'b> {
@@ -159,6 +174,8 @@ impl<'a, 'b> Fill<'a, 'b> {
             lime: [0; LIME_TABLE],
             coal_base: 0,
             coal: [0; COAL_TABLE],
+            lake: [(0, 0); LAKE_W],
+            lake_near: false,
         }
     }
 
@@ -193,6 +210,16 @@ impl<'a, 'b> Fill<'a, 'b> {
             }
             self.min_top = min_top;
             self.max_ground = max_ground;
+            // The water of frozen lakes near the chunk (see `write`).
+            if self.cols.iter().any(|c| c.biome == Biome::Tundra) {
+                for (k, span) in self.lake.iter_mut().enumerate() {
+                    let x = self.xl - LAKE_REACH + k as i32;
+                    let c = k as i32 - LAKE_REACH;
+                    let gr = if (0..GW as i32).contains(&c) { self.cols[c as usize].gr } else { ctx.ground_at(x) };
+                    *span = (gr.water + gr.ice, gr.g);
+                    self.lake_near |= span.0 < span.1;
+                }
+            }
         }
         let seeds = ctx.sd;
         let n = |which: usize, w: i32| move |x: i32| noise1(seeds.get(which), x, w);
@@ -761,12 +788,26 @@ impl<'a, 'b> Fill<'a, 'b> {
         }
     }
 
-    /// Copy the chunk out of the grid, with temperatures: cold in the tundra, warm deep down.
+    /// Copy the chunk out of the grid, with temperatures: cold in and near the tundra, warm deep
+    /// down.
+    ///
+    /// The generated world must not change when a chunk wakes up. So no cell may start on the
+    /// wrong side of a melt or freeze point, and no heat may flow between cells where it could
+    /// move one across such a point:
+    /// - Tundra ground is -12 °C at the top and warmer below (at most -2 °C, down to
+    ///   `COLD_DEPTH` rows).
+    /// - Ground of another biome near a tundra zone has the tundra temperature at the border and
+    ///   gets warmer over `Column::warm` to the normal temperature. So the snow at the border
+    ///   touches ground that is as cold as it is. (The other biomes have no cold phase changes.)
+    /// - The water of a frozen lake is `LAKE_WATER` (-1 °C). The ice, the lake bed and the shore
+    ///   are 1 °C colder for each step away from the water, down to the tundra temperature. The heat
+    ///   code moves no heat between neighbors that differ by less than 2 °C, so nothing flows there,
+    ///   and the water does not freeze.
     #[inline(never)]
     fn write(&self, cells: &mut ChunkCells) {
         let air = self.wg.air_temperature_rows();
         let m = &self.m;
-        let cold = self.near_surface && self.cols.iter().any(|c| c.biome == Biome::Tundra);
+        let cold = self.near_surface && self.cols.iter().any(|c| c.biome == Biome::Tundra || c.warm < 1.0);
         for r in 0..CHUNK_SIZE as usize {
             let y = self.y0 + r as i32;
             let src = &self.grid[r * GW + 1..r * GW + 1 + CHUNK_SIZE as usize];
@@ -775,10 +816,21 @@ impl<'a, 'b> Fill<'a, 'b> {
             let temp = &mut cells.temp[dst..dst + CHUNK_SIZE as usize];
             if cold {
                 for (lx, &v) in src.iter().enumerate() {
-                    let col = &self.cols[lx + 1];
-                    if v != 0 && col.biome == Biome::Tundra && y < col.gr.g + 160 {
-                        temp[lx] = if v == m.water { 2 } else { (-12 + (y - col.gr.g).max(0) / 12).min(-2) as i16 };
+                    let c = lx + 1;
+                    let col = &self.cols[c];
+                    if v == 0 || y >= col.gr.g + COLD_DEPTH || (col.biome != Biome::Tundra && col.warm >= 1.0) {
+                        continue;
                     }
+                    let chill = (-12 + (y - col.gr.g).max(0) / 12).min(-2);
+                    let mut t = if col.biome == Biome::Tundra {
+                        chill.max(LAKE_WATER - self.lake_distance(c, y))
+                    } else {
+                        chill + ((foundry_core::DEFAULT_TEMPERATURE as i32 - chill) as f32 * col.warm).round() as i32
+                    };
+                    if v == m.water {
+                        t = t.max(LAKE_WATER);
+                    }
+                    temp[lx] = t as i16;
                 }
             } else if y - self.surface_y > 900 {
                 let t = air.get(y as usize).copied().unwrap_or(foundry_core::DEFAULT_TEMPERATURE);
@@ -789,6 +841,28 @@ impl<'a, 'b> Fill<'a, 'b> {
                 }
             }
         }
+    }
+}
+
+impl Fill<'_, '_> {
+    /// Steps to a side neighbor from the cell in grid column `c`, row `y`, to the nearest liquid
+    /// water of a lake. More than `LAKE_REACH` if there is none that near.
+    #[inline]
+    fn lake_distance(&self, c: usize, y: i32) -> i32 {
+        if !self.lake_near {
+            return i32::MAX / 2;
+        }
+        let mut best = LAKE_REACH + 1;
+        // Grid column c is lake column c + LAKE_REACH.
+        for (k, &(top, end)) in self.lake[c..=c + 2 * LAKE_REACH as usize].iter().enumerate() {
+            if top >= end {
+                continue;
+            }
+            let dx = (k as i32 - LAKE_REACH).abs();
+            let dy = if y < top { top - y } else if y >= end { y - end + 1 } else { 0 };
+            best = best.min(dx + dy);
+        }
+        best
     }
 }
 
