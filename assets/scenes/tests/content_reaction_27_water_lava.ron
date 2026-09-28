@@ -1,0 +1,15 @@
+// Generated content scene: reaction #27 (water + lava).
+// A touches B.
+Scene(
+    note: "Reaction: water + lava.",
+    legend: {
+        "#2f6fd6": "water",
+        "#ff5a1a": "lava",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "steam", min: 1),
+        Total(material: "obsidian", min: 1),
+    ],
+)

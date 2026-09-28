@@ -1,0 +1,13 @@
+// Generated content scene: bronze_dust falls from the air onto the floor.
+Scene(
+    note: "bronze_dust falls and settles at the bottom.",
+    legend: {
+        "#a97f45": "bronze_dust",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "bronze_dust"),
+        Count(material: "bronze_dust", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

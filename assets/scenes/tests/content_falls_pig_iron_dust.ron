@@ -1,0 +1,13 @@
+// Generated content scene: pig_iron_dust falls from the air onto the floor.
+Scene(
+    note: "pig_iron_dust falls and settles at the bottom.",
+    legend: {
+        "#4a4a4d": "pig_iron_dust",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "pig_iron_dust"),
+        Count(material: "pig_iron_dust", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

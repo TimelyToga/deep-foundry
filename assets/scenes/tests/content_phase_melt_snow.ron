@@ -1,0 +1,14 @@
+// Generated content scene: melt of snow into water at 1C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "snow melts into water.",
+    legend: {
+        "#f5fbff": (material: "snow", temperature: 81),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "water", min: 1),
+    ],
+)

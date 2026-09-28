@@ -1,0 +1,14 @@
+// Generated content scene: freeze of molten_silver into silver_block at 952C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "molten_silver freezes into silver_block.",
+    legend: {
+        "#f0f2f4": (material: "molten_silver", temperature: 872),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "silver_block", min: 1),
+    ],
+)

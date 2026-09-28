@@ -1,0 +1,13 @@
+// Generated content scene: tar falls from the air onto the floor.
+Scene(
+    note: "tar falls and settles at the bottom.",
+    legend: {
+        "#0f0d0c": "tar",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "tar"),
+        Count(material: "tar", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

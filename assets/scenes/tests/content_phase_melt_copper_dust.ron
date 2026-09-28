@@ -1,0 +1,14 @@
+// Generated content scene: melt of copper_dust into molten_copper at 1085C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "copper_dust melts into molten_copper.",
+    legend: {
+        "#b5652f": (material: "copper_dust", temperature: 1165),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "molten_copper", min: 1),
+    ],
+)

@@ -4,6 +4,13 @@ Rules from `docs/design/02-content.md` section 3 that the current `MaterialDef` 
 `ReactionDef` schema (`crates/content/src/defs.rs`) cannot express. Listed here instead of
 being forced into the data files, as the task instructions asked.
 
+**Status (2026-09-27, task "reactions"):** items 1 to 6 are done. The schema has `extra`
+(item 1), `burn.gases` (item 2), `burn.char_into` / `char_ticks` (item 3), `timer` with
+`needs_air` (item 4), the `"$freeze"` result words (item 5) and `alt` (item 6). The data files
+use them (smelting slag, coal gases, wood charring, wet concrete timer, one rule for molten
+metal in water, brine boiling). Mud drying in air is not in the data yet; see
+`docs/design/requests/reactions.md`. The field docs are in `assets/data/README.md`.
+
 ## 1. A reaction can only change two cells
 
 `into_a` and `into_b` are each a single material. Several rules in the design need three

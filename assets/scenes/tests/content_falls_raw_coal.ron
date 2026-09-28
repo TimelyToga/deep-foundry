@@ -1,0 +1,13 @@
+// Generated content scene: raw_coal falls from the air onto the floor.
+Scene(
+    note: "raw_coal falls and settles at the bottom.",
+    legend: {
+        "#181818": "raw_coal",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "raw_coal"),
+        Count(material: "raw_coal", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShaderFile {
     World,
-    Background,
-    Scale,
+    Light,
+    Composite,
     Sprite,
 }
 
@@ -22,8 +22,8 @@ impl ShaderFile {
     fn file_name(self) -> &'static str {
         match self {
             ShaderFile::World => "world.wgsl",
-            ShaderFile::Background => "background.wgsl",
-            ShaderFile::Scale => "scale.wgsl",
+            ShaderFile::Light => "light.wgsl",
+            ShaderFile::Composite => "composite.wgsl",
             ShaderFile::Sprite => "sprite.wgsl",
         }
     }
@@ -31,8 +31,8 @@ impl ShaderFile {
     fn built_in(self) -> &'static str {
         match self {
             ShaderFile::World => include_str!("../../../assets/shaders/world.wgsl"),
-            ShaderFile::Background => include_str!("../../../assets/shaders/background.wgsl"),
-            ShaderFile::Scale => include_str!("../../../assets/shaders/scale.wgsl"),
+            ShaderFile::Light => include_str!("../../../assets/shaders/light.wgsl"),
+            ShaderFile::Composite => include_str!("../../../assets/shaders/composite.wgsl"),
             ShaderFile::Sprite => include_str!("../../../assets/shaders/sprite.wgsl"),
         }
     }

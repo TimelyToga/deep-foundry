@@ -1,0 +1,16 @@
+// Generated content scene: reaction #17 (raw_magnetite + coal).
+// A touches B. The check runs after 5 ticks: the product (fire, steam or molten metal) is
+// short-lived, because the box around it is cold.
+Scene(
+    note: "Reaction: raw_magnetite + coal.",
+    legend: {
+        "#15161c": (material: "raw_magnetite", temperature: 1480),
+        "#181818": "coal",
+        "#6b6a70": "stone",
+    },
+    ticks: 5,
+    checks: [
+        Total(material: "molten_pig_iron", min: 1),
+        Total(material: "carbon_dioxide", min: 1),
+    ],
+)

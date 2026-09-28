@@ -1,0 +1,15 @@
+// Generated content scene: snow falls from the air onto the floor.
+// The snow and the floor are cold (-30 °C), so the snow does not melt in the 400 ticks (the air
+// is 20 °C).
+Scene(
+    note: "snow falls and settles at the bottom.",
+    legend: {
+        "#f5fbff": (material: "snow", temperature: -30),
+        "#6b6a70": (material: "stone", temperature: -30),
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "snow"),
+        Count(material: "snow", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

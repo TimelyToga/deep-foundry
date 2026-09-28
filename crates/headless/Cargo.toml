@@ -10,6 +10,7 @@ description = "Headless tools: scene tests, benchmarks, PNG screenshots of the c
 foundry_core.workspace = true
 foundry_content.workspace = true
 foundry_sim.workspace = true
+foundry_worldgen.workspace = true
 serde.workspace = true
 ron.workspace = true
 anyhow.workspace = true

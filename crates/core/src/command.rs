@@ -25,6 +25,9 @@ pub enum Command {
     /// Change a number setting of the simulation, by its key (see `SimSettings::sliders` in
     /// `foundry_sim`). Unknown keys are ignored.
     SetSimSetting { key: String, value: f32 },
+    /// An explosion at a cell (a debug tool). `strength` uses the hardness scale (0 to 255, see
+    /// `foundry_sim::explode`); `heat` is in °C (0: no heat).
+    Explode { center: CellPos, strength: f32, heat: i16 },
     /// Save the world to a file. The thread that owns the `Simulation` handles this command
     /// (with `Simulation::save_file`), not `Simulation::apply`. It reports the result in
     /// `Snapshot::notices`.

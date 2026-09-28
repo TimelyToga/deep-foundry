@@ -21,6 +21,7 @@ mod normal;
 mod overlay;
 mod perf;
 mod player;
+mod render_setup;
 mod robot_sprite;
 mod saves;
 mod screenshot;

@@ -1,0 +1,14 @@
+// Generated content scene: melt of washed_limestone into quicklime at 900C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "washed_limestone melts into quicklime.",
+    legend: {
+        "#d3ccb5": (material: "washed_limestone", temperature: 980),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "quicklime", min: 1),
+    ],
+)

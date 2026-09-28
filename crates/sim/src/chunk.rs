@@ -6,8 +6,16 @@ use foundry_core::{CHUNK_AREA, CHUNK_SIZE, DEFAULT_TEMPERATURE};
 /// Cells that did not move for a while keep an old bit, so a match can be stale. The update loop
 /// handles this by checking such a cell again in the next tick.
 pub const FLAG_PARITY: u8 = 1 << 0;
-/// Cell flag: the cell is part of a building body (used from Milestone 3).
+/// Cell flag: the cell is part of a building body (`Simulation::set_building_flag`). Explosions
+/// do not break such cells, and the renderer lets them stop only a little light. Writing a new
+/// cell (`set_cell`, `Hood::replace`, a phase change) clears the flag. Building cells are solid,
+/// so they do not move.
 pub const FLAG_BUILDING: u8 = 1 << 1;
+/// Cell flag: the cell burns (set by `react.rs`, for the renderer). Flags do not move with a cell,
+/// so the flag can stay behind for a short time when a burning liquid or powder moves, or when
+/// other code replaces a burning cell. Use it only on materials that have burn data, and never on
+/// air. The burning state itself is in the cell's life byte (see `react.rs`).
+pub const FLAG_BURNING: u8 = 1 << 2;
 
 /// `motion` bits 0-4: fall speed (0 to 31).
 pub const MOTION_SPEED: u8 = 0x1f;
@@ -82,6 +90,22 @@ pub struct Chunk {
     /// looks only at these rows (see `schedule.rs`). A bit that is set with no falling cell in the
     /// row only costs a look; a new chunk has all bits set.
     pub falling_rows: u64,
+    /// Heat: the stamp of the last tick in which the heat pass worked on this chunk. In that tick,
+    /// `heat_edge_temp` and `heat_edge_mat` hold the edge cells as they were before the pass.
+    /// See `heat.rs`.
+    pub heat_stamp: u64,
+    /// Heat: the temperatures of the 4 edges at the start of the heat pass of tick `heat_stamp`.
+    /// Order: top row (y = 0), bottom row (y = 63), left column (x = 0), right column (x = 63),
+    /// 64 cells each.
+    pub heat_edge_temp: [i16; 256],
+    /// Heat: the materials of the same edge cells.
+    pub heat_edge_mat: [u16; 256],
+    /// Heat: ticks since a temperature in this chunk last changed, at most `heat::QUIET_TICKS`.
+    /// At `heat::QUIET_TICKS` the chunk is at rest for heat.
+    pub heat_quiet: u8,
+    /// Heat: how much the temperatures of glowing cells may have changed since `version` last
+    /// changed (°C). The heat pass sets a new version when it gets large (see `heat.rs`).
+    pub glow_drift: u16,
 }
 
 /// The version of a chunk that the chunk source made and that did not change since.
@@ -103,6 +127,11 @@ impl Chunk {
             pristine: true,
             queued: false,
             falling_rows: u64::MAX,
+            heat_stamp: 0,
+            heat_edge_temp: [0; 256],
+            heat_edge_mat: [0; 256],
+            heat_quiet: crate::heat::QUIET_TICKS,
+            glow_drift: 0,
         })
     }
 

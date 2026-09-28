@@ -1,0 +1,14 @@
+// Generated content scene: boil of water into steam at 100C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "water boils into steam.",
+    legend: {
+        "#2f6fd6": (material: "water", temperature: 180),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "steam", min: 1),
+    ],
+)

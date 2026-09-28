@@ -1,0 +1,14 @@
+// Generated content scene: boil of brine into steam at 105C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "brine boils into steam.",
+    legend: {
+        "#3a78c9": (material: "brine", temperature: 185),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "steam", min: 1),
+    ],
+)

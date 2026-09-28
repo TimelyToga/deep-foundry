@@ -1,0 +1,15 @@
+// Generated content scene: reaction #2 (hydrogen + fire).
+// A touches B. The check runs after 5 ticks: the product (fire, steam or molten metal) is
+// short-lived, because the box around it is cold.
+Scene(
+    note: "Reaction: hydrogen + fire.",
+    legend: {
+        "#e4f0ff": "hydrogen",
+        "#ffb02e": "fire",
+        "#6b6a70": "stone",
+    },
+    ticks: 5,
+    checks: [
+        Total(material: "fire", min: 1),
+    ],
+)

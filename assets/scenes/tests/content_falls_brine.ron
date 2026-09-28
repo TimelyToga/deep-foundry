@@ -1,0 +1,13 @@
+// Generated content scene: brine falls from the air onto the floor.
+Scene(
+    note: "brine falls and settles at the bottom.",
+    legend: {
+        "#3a78c9": "brine",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "brine"),
+        Count(material: "brine", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

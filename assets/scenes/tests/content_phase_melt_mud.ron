@@ -1,0 +1,14 @@
+// Generated content scene: melt of mud into dirt at 60C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "mud melts into dirt.",
+    legend: {
+        "#4a3722": (material: "mud", temperature: 140),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "dirt", min: 1),
+    ],
+)

@@ -1,0 +1,14 @@
+// Generated content scene: condense of zinc_vapor into molten_zinc at 907C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "zinc_vapor condenses into molten_zinc.",
+    legend: {
+        "#e8eaea": (material: "zinc_vapor", temperature: 827),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "molten_zinc", min: 1),
+    ],
+)

@@ -1,0 +1,13 @@
+// Generated content scene: silver_dust falls from the air onto the floor.
+Scene(
+    note: "silver_dust falls and settles at the bottom.",
+    legend: {
+        "#d6d8da": "silver_dust",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "silver_dust"),
+        Count(material: "silver_dust", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

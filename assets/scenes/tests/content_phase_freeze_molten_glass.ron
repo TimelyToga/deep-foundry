@@ -1,0 +1,14 @@
+// Generated content scene: freeze of molten_glass into glass at 990C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "molten_glass freezes into glass.",
+    legend: {
+        "#ff9a3c": (material: "molten_glass", temperature: 910),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "glass", min: 1),
+    ],
+)

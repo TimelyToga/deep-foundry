@@ -1,0 +1,15 @@
+// Generated content scene: reaction #32 (molten_bronze + water).
+// A touches B.
+Scene(
+    note: "Reaction: molten_bronze + water.",
+    legend: {
+        "#e0a860": "molten_bronze",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "bronze_block", min: 1),
+        Total(material: "steam", min: 1),
+    ],
+)

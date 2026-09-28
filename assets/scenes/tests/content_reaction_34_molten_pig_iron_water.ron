@@ -1,0 +1,15 @@
+// Generated content scene: reaction #34 (molten_pig_iron + water).
+// A touches B.
+Scene(
+    note: "Reaction: molten_pig_iron + water.",
+    legend: {
+        "#ffb060": "molten_pig_iron",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "pig_iron_block", min: 1),
+        Total(material: "steam", min: 1),
+    ],
+)

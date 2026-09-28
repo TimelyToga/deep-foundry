@@ -1,0 +1,15 @@
+// Generated content scene: reaction #4 (fire + oxygen).
+// A touches B. The check runs after 5 ticks: the product (fire, steam or molten metal) is
+// short-lived, because the box around it is cold.
+Scene(
+    note: "Reaction: fire + oxygen.",
+    legend: {
+        "#ffb02e": "fire",
+        "#dfefff": "oxygen",
+        "#6b6a70": "stone",
+    },
+    ticks: 5,
+    checks: [
+        Temperature(material: "fire", min: 10),
+    ],
+)

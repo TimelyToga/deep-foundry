@@ -18,8 +18,6 @@ Scene(
         // Some smoke is gone.
         Total(material: "smoke", max: 500),
         // All smoke is gone: its life is at most 255 ticks.
-        // Pending: the Milestone 0 movement updates a cell that did not move only every other tick,
-        // so life counts down at half speed. The new movement code (task 1A) should fix this.
-        Total(material: "smoke", exact: 0, pending: true),
+        Total(material: "smoke", exact: 0),
     ],
 )
