@@ -23,6 +23,7 @@ pub mod crafting;
 pub mod digging;
 pub mod geometry;
 pub mod inventory;
+mod hot_metal;
 pub mod logistics;
 pub mod machines;
 pub mod placement;
