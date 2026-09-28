@@ -112,6 +112,8 @@ const DUNE_HEIGHT: f64 = 110.0;
 /// The dune rises to its top at this fraction of its width, then falls steeply.
 const DUNE_PEAK: f64 = 0.86;
 const POST_HEIGHT: i32 = 36;
+/// Width of a wooden post in cells. Three posts hold about 600 wood: enough for the Tier 0 goals.
+const POST_WIDTH: i32 = 5;
 /// Depth of the lava pocket center below the surface level.
 const LAVA_DEPTH: i32 = 174;
 
@@ -231,7 +233,7 @@ impl ChunkSource for DemoSource {
             } else {
                 ground
             };
-            let post = sec.posts.iter().any(|&p| x >= p && x < p + 3);
+            let post = sec.posts.iter().any(|&p| x >= p && x < p + POST_WIDTH);
             for ly in 0..CHUNK_SIZE {
                 let y = y0 + ly;
                 let mut mat = if y >= self.bottom_y - 2 {

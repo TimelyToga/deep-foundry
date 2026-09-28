@@ -183,6 +183,7 @@
         text: "Build a stamp mill. Feed raw ore into its top port and take crushed ore from its side outlet. The mill works steadily without water power.",
         condition: HaveItem("crushed_malachite", 16),
         reward_points: 1,
+        waits_for: Some("bronze gears (smelting)"),
     ),
     Goal(
         id: "t0_wash_ore",
@@ -191,6 +192,7 @@
         text: "Carry crushed malachite to a sluice on a belt. Supply water at its top inlet; collect washed ore from the product outlet and let the water carry light silt out of the lower waste outlet.",
         condition: HaveItem("washed_malachite", 3),
         reward_points: 1,
+        waits_for: Some("the stamp mill (bronze gears)"),
     ),
     Goal(
         id: "t0_lab",
