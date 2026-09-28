@@ -38,6 +38,11 @@ OPTIONS:
       --center X,Y           World cell at the image center (default: the middle of the demo area)
       --no-ui                Draw only the world, with no UI (default screen: playing)
       --walk N               Normal mode: the robot walks N ticks to the right first (N < 0: left)
+      --pose NAME[:FRAME]    Normal mode: the robot does this for the picture: idle, walk, jump,
+                             fall, land, fly, wade (an animation; FRAME picks one frame), or
+                             dig, spray, scan (the tool points at a place in front of the robot)
+      --face left|right      Normal mode: the direction the robot looks in the picture
+      --robot X              Normal mode: put the robot on the ground (or in the water) at column X
     -h, --help               Show this text
 ";
 
@@ -73,7 +78,16 @@ pub struct Args {
     pub mode: GameMode,
     /// Screenshots of the normal mode: ticks the robot walks first (negative: to the left).
     pub walk: i32,
+    /// Screenshots of the normal mode: what the robot does (`POSES`), and a fixed frame.
+    pub pose: Option<(String, Option<usize>)>,
+    /// Screenshots of the normal mode: the robot looks left (`Some(true)`) or right.
+    pub face_left: Option<bool>,
+    /// Screenshots of the normal mode: put the robot at this column first.
+    pub robot_x: Option<i32>,
 }
+
+/// The names that `--pose` knows: the robot animations, then the tools.
+pub const POSES: [&str; 10] = ["idle", "walk", "jump", "fall", "land", "fly", "wade", "dig", "spray", "scan"];
 
 /// The screens that `--ui-state` can start in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +190,9 @@ impl Default for Args {
             smoke_test: false,
             mode: GameMode::Sandbox,
             walk: 0,
+            pose: None,
+            face_left: None,
+            robot_x: None,
         }
     }
 }
@@ -209,7 +226,7 @@ impl Args {
 /// What the program should do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Parsed {
-    Run(Args),
+    Run(Box<Args>),
     Help,
 }
 
@@ -269,6 +286,29 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 }
             }
             "--walk" => out.walk = number(&value("--walk")?, "--walk")?,
+            "--pose" => {
+                let v = value("--pose")?;
+                let (name, frame) = match v.split_once(':') {
+                    Some((n, f)) => (n.to_string(), Some(number::<usize>(f, "--pose")?)),
+                    None => (v.clone(), None),
+                };
+                if !POSES.contains(&name.as_str()) {
+                    return Err(format!("--pose: unknown pose `{name}` ({})", POSES.join(", ")));
+                }
+                out.pose = Some((name, frame));
+                out.mode = GameMode::Normal;
+            }
+            "--robot" => {
+                out.robot_x = Some(number(&value("--robot")?, "--robot")?);
+                out.mode = GameMode::Normal;
+            }
+            "--face" => {
+                out.face_left = Some(match value("--face")?.as_str() {
+                    "left" => true,
+                    "right" => false,
+                    other => return Err(format!("--face: `{other}` is not left or right")),
+                })
+            }
             "--saves" => out.saves = Some(PathBuf::from(value("--saves")?)),
             "--settings" => out.settings = Some(PathBuf::from(value("--settings")?)),
             "--ui-state" => {
@@ -287,7 +327,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             other => return Err(format!("unknown option `{other}`")),
         }
     }
-    Ok(Parsed::Run(out))
+    Ok(Parsed::Run(Box::new(out)))
 }
 
 fn number<T: std::str::FromStr>(s: &str, name: &str) -> Result<T, String> {
@@ -305,7 +345,7 @@ mod tests {
 
     fn run(list: &[&str]) -> Result<Args, String> {
         match parse(list.iter().map(|s| s.to_string()))? {
-            Parsed::Run(a) => Ok(a),
+            Parsed::Run(a) => Ok(*a),
             Parsed::Help => Err("help".into()),
         }
     }
@@ -349,6 +389,15 @@ mod tests {
     }
 
     #[test]
+    fn pose_options() {
+        let a = run(&["--pose", "walk:3", "--face", "left"]).unwrap();
+        assert_eq!(a.pose, Some(("walk".to_string(), Some(3))));
+        assert_eq!(a.face_left, Some(true));
+        assert_eq!(a.mode, GameMode::Normal, "a pose needs the robot");
+        assert_eq!(run(&["--pose", "dig"]).unwrap().pose, Some(("dig".to_string(), None)));
+    }
+
+    #[test]
     fn world_shape() {
         assert_eq!(run(&[]).unwrap().shape(), crate::demo::Shape::Infinite { depth_chunks: 128 });
         assert_eq!(run(&["--depth", "40"]).unwrap().shape(), crate::demo::Shape::Infinite { depth_chunks: 40 });
@@ -365,6 +414,8 @@ mod tests {
         assert!(run(&["--seed"]).is_err());
         assert!(run(&["--ui-state", "bogus"]).is_err());
         assert!(run(&["--ui-scale", "3"]).is_err());
+        assert!(run(&["--pose", "dance"]).is_err());
+        assert!(run(&["--face", "up"]).is_err());
         assert_eq!(parse(["--help".to_string()]), Ok(Parsed::Help));
     }
 }

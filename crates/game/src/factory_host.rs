@@ -253,6 +253,8 @@ pub struct FactoryFrame {
     pub tick: u64,
     pub robot: Option<Robot>,
     pub digging: bool,
+    /// The material the tool dug in the last tick.
+    pub dug_material: Option<MaterialId>,
     pub spraying: bool,
     /// The aim point of the tools, moved into reach.
     pub aim: CellPos,
@@ -383,6 +385,7 @@ pub struct FactoryHost {
     shown: HashMap<String, u64>,
     ticks: u64,
     digging: bool,
+    dug_material: Option<MaterialId>,
     spraying: bool,
     last_placed: Option<(BuildingKindId, CellRect)>,
     /// Buildings that were already put on the quickbar once (as in Factorio, a building goes to a
@@ -420,6 +423,7 @@ impl FactoryHost {
             shown: HashMap::new(),
             ticks: 0,
             digging: false,
+            dug_material: None,
             spraying: false,
             last_placed: None,
             on_quickbar: Default::default(),
@@ -907,10 +911,12 @@ impl FactoryHost {
         self.factory.player_pos = Some(self.robot.center_cell());
 
         self.digging = false;
+        self.dug_material = None;
         self.spraying = false;
         if self.input.dig {
             let r = tools::dig(&mut self.factory, sim, &self.robot, self.input.aim);
             self.digging = r.dug > 0;
+            self.dug_material = r.material;
             if r.dug == 0 {
                 if let Some(m) = r.too_hard {
                     self.notice(format!("{} is too hard: research a better drill head", content.materials.names[m.index()]));
@@ -1060,6 +1066,7 @@ impl FactoryHost {
             tick,
             robot: Some(self.robot),
             digging: self.digging,
+            dug_material: self.dug_material,
             spraying: self.spraying,
             aim: tools::clamp_aim(&self.robot, self.input.aim),
             robot_temperature: sim.cell(self.robot.center_cell()).temperature as f32,
@@ -1099,7 +1106,7 @@ fn mark_output(f: &Factory, id: BuildingId, b: &foundry_factory::Building) -> Op
 }
 
 /// The top of the ground in a column: the first cell from the top that stops the robot.
-fn ground_top(sim: &Simulation, content: &Content, x: i32) -> i32 {
+pub(crate) fn ground_top(sim: &Simulation, content: &Content, x: i32) -> i32 {
     let (_, h) = sim.size_cells();
     (0..h).find(|&y| crate::player::blocks(content, sim.cell(CellPos::new(x, y)).material)).unwrap_or(h)
 }

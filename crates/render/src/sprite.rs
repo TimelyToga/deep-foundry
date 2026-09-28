@@ -20,7 +20,7 @@ use bytemuck::{Pod, Zeroable};
 use std::path::Path;
 
 /// How strong the robot shows through the cells in front of it (0 to 1).
-pub const BODY_THROUGH: f32 = 0.5;
+pub const BODY_THROUGH: f32 = 0.6;
 
 /// Where a sprite is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
