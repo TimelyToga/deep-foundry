@@ -28,6 +28,9 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
   - Open: molten metal from taps freezes fast; hatches have no port data.
 - balance: charcoal and coke burn chance 0.02 -> 0.0025; near clay deposit 17x6; jetpack fuel 90 ticks (50 was too little to get over the Hub). 520 tests pass.
 - Open: user reports stutter when mining trees. dig_wood_perf (DIG_PERF_MATERIAL=wood|leaves) shows CPU is fine (worst tick < 5 ms); suspect render (light pass, chunk uploads) or fire. Asked user for a DEEP_FOUNDRY_PERF=1 log.
+- Codex merged (by another agent): stamp mill + sluice, crucible + bronze casting, boiler steam network + steam machines, molds, ore guide. Lead merged automation/steam and automation/ore-guide; stamp mill and wash ore goals wait for smelting; posts 5 wide. automation/progression NOT merged: it fails 4 tier0 tests on its own. 534 tests pass.
+  - Review of Codex work still to do. Seen so far: the ore-line screenshot state shows an idle line with warning marks; demo-world guide texts describe the generated world.
+- Public repo: https://github.com/TimelyToga/deep-foundry (main). README with screenshots in docs/screenshots.
 
 ## Running (branch or worktree)
 | Work | Where | Merge notes |
