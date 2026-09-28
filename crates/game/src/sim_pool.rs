@@ -11,28 +11,48 @@
 //! So the simulation loop runs on a thread of its own one-thread pool (`solo`):
 //! - A tick with few awake chunks runs all its jobs on that thread. There is no wait for another
 //!   thread.
-//! - A tick with many awake chunks (large falls and floods) runs on a second pool with more
+//! - A tick with many awake chunks (large falls and floods), or a tick that must make many new
+//!   chunks (the view grew, for example after a zoom out), runs on a second pool with more
 //!   threads (`crew`), because there the work is larger than the cost of the wait.
 //! - On macOS all these threads ask for the "user interactive" service class, the class of the
 //!   main thread of the window. The system then runs them before background work such as a build.
+
+use foundry_core::{CellRect, Command};
 
 /// From this number of awake chunks in the last tick, the next tick uses the `crew` pool.
 pub const CREW_FROM: u32 = 64;
 /// Below this number of awake chunks in the last tick, the next tick runs on the loop thread.
 pub const SOLO_BELOW: u32 = 32;
 
+/// From this number of chunks that a new view adds, the next tick uses the `crew` pool. (One
+/// thread makes a chunk in about 25 µs.)
+pub const CREW_FOR_NEW_VIEW: usize = 64;
+
 /// The pools of the simulation thread. See the module documentation.
 pub struct Workers {
     crew: Option<rayon::ThreadPool>,
     /// The last tick used the `crew` pool.
     parallel: bool,
+    /// A command asked for a large tick (see `note`).
+    large_next: bool,
 }
 
 impl Workers {
+    /// Look at a command before the simulation applies it. `view` is the view of the simulation
+    /// now. A new view with many new chunks makes the next tick use the `crew` pool.
+    pub fn note(&mut self, cmd: &Command, view: Option<CellRect>) {
+        if let Command::SetView { area } = cmd {
+            let old = view.unwrap_or_default();
+            let new_chunks = area.chunks().filter(|c| c.cell_rect().intersect(&old).is_empty()).count();
+            self.large_next |= new_chunks >= CREW_FOR_NEW_VIEW;
+        }
+    }
+
     /// Run one tick (`f`). `awake` is the number of awake chunks of the last tick.
     pub fn tick<R: Send>(&mut self, awake: u32, f: impl FnOnce() -> R + Send) -> R {
         self.parallel = if self.parallel { awake >= SOLO_BELOW } else { awake >= CREW_FROM };
-        self.big(self.parallel, f)
+        let large = std::mem::take(&mut self.large_next);
+        self.big(self.parallel || large, f)
     }
 
     /// Run `f` on the `crew` pool if `parallel` (for large jobs such as loading a world), else on
@@ -69,7 +89,7 @@ pub fn run<R: Send>(f: impl FnOnce(&mut Workers) -> R + Send) -> R {
             .map_err(|e| log::warn!("cannot make the {name} threads: {e}"))
             .ok()
     };
-    let mut workers = Workers { crew: builder(crew_size(), "simulation-crew"), parallel: false };
+    let mut workers = Workers { crew: builder(crew_size(), "simulation-crew"), parallel: false, large_next: false };
     match builder(1, "simulation-loop") {
         Some(solo) => solo.install(|| f(&mut workers)),
         None => f(&mut workers),
@@ -107,6 +127,13 @@ mod tests {
             assert!(w.parallel());
             assert_ne!(on(w, SOLO_BELOW), here, "stays on the crew until the work is small");
             assert_eq!(on(w, SOLO_BELOW - 1), here, "back on the loop thread");
+            // A new view with many new chunks: the next tick only runs on the crew.
+            let view = CellRect::new(0, 0, 640, 384);
+            w.note(&Command::SetView { area: CellRect::new(64, 0, 704, 384) }, Some(view));
+            assert_eq!(on(w, 3), here, "one new column of chunks: the loop thread");
+            w.note(&Command::SetView { area: CellRect::new(0, 0, 2048, 1024) }, Some(view));
+            assert_ne!(on(w, 3), here, "a zoom out: a crew thread");
+            assert_eq!(on(w, 3), here, "then the loop thread again");
             // A rayon call on the loop thread runs on the loop thread.
             use rayon::prelude::*;
             let ids: Vec<_> = (0..4).into_par_iter().map(|_| std::thread::current().id()).collect();

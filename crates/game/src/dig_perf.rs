@@ -130,7 +130,12 @@ fn measure(mut workers: Option<&mut Workers>) {
         let mut t = t_sim;
         for c in commands.drain(..) {
             match c {
-                GameCommand::Sim(c) => sim.apply(c),
+                GameCommand::Sim(c) => {
+                    if let Some(w) = workers.as_mut() {
+                        w.note(&c, sim.view());
+                    }
+                    sim.apply(c);
+                }
                 GameCommand::Factory(c) => host.apply(c, &mut sim),
             }
         }
@@ -278,4 +283,37 @@ fn big_scene_perf() {
     measure_big(None);
     println!("--- big_scene_perf: cell update on the pools of sim_pool.rs ---");
     sim_pool::run(|w| measure_big(Some(w)));
+}
+
+/// Zoom out from 6 to 2 and then 1 screen pixels per cell (at a new place each time): the view
+/// grows, and the next tick makes the new chunks. Prints the time of that tick.
+fn measure_zoom_out(mut workers: Option<&mut Workers>, crew: bool) {
+    let content = Arc::new(Content::load_default().unwrap());
+    let d = demo::build(content.clone(), Shape::Infinite { depth_chunks: 128 }, 1);
+    let mut sim = d.sim;
+    let center = DVec2::new(d.start_center.0, d.start_center.1);
+    let world = DVec2::new(0.0, sim.size_cells().1 as f64);
+    for (i, zoom) in [6.0, 2.0, 1.0].into_iter().enumerate() {
+        let controls = CameraControl::new(center + DVec2::new(i as f64 * 5000.0, 0.0), zoom, UVec2::new(SCREEN.0, SCREEN.1), world);
+        sim.apply(Command::SetView { area: controls.view_area(VIEW_MARGIN) });
+        let before = sim.world().generated_total();
+        let t = Instant::now();
+        match workers.as_mut() {
+            Some(w) => w.big(crew, || sim.advance()),
+            None => sim.advance(),
+        };
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        println!("  zoom {zoom}: {} new chunks, tick {ms:.2} ms", sim.world().generated_total() - before);
+    }
+}
+
+#[test]
+#[ignore = "a measure, not a check: run it with --release --ignored --nocapture"]
+fn zoom_out_perf() {
+    println!("--- zoom_out_perf: from outside the pool (as before sim_pool.rs) ---");
+    measure_zoom_out(None, false);
+    println!("--- zoom_out_perf: on the loop thread alone ---");
+    sim_pool::run(|w| measure_zoom_out(Some(w), false));
+    println!("--- zoom_out_perf: on the crew pool ---");
+    sim_pool::run(|w| measure_zoom_out(Some(w), true));
 }
