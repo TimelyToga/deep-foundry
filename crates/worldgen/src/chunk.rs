@@ -40,8 +40,8 @@ const VEIN_W: f32 = 0.05;
 const DEEP_VEIN_W: f32 = 0.035;
 const MIN_VEIN_W: f32 = 0.012;
 /// Strength of the random change at the edges of caves and veins, in noise units.
-const CAVE_EDGE: f32 = 0.005;
-const VEIN_EDGE: f32 = 0.004;
+const CAVE_EDGE: f32 = 0.01;
+const VEIN_EDGE: f32 = 0.006;
 const LIME_TABLE: usize = 7;
 const COAL_TABLE: usize = 4;
 
@@ -678,18 +678,28 @@ impl<'a, 'b> Fill<'a, 'b> {
     fn pockets(&mut self) {
         let (rx, ry) = (self.x0.div_euclid(POCKET_REGION), self.y0.div_euclid(POCKET_REGION));
         let m = self.m;
+        let seed = self.seed(sd::POCKETS);
         for p in pockets_in(self.ctx, self.surface_y, rx, ry).into_iter().flatten() {
-            let (ox, oy) = (p.rx + SHELL, p.ry + SHELL);
+            // The pocket is an ellipse with wobbly sides: its width changes from row to row and
+            // its height from column to column.
+            let (ox, oy) = ((p.rx as f32 * (1.0 + 1.3 * WOBBLE)) as i32 + SHELL, (p.ry as f32 * (1.0 + 1.3 * WOBBLE)) as i32 + SHELL);
             let (xa, xb) = ((p.cx - ox).max(self.xl), (p.cx + ox + 1).min(self.xl + GW as i32));
             let (ya, yb) = ((p.cy - oy).max(self.y0), (p.cy + oy + 1).min(self.y0 + GH as i32));
+            let mut half_h = [0.0f32; GW];
+            for x in xa..xb {
+                half_h[(x - xa) as usize] = p.ry as f32 * (1.0 + WOBBLE * noise1(seed ^ 0x51ED_270B, x + p.cx, 23));
+            }
             for y in ya..yb {
+                let half_w = p.rx as f32 * (1.0 + WOBBLE * noise1(seed ^ 0x2F4B_19A1, y + p.cy, 17));
                 for x in xa..xb {
                     let (dx, dy) = ((x - p.cx) as f32, (y - p.cy) as f32);
-                    let outer = (dx / ox as f32).powi(2) + (dy / oy as f32).powi(2);
+                    let half_h = half_h[(x - xa) as usize];
+                    let s = SHELL as f32;
+                    let outer = (dx / (half_w + s)).powi(2) + (dy / (half_h + s)).powi(2);
                     if outer > 1.0 {
                         continue;
                     }
-                    let inner = (dx / p.rx as f32).powi(2) + (dy / p.ry as f32).powi(2);
+                    let inner = (dx / half_w).powi(2) + (dy / half_h).powi(2);
                     let v = if inner > 1.0 {
                         m.stone
                     } else if y < p.level {
@@ -783,6 +793,8 @@ impl<'a, 'b> Fill<'a, 'b> {
 
 /// Thickness of the stone shell around a pocket.
 const SHELL: i32 = 4;
+/// How much the width and height of a pocket change along its sides (0.18: 18 percent).
+const WOBBLE: f32 = 0.18;
 
 /// A pocket of water (with air above it) or of methane, in the upper stone.
 #[derive(Debug, Clone, Copy)]
