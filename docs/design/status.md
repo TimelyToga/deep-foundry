@@ -30,8 +30,7 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 
 ## Next
 1. Play-test rounds 1 and 2, character and stutter fix are merged. Wait for wave B.
-2. Wave B workflow: RUNNING (explosions need its particles; heat/react touch the same sim files). Heat should use `World::worked_chunks()`; worldgen implements `ChunkSource` (see crates/sim/src/source.rs docs). Reactions task must add `SimEvent::Reaction { index: u16, at: CellPos }` (max one per reaction per tick; see requests/factory-core.md). The game passes it to `Factory::observe_reaction`.
-   Wave B (script: scratchpad wave_b.js): heat, reactions + burning, explosions (uses existing particles), render light + debug overlays, worldgen (must use the ChunkSource trait), content scene tests (Sonnet), then integrate, review, fix. Update the worldgen and render prompts for the infinite world first.
-3. At the same time, F2a: player (movement, dig, spray, inventory), construction UX (ghosts, drag, rotate, pick, undo, remove), factory in the sim thread (make Factory, set guide = Guide::load_default(), scan tool calls Factory::scan), UI connected to real data.
+2. When wave B finishes: read its result, merge lead/wave-b into main (check the robot sprite is lit by the light map), tell the user it is a test point. Liquids follow-up: measure speed (flood stress case) and check commits 8969bbe..06883bd for loose ends.
+3. After the merge: redo guide goal texts for the generated world; decide if worldgen becomes the default for new games.
 4. F2b after wave B: room machines (kiln, coke oven, blast furnace), T0 special machines (crucible, mold, sluice, stamp mill), then play-test to milestone 1.
 5. Factory areas must keep running when the player is far away: each building group adds a sim anchor (anchors exist; factory does not add them yet). Needs a spatial index for many anchors. Also fix particle f32 positions (precision past ~16.7M cells).
