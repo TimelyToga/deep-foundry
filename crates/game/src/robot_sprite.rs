@@ -396,12 +396,14 @@ impl RobotLook {
                         let color = [[255, 255, 230, 255], [255, 226, 110, 255], [255, 150, 50, 230]][(seed % 3) as usize];
                         self.pixel(t.aim.x + (a.cos() * d).round() as i32, t.aim.y + (a.sin() * d).round() as i32, color, out);
                     }
-                    // Dug cells fly to the tool.
-                    for i in 0..6u64 {
-                        let k = ((tick * 2 + i * 7) % 20) as f32 / 20.0;
-                        let p = line[((1.0 - k) * (n - 1) as f32) as usize];
-                        let wobble = (hash(i + tick / 4) % 3) as i32 - 1;
-                        self.pixel_in(p.x + wobble, p.y - wobble, material, SpriteLayer::Front, out);
+                    // Dug cells fly to the tool. The line is empty when the aim is on the tip.
+                    if !line.is_empty() {
+                        for i in 0..6u64 {
+                            let k = ((tick * 2 + i * 7) % 20) as f32 / 20.0;
+                            let p = line[((1.0 - k) * (n - 1) as f32) as usize];
+                            let wobble = (hash(i + tick / 4) % 3) as i32 - 1;
+                            self.pixel_in(p.x + wobble, p.y - wobble, material, SpriteLayer::Front, out);
+                        }
                     }
                 }
             }
@@ -436,9 +438,9 @@ impl RobotLook {
 /// The glow mask of a sheet: the texels with one of the `colors` (RGB), the others transparent.
 fn glow_mask(rgba: &[u8], colors: &[(u8, u8, u8)]) -> Vec<u8> {
     let mut out = vec![0; rgba.len()];
-    for (texel, mask) in rgba.as_chunks::<4>().0.iter().zip(out.as_chunks_mut::<4>().0.iter_mut()) {
+    for (texel, mask) in rgba.as_chunks::<4>().0.iter().zip(out.as_chunks_mut::<4>().0) {
         if texel[3] > 0 && colors.contains(&(texel[0], texel[1], texel[2])) {
-            mask.copy_from_slice(texel);
+            *mask = *texel;
         }
     }
     out

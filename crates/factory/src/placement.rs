@@ -189,6 +189,7 @@ impl Buildings {
         if def.layer == Layer::Front {
             for p in rect_cells(plan.cells) {
                 sim.set_cell(p, def.body, None);
+                sim.set_building_flag(p, true);
             }
         }
         let mut b = Building::new(def, kind, at, t);

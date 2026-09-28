@@ -384,3 +384,14 @@ fn shoot(s: &mut Simulation, frames: &[u64], prefix: &str, area: CellRect, scale
     crate::dump_png(s, area, scale, &format!("{prefix}_last.png"));
     sheet.save(format!("{prefix}_sheet.png")).unwrap();
 }
+
+#[test]
+fn the_explode_command_runs_an_explosion() {
+    let mut s = sand_pit();
+    let sand = mat(&s, "sand");
+    let center = CellPos::new(128, 150);
+    s.apply(Command::Explode { center, strength: 40.0, heat: 0 });
+    assert!(s.cell(center).material != sand, "the center flew away");
+    assert!(s.particles().count_material(sand) > 100, "cells were thrown");
+    assert!(s.events().iter().any(|e| matches!(e, SimEvent::Exploded { at, .. } if *at == center)));
+}
