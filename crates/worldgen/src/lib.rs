@@ -175,30 +175,36 @@ pub(crate) const OPEN: u8 = 2;
 pub struct WorldGen {
     settings: WorldGenSettings,
     pub(crate) m: Mats,
-    /// `POWDER` and `OPEN` bits for each material id.
-    pub(crate) kind: Vec<u8>,
+    /// `POWDER` and `OPEN` bits for each material id (all 65536 ids, so no bounds check).
+    pub(crate) kind: Box<[u8; 65536]>,
     /// The solid that replaces a powder cell with no support (for each material id).
     pub(crate) support: Vec<u16>,
     /// Air temperature of each row, from the top of the world down.
     air: Vec<i16>,
+    /// -1 to 1 for each cell of a 64 x 64 square, repeated over the world: small random changes
+    /// at the edges of shapes, so they look rough. Faster than a hash for each cell.
+    pub(crate) jitter: Box<[f32; 4096]>,
 }
 
 impl WorldGen {
     pub fn new(content: &Content, settings: WorldGenSettings) -> Self {
         let m = Mats::new(content);
         let mats = &content.materials;
-        let kind: Vec<u8> = mats
-            .phase
-            .iter()
-            .map(|p| match p {
+        let mut kind = Box::new([0u8; 65536]);
+        for (k, p) in kind.iter_mut().zip(&mats.phase) {
+            *k = match p {
                 Phase::Powder => POWDER,
                 Phase::Solid => 0,
                 _ => OPEN,
-            })
-            .collect();
+            };
+        }
         let support = (0..mats.len()).map(|i| if i as u16 == m.snow { m.ice } else { m.stone }).collect();
         let air = (0..settings.bottom_y.max(1)).map(|y| air_temperature(&settings, y)).collect();
-        Self { settings, m, kind, support, air }
+        let mut jitter = Box::new([0.0f32; 4096]);
+        for (i, j) in jitter.iter_mut().enumerate() {
+            *j = noise::signed(noise::hash1(0x6a09_e667, i as i32));
+        }
+        Self { settings, m, kind, support, air, jitter }
     }
 
     /// Make the generator again from the text of `ChunkSource::settings` (for loading a world file).
