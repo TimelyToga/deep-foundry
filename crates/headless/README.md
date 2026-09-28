@@ -11,6 +11,7 @@ cargo run -p foundry_headless --release -- test [filter]
 cargo run -p foundry_headless --release -- scene <name> [--ticks N] [--png out.png] [--scale S] [--every K] [--heat]
 cargo run -p foundry_headless --release -- bench [name] [--ticks N] [--repeat N] [--save-baseline] [--compare] [--png out.png]
 cargo run -p foundry_headless --release -- determinism <scene> [--ticks N] [--every K]
+cargo run -p foundry_headless --release -- worldgen [--seed N] [--area X,Y,W,H] [--png out.png] [--scale K] [--depth D]
 ```
 
 | Command | What it does |
@@ -19,6 +20,7 @@ cargo run -p foundry_headless --release -- determinism <scene> [--ticks N] [--ev
 | `scene` | Runs one scene and its checks. Writes a PNG of the whole world after the last tick (default `out/<name>.png`). Each cell gets the first color of its material. `--scale S` makes each cell S × S pixels (default: fits in 1024 pixels). `--every K` also writes `out/<name>_t000100.png` and so on every K ticks. `--heat` draws temperatures (20 °C is near black, cold is blue, hot is red to yellow to white). `--ticks N` replaces the scene's tick count. Exit code 1 if a check that is not pending fails. |
 | `bench` | Runs the benchmark worlds (all, or one by name) and prints ms per tick (mean, p50, p95, max) and awake chunks. `--repeat N` runs each benchmark N times and keeps the run with the lowest mean (default 3 with `--save-baseline` or `--compare`, else 1). `--save-baseline` writes `bench/baseline.ron`. `--compare` exits with code 1 if a benchmark's mean is more than 10% above its baseline. Only the same tick count is compared. `--png` (with one benchmark name) writes a picture of the world after the last tick. |
 | `determinism` | Runs a scene twice with the same seed (the second run on one thread) and prints the world hash every K ticks (default 100) for both runs. Exit code 1 if a hash differs. |
+| `worldgen` | Makes the chunks of a cell area with the world generator (`foundry_worldgen`, no simulation) and writes a PNG (default: the start area to `out/worldgen.png`). Air above the ground is sky blue, air in caves is dark brown. Each pixel is the average of K × K cells (default: the picture fits in 4000 pixels). The surface level is y = 1024, the start is x = 0. Prints the time per chunk on one thread. |
 
 `<name>` is a scene name in `assets/scenes/` or `assets/scenes/tests/`, or a path to a `.ron` file.
 

@@ -249,7 +249,7 @@ impl<'a, 'b> Fill<'a, 'b> {
     /// different thicknesses.
     fn stratum(&self, k: i32) -> u16 {
         let h = hash1(self.seed(sd::SED), k);
-        let k = if (h >> 20) % 3 == 0 { k - 1 } else { k };
+        let k = if (h >> 20).is_multiple_of(3) { k - 1 } else { k };
         let h = hash1(self.seed(sd::SED), k);
         let depth = (k * STRATUM - self.surface_y) as f32;
         let stone = 12.0 + 58.0 * smoothstep((depth - 80.0) / 480.0);
@@ -470,7 +470,7 @@ impl<'a, 'b> Fill<'a, 'b> {
                     continue;
                 }
                 let base = self.grid[i];
-                if base != m.bedrock && blocks.as_ref().is_some_and(|b| b[r / 8][(c + 7) / 8]) {
+                if base != m.bedrock && blocks.as_ref().is_some_and(|b| b[r / 8][c.div_ceil(8)]) {
                     self.grid[i] = self.carve(base, c, x, y, d, &fr, &ri, col.biome);
                 }
             }
@@ -665,7 +665,7 @@ impl<'a, 'b> Fill<'a, 'b> {
             for y in ya..yb {
                 for x in xa..xb {
                     let (r, c) = ((y - self.y0) as usize, (x - self.xl) as usize);
-                    let keep = b.mat == self.m.malachite && hash2(self.seed(sd::START), x, y) % 4 == 0;
+                    let keep = b.mat == self.m.malachite && hash2(self.seed(sd::START), x, y).is_multiple_of(4);
                     if b.contains(x, y) && !keep && self.is_ground(r, c) {
                         self.grid[r * GW + c] = b.mat;
                     }
@@ -832,7 +832,7 @@ fn pockets_in(ctx: &Ctx, surface_y: i32, rx: i32, ry: i32) -> [Option<Pocket>; 2
         } else {
             (24 + ((h2 >> 10) % 37) as i32, 12 + ((h2 >> 16) % 19) as i32)
         };
-        let level = if methane || (h2 >> 24) % 3 == 0 { cy - pry - 1 } else { cy - pry * 3 / 10 };
+        let level = if methane || (h2 >> 24).is_multiple_of(3) { cy - pry - 1 } else { cy - pry * 3 / 10 };
         let p = Pocket { cx, cy, rx: prx, ry: pry, level, methane };
         // The second pocket must not touch the first.
         if let (1, Some(a)) = (i, out[0]) {
