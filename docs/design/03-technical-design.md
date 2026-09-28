@@ -104,14 +104,17 @@ Dependencies go one way:
 | Thread | Work |
 |---|---|
 | Main thread | Window events, input, camera, UI, rendering. Runs at the display rate. |
-| Simulation thread | Runs fixed ticks at 60 per second. Owns the world, the factory and the player. Uses the worker pool for parallel parts. |
-| Worker pool | rayon, with (cores − 2) threads. Also packs and unpacks chunks, and writes saves. |
+| Simulation thread | Runs fixed ticks at 60 per second. Owns the world, the factory and the player. It is a thread of its own one-thread rayon pool, so a tick with few awake chunks runs its parallel parts at once on this thread. A rayon call from a thread outside a pool waits for a pool thread to wake up; with a busy CPU (for example a build) this made 20 to 48 ms ticks while digging (`crates/game/src/sim_pool.rs`). |
+| Worker pool | rayon, with (cores − 2) threads, at most 8. A tick runs on it when the last tick had 64 or more awake chunks (back below 32), or when a new view adds 256 or more chunks (for example a large zoom out). Also loads and writes saves. |
+
+On macOS the simulation threads use the "user interactive" service class (as the main thread), so
+the system runs them before background work.
 
 Communication:
 
 - **Main → simulation: commands.** A queue of `Command` values: place building, remove, dig, spray, set recipe, player input. The simulation applies all queued commands at the start of the next tick.
 - **Simulation → main: snapshots.** After each tick, the simulation writes a `Snapshot`: the changed chunk data in the view area, the positions of the player, parts, particles and tube packets, the building states in view, the tile occupancy near the view, open panel data, alerts, statistics and timings. We use a triple buffer: the simulation writes one buffer, the main thread reads the newest complete buffer, and neither thread waits for the other.
-- The main thread draws moving things at positions between the last two snapshots. This makes motion smooth at 120 Hz.
+- The main thread draws moving things at positions between the last two snapshots. This makes motion smooth at 120 Hz. The robot is drawn on a steady clock of the ticks, 1.25 ticks behind (`crates/game/src/motion.rs`), so it also moves evenly when a 60 Hz frame gets two ticks and the next frame gets none.
 
 Build preview: the main thread checks ghost validity against the tile occupancy in the latest snapshot. So the ghost has no delay. The real placement is a command, and the simulation checks it again.
 

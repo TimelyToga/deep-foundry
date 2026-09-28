@@ -25,6 +25,7 @@ use crate::keys::{Action, Bindings, KeyBind, KeyNames, Press};
 use crate::settings::{self, SavedSettings};
 use crate::normal::NormalMode;
 use crate::overlay;
+use crate::robot_sprite::RobotLook;
 use crate::saves::{self, SaveMeta};
 use crate::sim_thread::SimThread;
 use crate::smoke::{Smoke, Step};
@@ -225,6 +226,10 @@ struct Game {
     config: wgpu::SurfaceConfiguration,
     present_modes: Vec<wgpu::PresentMode>,
     renderer: Renderer,
+    /// The robot sprite sheet and its animations (normal mode).
+    robot_look: RobotLook,
+    /// Reused list of sprites.
+    sprites: Vec<foundry_render::Sprite>,
 
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
@@ -278,6 +283,8 @@ struct Game {
     /// Esc stopped the wait for a new key: stop it after the next UI frame (so the UI does not
     /// also use this Esc to close the menu).
     cancel_wait: bool,
+    /// Timing logs (`DEEP_FOUNDRY_PERF`, see `perf.rs`).
+    perf: Option<crate::perf::MainPerf>,
 }
 
 impl Game {
@@ -322,7 +329,9 @@ impl Game {
         config.alpha_mode = caps.alpha_modes[0];
         surface.configure(&device, &config);
 
-        let renderer = Renderer::new(&device, &queue, format, &content);
+        let mut renderer = Renderer::new(&device, &queue, format, &content);
+        let robot_look = RobotLook::load();
+        renderer.set_sprite_sheet(robot_look.size.0, robot_look.size.1, &robot_look.rgba);
 
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -367,6 +376,8 @@ impl Game {
             config,
             present_modes: caps.present_modes,
             renderer,
+            robot_look,
+            sprites: Vec::new(),
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -401,6 +412,7 @@ impl Game {
             keys_dirty: true,
             rows_mode: None,
             cancel_wait: false,
+            perf: (crate::perf::enabled() || crate::perf::dig_script()).then(crate::perf::MainPerf::new),
         };
         game.enter(args.start_state(), args.seed, args.shape());
         Ok(game)
@@ -1002,6 +1014,9 @@ impl Game {
         let Some(world) = &self.world else { return };
         let Some(mut snapshot) = world.sim.take_snapshot() else { return };
         let evicted = self.renderer.apply_snapshot(&snapshot, &self.controls.camera);
+        if let Some(p) = self.perf.as_mut() {
+            p.uploads += self.renderer.stats().uploaded_chunks;
+        }
         for image in snapshot.chunks.drain(..) {
             self.cells.insert(image.pos, image.texels);
         }
@@ -1113,15 +1128,25 @@ impl Game {
         let dt = dt.min(0.05);
 
         // 1. The newest snapshot.
+        self.perf_mark(true);
+        let tick_before = self.tick;
         self.take_snapshot(frame_start);
         // In the normal mode the camera follows the robot. It moves before the UI, so the shapes
         // over the world (robot, ghost) use the same camera as the world.
         if self.is_normal() {
             self.follow_robot(dt, frame_start);
         }
+        self.dig_script_step(frame_start);
+        if let Some(p) = self.perf.as_mut() {
+            let n = self.world.as_ref().and_then(|w| w.normal.as_ref());
+            let robot = n.and_then(|n| Some((n.robot_pos(frame_start)?.0, n.frame.robot?.vel.0)));
+            p.frame_data(self.tick.saturating_sub(tick_before), robot, dt_raw);
+        }
+        self.perf_mark(false);
 
         // 2. The UI.
         self.update_model(frame_start);
+        self.perf_mark(false);
         let mut raw_input = self.egui_state.take_egui_input(&self.window);
         if let Some(s) = self.smoke.as_mut() {
             raw_input.events.append(&mut s.events);
@@ -1184,6 +1209,7 @@ impl Game {
         self.egui_free.extend(full_output.textures_delta.free.drain());
         let pixels_per_point = full_output.pixels_per_point;
         let paint_jobs = self.egui_ctx.tessellate(std::mem::take(&mut full_output.shapes), pixels_per_point);
+        self.perf_mark(false);
         for action in actions {
             self.handle_action(action, event_loop, frame_start);
         }
@@ -1214,6 +1240,7 @@ impl Game {
         }
 
         // 4. Draw.
+        self.perf_mark(false);
         let cpu_before_acquire = frame_start.elapsed();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
@@ -1237,11 +1264,22 @@ impl Game {
             }
         };
         let acquired = Instant::now();
+        self.perf_mark(false);
         let target = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
 
         let has_world = self.world.is_some();
         if has_world {
+            // The robot and its effects, on the cell grid (normal mode).
+            self.sprites.clear();
+            let mouse = self.mouse_cell();
+            if let Some(n) = self.world.as_ref().and_then(|w| w.normal.as_ref())
+                && let (Some(r), Some(at)) = (n.frame.robot.as_ref(), n.robot_pos(frame_start))
+            {
+                let tool = n.tool_use(&self.content, mouse);
+                self.robot_look.sprites(r, at, tool, n.frame.tick, None, &mut self.sprites);
+            }
+            self.renderer.set_sprites(&self.sprites);
             self.renderer.set_time(frame_start.duration_since(self.timing.start).as_secs_f64());
             self.renderer.render(&mut encoder, &target, &self.controls.camera);
         }
@@ -1263,6 +1301,7 @@ impl Game {
         self.queue.submit(egui_cmds.into_iter().chain([encoder.finish()]));
         self.free_egui_textures();
         self.window.pre_present_notify();
+        self.perf_mark(false);
         let before_present = Instant::now();
         self.queue.present(frame);
         if self.needs_configure {
@@ -1284,6 +1323,12 @@ impl Game {
                 before_present.elapsed().as_secs_f64() * 1000.0,
                 self.renderer.stats().uploaded_chunks,
             );
+        }
+        if let Some(p) = self.perf.as_mut() {
+            p.parts.mark();
+            if crate::perf::enabled() {
+                p.end_frame(dt_raw as f64 * 1000.0);
+            }
         }
         let cpu_ms = cpu.as_secs_f32() * 1000.0;
         self.timing.cpu_ms += (cpu_ms - self.timing.cpu_ms) * 0.05;
@@ -1310,6 +1355,36 @@ impl Game {
         if (target - *c).length() > 400.0 {
             *c = target;
         }
+    }
+
+    /// Timing logs: start a frame (`begin`), or end the next part of the frame.
+    fn perf_mark(&mut self, begin: bool) {
+        match self.perf.as_mut() {
+            Some(p) if begin => p.parts.begin(),
+            Some(p) => p.parts.mark(),
+            None => {}
+        }
+    }
+
+    /// `DEEP_FOUNDRY_DIG_SCRIPT`: move the mouse around the robot, hold the dig button and walk
+    /// (see `perf::dig_script_at`).
+    fn dig_script_step(&mut self, now: Instant) {
+        if !crate::perf::dig_script() || !self.playing() {
+            return;
+        }
+        let start = *self.perf.get_or_insert_with(crate::perf::MainPerf::new).script_start.get_or_insert(now);
+        let ((dx, dy), walk) = crate::perf::dig_script_at(now.duration_since(start).as_secs_f32());
+        let Some(n) = self.world.as_mut().and_then(|w| w.normal.as_mut()) else { return };
+        let Some((x, y)) = n.robot_pos(now) else { return };
+        let cell = DVec2::new(
+            (x + crate::player::ROBOT_W as f32 * 0.5 + dx) as f64,
+            (y + crate::player::ROBOT_H as f32 * 0.5 + dy) as f64,
+        );
+        n.held.dig = true;
+        n.held.right = walk > 0;
+        n.held.left = walk < 0;
+        self.mouse = self.controls.camera.cell_to_screen(cell);
+        self.mouse_inside = true;
     }
 
     /// Send the player input and the open windows to the factory (normal mode), when they changed.

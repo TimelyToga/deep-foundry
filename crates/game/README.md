@@ -34,8 +34,8 @@ The keys are the defaults. Settings > Controls changes them (see "Keys and setti
 
 | Input | Action |
 |---|---|
-| A / D | Walk left / right. The robot walks up low steps. It cannot pass solid cells or powder; it wades through liquids. |
-| W or Space | Jump. Hold it in the air: a small jetpack (the fuel fills on the ground). In a liquid: swim up. |
+| A / D | Walk left / right. The robot walks up and down steps of up to 3 cells and stays on the ground. It cannot pass solid cells or powder; it wades through liquids. |
+| W or Space | Jump. Release it early for a lower jump. A press just before landing, or just after walking off a ledge, still jumps. Hold it in the air: the jetpack (see below). In a liquid: swim up; with the head out of the liquid: jump out. Buried in sand: climb up. |
 | Left mouse (hold) | Dig the cells at the mouse (in reach). Each dug cell becomes its broken form (stone becomes gravel). The robot keeps useful materials in its tanks and throws the others out behind itself as loose material (see "Digging: keep or drop"). Stone is too hard at the start. |
 | Right mouse (hold) | Spray material from the tank at the mouse. Click a tank slot (or a material on the quickbar) to choose the material; else the first tank is used. |
 | F (hold) | Scan the material under the mouse. The first scan of a material discovers it. |
@@ -49,6 +49,20 @@ The keys are the defaults. Settings > Controls changes them (see "Keys and setti
 | Mouse wheel | Zoom |
 | Esc | Close the top window, or open the pause menu |
 | F3 | Debug panel |
+
+### The robot and the jetpack
+
+- The robot body is 8 x 16 cells. It is drawn as pixel art on the cell grid (one art pixel is one
+  cell), in a frame of 16 x 20 cells: the antenna, the backpack and the tool stick out of the
+  body. See "The robot picture" below.
+- The jetpack has fuel for 50 ticks (a little less than one second) of flight. On the ground the
+  fuel fills again after a wait of 20 ticks.
+- A bar behind the robot shows the fuel while it is not full: orange while the jetpack runs,
+  yellow in the air, "Jet empty" and a red blinking frame when it is empty, gray while it waits
+  on the ground, cyan with an arrow while it fills.
+- While a tool is used (dig, spray, scan), the robot turns to the aim point and points its tool
+  arm at it. Digging shows a beam, sparks and the dug cells that fly to the tool.
+- All movement numbers are in the "Tuning" block at the top of `src/player.rs`.
 
 ### Digging: keep or drop
 
@@ -208,6 +222,16 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
   `guide-workbench` shows the guide after the first goals (up to the workbench and the two
   ores), `guide-done` the guide when every goal that the game can do is done ("Next: the kiln.
   It comes in a later update."), and `campfire` a campfire window that fires clay bricks.
+- `--pose NAME[:FRAME]` (normal mode) makes the robot act for the picture: `idle`, `walk`,
+  `jump`, `fall`, `land`, `fly`, `wade` show that animation (FRAME picks one frame; `fall` and
+  `land` first use up the jetpack fuel, so the fuel bar shows). `dig`, `spray` and `scan` use
+  that tool on a place in front of the robot. `--face left` or `--face right` sets the direction.
+  `--robot X` puts the robot on the ground (or in the water) at column X first.
+
+```sh
+cargo run --release -p deep_foundry -- --screenshot out/char.png --pose dig --zoom 8 --size 800x500 --no-ui --ticks 60
+cargo run --release -p deep_foundry -- --screenshot out/wade.png --robot 640 --zoom 8 --size 800x500 --no-ui --ticks 90
+```
 
 ```sh
 cargo run -p deep_foundry -- --screenshot out/hub.png --size 2560x1440 --mode normal --ui-state hub --ticks 60
@@ -215,12 +239,56 @@ cargo run -p deep_foundry -- --screenshot out/hub.png --size 2560x1440 --mode no
 - `--center X,Y` sets the world cell at the image center. Any x works, for example
   `--center 64000000,1050`.
 
+## The robot picture
+
+- `assets/sprites/robot.png` is the sprite sheet: one pixel is one world cell, each frame is
+  16 x 20 pixels. `assets/sprites/robot.ron` describes it: the animations (idle, walk, jump,
+  fall, land, fly, wade), their frame counts and speed, the arm in 16 directions, the arm
+  outline, the jetpack flame and one white pixel for particles.
+- `tools/sprites/make_robot.py` draws both files from parts and a small palette, and
+  `tools/sprites/robot_preview.png` (all frames at 4x on a cave, sand and water background). Run
+  it from the repository root:
+
+  ```sh
+  uv run --with pillow python tools/sprites/make_robot.py
+  ```
+
+- The game reads the two files at startup. If they are missing or wrong, it uses the copies built
+  into the program (a warning is logged).
+- `src/robot_sprite.rs` picks the animation frame from the robot state and makes the sprites. The
+  renderer draws them into the world texture (`crates/render/src/sprite.rs`): the robot is behind
+  liquids and gases and shows through them at 60 %, the flame, beam and sparks are in front.
+
 ## Measure the frame rate
 
 ```sh
 cargo run -p deep_foundry --release -- --exit-after 10 --size 2560x1440
 cargo run -p deep_foundry --release -- --exit-after 10 --size 2560x1440 --no-vsync
 ```
+
+## Find slow parts
+
+Timing logs in the window: `DEEP_FOUNDRY_PERF=1` prints two lines each second. The main thread
+line has the parts of a frame (snapshot upload, UI model, egui, actions, wait for the display,
+draw, present), the frames with no or two new ticks, and the robot jerks. The simulation line has
+the parts of a tick (commands, cell update, factory, snapshot, factory frame, publish), the late
+ticks and the lost time. Each part shows "average/worst" in milliseconds.
+`DEEP_FOUNDRY_DIG_SCRIPT=1` plays a fixed script in the normal mode: the robot digs down, then
+digs and walks right, then left, and the mouse moves around it.
+
+```sh
+DEEP_FOUNDRY_PERF=1 DEEP_FOUNDRY_DIG_SCRIPT=1 cargo run -p deep_foundry --release -- \
+    --ui-state playing --mode normal --exit-after 14
+```
+
+The same script with no window, with the time of each part of a tick and a frame:
+
+```sh
+cargo test --release -p deep_foundry dig_perf -- --ignored --nocapture --test-threads 1
+```
+
+Waits between threads are long only when the CPU is busy. To see them, run it while other
+programs use all cores (for example one `yes > /dev/null` per core).
 
 ## Check the menus and saves
 

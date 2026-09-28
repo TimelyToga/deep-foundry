@@ -12,14 +12,20 @@ mod construct_draw;
 mod controls;
 mod debug_panel;
 mod demo;
+#[cfg(test)]
+mod dig_perf;
 mod factory_host;
 mod keys;
+mod motion;
 mod normal;
 mod overlay;
+mod perf;
 mod player;
+mod robot_sprite;
 mod saves;
 mod screenshot;
 mod settings;
+mod sim_pool;
 mod sim_thread;
 mod smoke;
 mod spoil;
@@ -36,7 +42,7 @@ fn main() -> Result<()> {
     )
     .init();
     let args = match args::parse(std::env::args().skip(1)) {
-        Ok(args::Parsed::Run(a)) => a,
+        Ok(args::Parsed::Run(a)) => *a,
         Ok(args::Parsed::Help) => {
             print!("{}", args::USAGE);
             return Ok(());
