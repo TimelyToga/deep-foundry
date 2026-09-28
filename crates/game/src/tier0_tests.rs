@@ -68,8 +68,8 @@ impl Player {
     /// Walk to column `x` with the walk keys. When the robot stands still against something
     /// (the Hub, a building, a hill), it jumps and flies with the jetpack, as a player does.
     fn walk_to(&mut self, x: i32) -> Result<(), String> {
-        let (mut last, mut still, mut jump) = (self.host.robot.left, 0, 0u32);
-        for _ in 0..4000 {
+        let (mut last, mut still, mut jump, mut jump_cooldown) = (self.host.robot.left, 0, 0u32, 0u32);
+        for travel_tick in 0..4000 {
             let dx = x - self.center_x();
             if dx.abs() <= 3 {
                 self.stop();
@@ -85,16 +85,23 @@ impl Player {
             let r = self.host.robot;
             still = if r.left == last { still + 1 } else { 0 };
             last = r.left;
-            if still >= 4 && jump == 0 {
+            if still >= 4 && jump == 0 && jump_cooldown == 0 {
                 jump = 60;
+                jump_cooldown = 90;
             }
+            jump_cooldown = jump_cooldown.saturating_sub(1);
             let movement = MoveInput { x: dx.signum() as i8, jump: jump > 0 };
             jump = jump.saturating_sub(1);
-            self.apply(FactoryCommand::Input(PlayerInput { movement, aim: r.center_cell(), ..Default::default() }));
+            // Generated terrain includes thick tree trunks and steep banks. Dig a passage
+            // when jumping alone cannot clear an obstacle, using the normal dig input.
+            let center = r.center_cell();
+            let aim_y = center.y + [-8, 0, 8][(travel_tick / 10 % 3) as usize];
+            let aim = CellPos::new(center.x + dx.signum() * 10, aim_y);
+            self.apply(FactoryCommand::Input(PlayerInput { movement, aim, dig: r.blocked > 0, ..Default::default() }));
             self.ticks(1);
         }
         self.stop();
-        Err(format!("the robot could not walk from x {} to x {x}", self.center_x()))
+        Err(format!("the robot could not walk from x {} to x {x}; robot {:?}", self.center_x(), self.host.robot))
     }
 
     /// The cell of a material nearest to the robot, near the start.
@@ -108,7 +115,7 @@ impl Player {
                 if self.sim.cell(p).material != material {
                     continue;
                 }
-                let d = ((x - cx) as i64).pow(2) + ((y - cy) as i64).pow(2);
+                let d = ((x - cx) as i64).pow(2) + 4 * ((y - cy) as i64).pow(2);
                 if best.is_none_or(|(bd, _)| d < bd) {
                     best = Some((d, p));
                 }
@@ -128,14 +135,14 @@ impl Player {
             let Some(at) = self.find(m) else { return Err(format!("no {material} left near the start")) };
             if (at.x - self.center_x()).abs() > 40 {
                 // Stand beside it, on the side of the robot.
-                let side = if self.center_x() > at.x { 12 } else { -12 };
+                let side = if self.center_x() > at.x { 32 } else { -32 };
                 self.walk_to(at.x + side)?;
             }
             self.apply(FactoryCommand::Input(PlayerInput { aim: at, dig: true, ..Default::default() }));
             self.ticks(3);
         }
         self.stop();
-        if done(self) { Ok(()) } else { Err(format!("digging {material} did not finish the goal")) }
+        if done(self) { Ok(()) } else { Err(format!("digging {material} did not finish the goal; nearest {:?}, robot {:?}", self.find(m), self.host.robot)) }
     }
 
     fn stop(&mut self) {
@@ -389,3 +396,6 @@ fn digging_keeps_the_ore_and_throws_the_dirt_out() {
     let after = p.sim.count_material(area, dirt) + p.sim.count_material(area, mud);
     assert_eq!(after, before, "no dirt was lost");
 }
+
+#[path = "generated_progression_tests.rs"]
+mod generated_progression;
