@@ -198,7 +198,7 @@ DEEP_FOUNDRY_PERF=1 DEEP_FOUNDRY_DIG_SCRIPT=1 cargo run -p deep_foundry --releas
 The same script with no window, with the time of each part of a tick and a frame:
 
 ```sh
-cargo test --release -p deep_foundry dig_perf -- --ignored --nocapture
+cargo test --release -p deep_foundry dig_perf -- --ignored --nocapture --test-threads 1
 ```
 
 Waits between threads are long only when the CPU is busy. To see them, run it while other

@@ -3,7 +3,7 @@
 //! Run it with:
 //!
 //! ```sh
-//! cargo test --release -p deep_foundry dig_perf -- --ignored --nocapture
+//! cargo test --release -p deep_foundry dig_perf -- --ignored --nocapture --test-threads 1
 //! ```
 //!
 //! It builds the real demo world (no side limit, depth 128) and a normal game, with the camera of
@@ -21,6 +21,10 @@
 //! The waits for pool threads are long only when the CPU is busy, so run it also while other
 //! programs use all cores (for example `yes > /dev/null` once per core). There is no GPU here, so
 //! chunk uploads and drawing are not measured.
+//!
+//! Two more measures run with the same command: `big_scene_perf` (a flood and a falling sand
+//! column, about 100 awake chunks) and `zoom_out_perf` (a zoom out makes up to 1,600 new chunks).
+//! `--test-threads 1` runs the measures one after another, so they do not slow each other.
 
 use crate::controls::CameraControl;
 use crate::demo::{self, Shape};
