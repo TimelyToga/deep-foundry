@@ -17,6 +17,8 @@ const MAX_FLOW: i32 = 16;
 /// How far a surface liquid cell looks to the side for a place to fall.
 /// Must stay below `MAX_CELL_MOVE` (the parallel reach rule).
 const LOOK_AHEAD: i32 = 31;
+/// A pressed liquid cell looks the full look-ahead through its liquid in one of this many ticks.
+const FAR_SCAN: u32 = 4;
 /// The level pass looks at most this far (cells) along a liquid surface.
 pub const MAX_LEVEL_SCAN: i32 = 1024;
 
@@ -53,9 +55,15 @@ pub fn fall_only(h: &mut Hood, x: i32, y: i32, phase: Phase) -> bool {
 
 /// A liquid cell left (x, y). If it was a top cell and (x, y) is now air, the row above has a new
 /// place to fall there; the level pass wakes the far ends of that row (see `wake_row_ends`).
+/// Only if a cell next to it on its row is a floor: else no top row can walk to it (for example
+/// a cell in the middle of a falling stream).
 #[inline]
 fn opened(h: &mut Hood, x: i32, y: i32, was_top: bool) {
-    if was_top && h.mat(x, y).is_air() && h.mat(x, y - 1).is_air() {
+    if was_top
+        && h.mat(x, y).is_air()
+        && h.mat(x, y - 1).is_air()
+        && (!passable(h, h.mat(x - 1, y)) || !passable(h, h.mat(x + 1, y)))
+    {
         let p = h.world_pos(x, y);
         h.opened.push(p);
     }
@@ -231,11 +239,16 @@ fn powder(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
     false
 }
 
-/// A liquid cell left (x, y). Surface cells up to `LOOK_AHEAD` cells away on this row and the row
-/// above may now find a place to fall, so check them again in the next tick.
+/// A liquid cell left (x, y). If (x, y) is now at the surface (air or gas above it), surface cells
+/// up to `LOOK_AHEAD` cells away on this row and the row above may now find a place to fall there,
+/// and pressed cells on this row may push into it: check them again in the next tick. A place under
+/// liquid (a hole) needs no such wake: the liquid above falls into it, and that fall wakes what
+/// it must.
 #[inline]
 fn wake_row(h: &mut Hood, x: i32, y: i32) {
-    h.keep_awake_rect(x - LOOK_AHEAD, y - 1, x + LOOK_AHEAD + 1, y + 1);
+    if passable(h, h.mat(x, y - 1)) {
+        h.keep_awake_rect(x - LOOK_AHEAD, y - 1, x + LOOK_AHEAD + 1, y + 1);
+    }
 }
 
 #[inline(always)]
@@ -410,7 +423,9 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
             dir = if h.rng.coin() { 1 } else { -1 };
         }
     }
-    h.set_motion(x, y, flow_bits(dir, energy));
+    if flow_bits(dir, energy) != motion {
+        h.set_motion(x, y, flow_bits(dir, energy));
+    }
     let md = h.mats.density[mi];
 
     // Sink through a lighter liquid below.
@@ -495,8 +510,17 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
     let pressed = is_liquid(h, x, y - 1);
     let on_liquid = is_liquid(h, x, y + 1);
     let mut saw_rim = false;
-    for _ in 0..2 {
-        let side = look_side(h, x, y, m, dir, look, on_liquid);
+    // A pressed cell inside its liquid (the same liquid on both sides) can only push to a free
+    // cell on its row. If there is none within the look-ahead, there is nothing to do sideways.
+    let inside = pressed && h.mat(x - 1, y) == m && h.mat(x + 1, y) == m;
+    let tries = if inside && !h.row_has_free(y, x - look, x + look + 1) { 0 } else { 2 };
+    for _ in 0..tries {
+        // A pressed cell looks `flow` cells through its liquid; the full look-ahead only in one of
+        // `FAR_SCAN` ticks (a far push is then that many times as likely, so the rate is the same).
+        // This saves most of the work for cells inside a large body of liquid.
+        let far = !pressed || h.rng.below(FAR_SCAN) == 0;
+        let through = if far { look } else { flow.min(look) };
+        let side = look_side(h, x, y, m, dir, look, through, on_liquid);
         saw_rim |= side.rim.is_some();
         let mut go: Option<Move> = None;
         if side.heavier_under {
@@ -512,7 +536,8 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
                     // Pressure pushes to a free cell up to the look-ahead away; a far push happens
                     // only with the chance range / distance, so the speed is about `range`.
                     let range = push_range(liquid_depth(h, x, y), flow);
-                    if d <= range || h.rng.chance(range as f32 / d as f32) {
+                    let scale = if d > flow { FAR_SCAN as f32 } else { 1.0 };
+                    if d <= range || h.rng.chance(scale * range as f32 / d as f32) {
                         go = Some(Move { to: x + dir * d, from_top: true, releases: true });
                     } else {
                         h.keep_awake(x, y);
@@ -557,6 +582,8 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
                 let push = if keep > 0 && h.mat(mv.to, y - 1).is_air() { (1 + (y - top) / 10).min(3) as u8 } else { 0 };
                 h.set_motion(x, top, flow_bits(dir, push));
                 h.swap(x, top, mv.to, y);
+                // The pushing cell stays where it is; it may push again in the next tick.
+                h.keep_awake(x, y);
                 if top != y {
                     wake_row(h, x, top);
                     opened(h, x, top, true);
@@ -571,7 +598,9 @@ fn spread(h: &mut Hood, x: i32, y: i32, m: MaterialId) -> bool {
         energy = energy.saturating_sub(1);
         dir = -dir;
     }
-    h.set_motion(x, y, flow_bits(dir, 0));
+    if h.motion(x, y) != flow_bits(dir, 0) {
+        h.set_motion(x, y, flow_bits(dir, 0));
+    }
     // A calm top cell near the end of a top row may still have a place to fall farther away than
     // the look-ahead: the level pass looks for it.
     if levels && !passable(h, h.mat(x, y + 1)) && !pressed && h.mat(x, y - 1).is_air() && (saw_rim || open_start(h, x, y, 1) || open_start(h, x, y, -1)) {
@@ -765,10 +794,11 @@ struct Side {
     heavier_under: bool,
 }
 
-/// Look along row `y` in direction `dir`, up to `look` cells: first through cells of the same
-/// liquid (if the next cell is one), then through free cells, until an obstacle.
+/// Look along row `y` in direction `dir`, up to `look` cells: first through at most `through`
+/// cells of the same liquid (if the next cell is one), then through free cells, until an obstacle.
 #[inline]
-fn look_side(h: &mut Hood, x: i32, y: i32, m: MaterialId, dir: i32, look: i32, on_liquid: bool) -> Side {
+#[allow(clippy::too_many_arguments)]
+fn look_side(h: &mut Hood, x: i32, y: i32, m: MaterialId, dir: i32, look: i32, through: i32, on_liquid: bool) -> Side {
     let mi = m.index();
     let flow = (h.mats.flow[mi] as i32).clamp(1, MAX_FLOW);
     let mut side = Side { through: false, rim: None, free: 0, drop: None, open: on_liquid, heavier_under: false };
@@ -795,12 +825,19 @@ fn look_side(h: &mut Hood, x: i32, y: i32, m: MaterialId, dir: i32, look: i32, o
         side.open = false;
         return side;
     }
-    for d in 1..=look {
+    // Through the same liquid, reading the row directly.
+    let start = if side.through {
+        let n = h.run_of(x, y, dir, m, through.min(look));
+        if n >= through.min(look) {
+            return Side { open: false, ..side };
+        }
+        n + 1
+    } else {
+        1
+    };
+    for d in start..=look {
         let tx = x + dir * d;
         let t = h.mat(tx, y);
-        if t == m && side.rim.is_none() && side.free == 0 {
-            continue;
-        }
         if !passable(h, t) || !h.inside(tx, y) {
             break;
         }

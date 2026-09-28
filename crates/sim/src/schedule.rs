@@ -7,7 +7,7 @@
 //! 2. Make sure every neighbor of a working chunk is live (made by the source or unpacked, in
 //!    parallel), so jobs never need to allocate. Then look up the 3 × 3 chunk pointers of each job
 //!    once for the whole tick.
-//! 3. Fall pass: cells that are already falling move straight down. One job per column of
+//! 3. Fall pass: liquid cells that are already falling move straight down. One job per column of
 //!    working chunks, from the bottom chunk to the top chunk. Falls are vertical, so a job touches
 //!    only cells in its own column, and the jobs run in parallel. Because each column is done from
 //!    the bottom up, a falling body moves as one piece across chunk borders (no gaps, no stripes).
@@ -70,6 +70,7 @@ struct JobOut {
     marks: [LocalRect; 9],
     changed: u16,
     touched: u16,
+    falling: [u64; 9],
     events: Vec<SimEvent>,
     spawns: Vec<Spawn>,
     levels: Vec<CellPos>,
@@ -83,6 +84,7 @@ impl JobOut {
             marks: hood.marks,
             changed: hood.changed,
             touched: hood.touched,
+            falling: hood.falling,
             events: hood.events,
             spawns: hood.spawns,
             levels: hood.levels,
@@ -156,11 +158,11 @@ pub fn movement_tick(
             None => jobs.par_iter().map(run).collect(),
         };
         for out in results {
+            merge(world, &ptrs, work[out.i].0, out.i, &out, stamp);
             events.extend(out.events);
             spawns.extend(out.spawns);
             levels.extend(out.levels);
             opened.extend(out.opened);
-            merge(world, &ptrs, work[out.i].0, out.i, &out.marks, out.changed, out.touched, stamp);
         }
     }
 
@@ -171,11 +173,11 @@ pub fn movement_tick(
     work.len() as u32
 }
 
-/// Add the dirty marks, "changed" and "touched" bits of one job (center chunk `c`, job `i`) to
-/// the chunks, and queue the marked chunks.
-#[allow(clippy::too_many_arguments)]
-fn merge(world: &mut World, ptrs: &HoodPtrs, c: ChunkPos, i: usize, marks: &[LocalRect; 9], changed: u16, touched: u16, stamp: u64) {
-    for (s, mark) in marks.iter().enumerate() {
+/// Add the dirty marks, "changed", "touched" and falling-row bits of one job (center chunk `c`,
+/// job `i`) to the chunks, and queue the marked chunks.
+fn merge(world: &mut World, ptrs: &HoodPtrs, c: ChunkPos, i: usize, out: &JobOut, stamp: u64) {
+    let (changed, touched) = (out.changed, out.touched);
+    for (s, mark) in out.marks.iter().enumerate() {
         let p = ptrs.get(i)[s];
         if p.is_null() {
             continue;
@@ -194,6 +196,7 @@ fn merge(world: &mut World, ptrs: &HoodPtrs, c: ChunkPos, i: usize, marks: &[Loc
             if touched & (1 << s) != 0 {
                 (*p).pristine = false;
             }
+            (*p).falling_rows |= out.falling[s];
         }
     }
 }
@@ -246,8 +249,8 @@ fn fall_pass(
     };
     let mut opened = Vec::new();
     for out in results.into_iter().flatten() {
+        merge(world, ptrs, work[out.i].0, out.i, &out, stamp);
         opened.extend(out.opened);
-        merge(world, ptrs, work[out.i].0, out.i, &out.marks, out.changed, out.touched, stamp);
     }
     opened
 }

@@ -149,7 +149,10 @@ fn save_world(sim: &Simulation, path: &std::path::Path) -> String {
 fn load_world(sim: &mut Simulation, path: &std::path::Path) -> String {
     match Simulation::load_file_with_resolver(sim.content().clone(), &crate::demo::resolve_source, path) {
         Ok((loaded, report)) => {
+            // The settings are the player's, not part of the world: keep them.
+            let settings = sim.settings().clone();
             *sim = loaded;
+            *sim.settings_mut() = settings;
             if report.unknown_materials.is_empty() {
                 format!("Game loaded: {}", file_name(path))
             } else {
