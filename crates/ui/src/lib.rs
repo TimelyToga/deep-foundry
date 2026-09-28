@@ -222,6 +222,11 @@ impl FoundryUi {
         std::mem::take(&mut self.actions)
     }
 
+    /// The item icons (after the first `show`), so the game can draw icons over the world.
+    pub fn atlas(&self) -> Option<&IconAtlas> {
+        self.atlas.as_ref()
+    }
+
     /// Open a window that the UI owns (`Character`, `Production`, `Research` or `Guide`).
     /// `Building` and `PowerNetwork` open when the game fills `UiModel::building` or `UiModel::power`.
     pub fn open_window(&mut self, kind: WindowKind) {

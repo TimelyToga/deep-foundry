@@ -7,6 +7,8 @@
 
 mod app;
 mod args;
+mod construct;
+mod construct_draw;
 mod controls;
 mod debug_panel;
 mod demo;

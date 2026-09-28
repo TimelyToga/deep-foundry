@@ -22,7 +22,8 @@ OPTIONS:
     --ui-state STATE         Start in this screen: menu, newgame, load, settings, pause, save,
                              playing, inventory or debug (default: menu; playing with --exit-after).
                              Normal mode only: building (a workbench window), ghost (a building in
-                             the hand), research, guide, hub (the Hub window)
+                             the hand), research, guide, hub (the Hub window),
+                             ghost-red, drag (a belt line), alt (alt mode), remove
     --mode MODE              The mode of a world that --ui-state starts: sandbox (default) or
                              normal (the robot, the factory and the Hub)
     --ui-scale S             Size of the UI, 0.75 to 2 (default 1)
@@ -91,6 +92,14 @@ pub enum UiState {
     Guide,
     /// Normal mode: the Hub window.
     Hub,
+    /// Normal mode: a ghost that cannot be placed, with the reason.
+    GhostRed,
+    /// Normal mode: a line of belts is dragged.
+    Drag,
+    /// Normal mode: the alt mode with recipe icons over machines.
+    Alt,
+    /// Normal mode: the remove button takes a building.
+    Remove,
 }
 
 impl UiState {
@@ -110,6 +119,10 @@ impl UiState {
             "research" => UiState::Research,
             "guide" => UiState::Guide,
             "hub" => UiState::Hub,
+            "ghost-red" => UiState::GhostRed,
+            "drag" => UiState::Drag,
+            "alt" => UiState::Alt,
+            "remove" => UiState::Remove,
             _ => return None,
         })
     }
@@ -121,7 +134,18 @@ impl UiState {
 
     /// True for the screens that exist only in the normal mode.
     pub fn needs_normal(self) -> bool {
-        matches!(self, UiState::Building | UiState::Ghost | UiState::Research | UiState::Guide | UiState::Hub)
+        matches!(
+            self,
+            UiState::Building
+                | UiState::Ghost
+                | UiState::Research
+                | UiState::Guide
+                | UiState::Hub
+                | UiState::GhostRed
+                | UiState::Drag
+                | UiState::Alt
+                | UiState::Remove
+        )
     }
 }
 

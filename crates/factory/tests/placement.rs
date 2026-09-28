@@ -234,3 +234,27 @@ fn save_and_load_keep_the_buildings() {
     run(&mut g, &mut sim2, 40);
     assert_eq!(g.building_view(id), f.building_view(id));
 }
+
+#[test]
+fn a_placed_building_turns_where_it_stands() {
+    let (mut f, mut sim) = setup();
+    let c = f.content.clone();
+    let at = TilePos::new(4, 10);
+    let id = f.place(kind(&c, "test_press"), at, 0, false, &mut sim).unwrap();
+    f.set_recipe(id, c.factory.recipe("test_press_sand")).unwrap();
+    // A 2 × 2 building turns in place; the ports move as for a new placement.
+    assert_eq!(f.set_transform(id, 1, false), Ok(()));
+    let v = f.building_view(id).unwrap();
+    assert_eq!((v.rotation, v.flip), (1, false));
+    assert_eq!(v.ports, f.ghost_ports(kind(&c, "test_press"), at, 1, false));
+    assert!(v.recipe.is_some(), "the recipe stays");
+    assert_eq!(sim.count_material(tile_cells(at, 2, 2), mat(&c, "wood_block")), 256, "the body stays");
+    // Belts face only left or right.
+    let belt = f.place(kind(&c, "test_belt"), TilePos::new(8, 11), 0, false, &mut sim).unwrap();
+    assert_eq!(f.set_transform(belt, 1, false), Err(PlaceError::CannotTurn));
+    assert_eq!(f.set_transform(belt, 2, false), Ok(()));
+    assert_eq!(foundry_factory::buildings::belt_direction(f.buildings.get(belt).unwrap().transform), -1);
+    // An old id changes nothing.
+    f.remove(belt, &mut sim).unwrap();
+    assert!(f.set_transform(belt, 0, false).is_err());
+}
