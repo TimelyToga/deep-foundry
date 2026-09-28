@@ -1,17 +1,19 @@
-//! The game UI: the `foundry_ui` screens with a sandbox model.
+//! The game UI: the `foundry_ui` screens and their model.
 //!
-//! There is no player and no factory yet, so the game runs in the sandbox mode (like the Factorio
-//! cheat mode): the inventory has every material with no limit, the stack in the hand is the paint
-//! brush, and the quickbar holds brush materials.
+//! Two modes:
+//! - **Sandbox** (like the Factorio cheat mode): the inventory has every material with no limit,
+//!   the stack in the hand is the paint brush, and the quickbar holds brush materials.
+//!   `SandboxUi` applies these actions itself.
+//! - **Normal**: the model comes from the factory (`normal.rs` fills it each frame).
 //!
-//! `SandboxUi` owns the `UiModel` and applies the sandbox actions (slot clicks, quickbar, hand).
-//! The window code (`app.rs`) handles the world actions (new game, save, load, pause).
+//! `SandboxUi` owns the `UiModel`. The window code (`app.rs`) handles the world actions (new
+//! game, save, load, pause).
 
 use crate::saves;
 use foundry_content::{Content, ItemRef, Stack};
 use foundry_core::MaterialId;
 use foundry_render::wgpu;
-use foundry_ui::{FoundryUi, GameState, SandboxView, SlotRef, UiAction, UiModel};
+use foundry_ui::{FoundryUi, GameMode, GameState, SandboxView, SlotRef, UiAction, UiModel};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -40,7 +42,30 @@ pub struct SandboxUi {
 impl SandboxUi {
     pub fn new(ctx: &egui::Context, content: Arc<Content>, saves_dir: PathBuf) -> Self {
         let ui = FoundryUi::new(ctx);
-        let mut model = UiModel::new(content.clone());
+        let mut model = UiModel::new(content);
+        model.settings.show_fps = true;
+        model.settings.simulation = sim_sliders(&foundry_sim::SimSettings::default());
+        model.saves = saves::list(&saves_dir);
+        let mut s = Self { ui, model, saves_dir, message_until: None, message_log: Vec::new() };
+        s.set_mode(GameMode::Sandbox);
+        s
+    }
+
+    /// Set up the model for a mode: the sandbox inventory and brush, or an empty model that the
+    /// normal mode fills from the factory.
+    pub fn set_mode(&mut self, mode: GameMode) {
+        let content = self.model.content.clone();
+        let model = &mut self.model;
+        model.player = Default::default();
+        model.building = None;
+        model.research = None;
+        model.techs.clear();
+        model.guide.clear();
+        model.finished_techs.clear();
+        if mode == GameMode::Normal {
+            model.sandbox = None;
+            return;
+        }
         model.player.inventory = content
             .materials
             .all()
@@ -53,11 +78,6 @@ impl SandboxUi {
         model.player.hand = model.player.hotbar[0].map(|item| Stack { item, count: 1 });
         model.player.craft_speed = 1.0;
         model.sandbox = Some(SandboxView { brush_radius: 6, sim_paused: false });
-        model.settings.show_fps = true;
-        model.settings.key_bindings = key_bindings();
-        model.settings.simulation = sim_sliders(&foundry_sim::SimSettings::default());
-        model.saves = saves::list(&saves_dir);
-        Self { ui, model, saves_dir, message_until: None, message_log: Vec::new() }
     }
 
     /// `Command::SetSimSetting` for every simulation slider, to give a new simulation the
@@ -149,30 +169,6 @@ impl SandboxUi {
             _ => false,
         }
     }
-}
-
-/// The keys of the sandbox, for the settings screen.
-fn key_bindings() -> Vec<(String, String)> {
-    [
-        ("Paint with the material in the hand", "Left mouse"),
-        ("Erase (paint air)", "Right mouse"),
-        ("Brush size", "[  and  ]"),
-        ("Materials window", "E"),
-        ("Quickbar slot 1-10", "1 - 0"),
-        ("Quickbar slot 11-20", "Shift + 1 - 0"),
-        ("Empty the hand", "Q"),
-        ("Move the view", "W A S D, arrow keys"),
-        ("Move the view faster", "Shift"),
-        ("Move the view with the mouse", "Middle mouse drag"),
-        ("Zoom", "Mouse wheel"),
-        ("Pause the simulation", "Space"),
-        ("One tick (while paused)", ". (period)"),
-        ("Pause menu / close window", "Esc"),
-        ("Debug panel", "F3"),
-    ]
-    .iter()
-    .map(|(a, k)| (a.to_string(), k.to_string()))
-    .collect()
 }
 
 /// Draw egui on top of `target`. With `clear`, fill the target with that color first

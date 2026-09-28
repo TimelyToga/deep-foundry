@@ -1,5 +1,6 @@
 //! Command line options.
 
+use foundry_ui::GameMode;
 use std::path::PathBuf;
 
 pub const USAGE: &str = "\
@@ -19,8 +20,14 @@ OPTIONS:
     --size WxH               Window size in screen pixels (default 1600x900 points)
     --saves DIR              Folder for saved games (default: the app data folder of the system)
     --ui-state STATE         Start in this screen: menu, newgame, load, settings, pause, save,
-                             playing, inventory or debug (default: menu; playing with --exit-after)
-    --ui-scale S             Size of the UI, 0.75 to 2 (default 1)
+                             playing, inventory or debug (default: menu; playing with --exit-after).
+                             Normal mode only: building (a workbench window), ghost (a building in
+                             the hand), research, guide, hub (the Hub window),
+                             ghost-red, drag (a belt line), alt (alt mode), remove
+    --mode MODE              The mode of a world that --ui-state starts: sandbox (default) or
+                             normal (the robot, the factory and the Hub)
+    --ui-scale S             Size of the UI, 0.75 to 2 (default: the settings file, else 1)
+    --settings FILE          The settings file (default: settings.ron in the app data folder)
     --smoke-test             Play a fixed list of UI actions in the window (new game, paint, pause,
                              save, load, quit to menu, continue, delete) and quit; exit code 1 on a
                              failure. Use it with --saves and an empty folder.
@@ -30,6 +37,7 @@ OPTIONS:
       --zoom Z               Screen pixels per cell (default 2)
       --center X,Y           World cell at the image center (default: the middle of the demo area)
       --no-ui                Draw only the world, with no UI (default screen: playing)
+      --walk N               Normal mode: the robot walks N ticks to the right first (N < 0: left)
     -h, --help               Show this text
 ";
 
@@ -55,8 +63,16 @@ pub struct Args {
     /// The screen to start in. `None`: the default.
     pub ui_state: Option<UiState>,
     pub ui_scale: f32,
+    /// `--ui-scale` was given (it wins over the settings file).
+    pub ui_scale_set: bool,
+    /// The settings file. `None`: `settings.ron` in the app data folder.
+    pub settings: Option<PathBuf>,
     /// Run the scripted check of the UI flow in the window.
     pub smoke_test: bool,
+    /// The mode of the world that `--ui-state` starts.
+    pub mode: GameMode,
+    /// Screenshots of the normal mode: ticks the robot walks first (negative: to the left).
+    pub walk: i32,
 }
 
 /// The screens that `--ui-state` can start in.
@@ -71,6 +87,24 @@ pub enum UiState {
     Playing,
     Inventory,
     Debug,
+    /// Normal mode: a workbench is placed and its window is open.
+    Building,
+    /// Normal mode: a building is in the hand and its ghost is at the mouse.
+    Ghost,
+    /// Normal mode: the research window.
+    Research,
+    /// Normal mode: the guide window.
+    Guide,
+    /// Normal mode: the Hub window.
+    Hub,
+    /// Normal mode: a ghost that cannot be placed, with the reason.
+    GhostRed,
+    /// Normal mode: a line of belts is dragged.
+    Drag,
+    /// Normal mode: the alt mode with recipe icons over machines.
+    Alt,
+    /// Normal mode: the remove button takes a building.
+    Remove,
 }
 
 impl UiState {
@@ -85,13 +119,38 @@ impl UiState {
             "playing" => UiState::Playing,
             "inventory" => UiState::Inventory,
             "debug" => UiState::Debug,
+            "building" => UiState::Building,
+            "ghost" => UiState::Ghost,
+            "research" => UiState::Research,
+            "guide" => UiState::Guide,
+            "hub" => UiState::Hub,
+            "ghost-red" => UiState::GhostRed,
+            "drag" => UiState::Drag,
+            "alt" => UiState::Alt,
+            "remove" => UiState::Remove,
             _ => return None,
         })
     }
 
     /// True for the screens that show a world.
     pub fn has_world(self) -> bool {
-        matches!(self, UiState::Pause | UiState::Save | UiState::Playing | UiState::Inventory | UiState::Debug)
+        !matches!(self, UiState::Menu | UiState::NewGame | UiState::Load | UiState::Settings)
+    }
+
+    /// True for the screens that exist only in the normal mode.
+    pub fn needs_normal(self) -> bool {
+        matches!(
+            self,
+            UiState::Building
+                | UiState::Ghost
+                | UiState::Research
+                | UiState::Guide
+                | UiState::Hub
+                | UiState::GhostRed
+                | UiState::Drag
+                | UiState::Alt
+                | UiState::Remove
+        )
     }
 }
 
@@ -112,7 +171,11 @@ impl Default for Args {
             saves: None,
             ui_state: None,
             ui_scale: 1.0,
+            ui_scale_set: false,
+            settings: None,
             smoke_test: false,
+            mode: GameMode::Sandbox,
+            walk: 0,
         }
     }
 }
@@ -127,6 +190,11 @@ impl Args {
     /// frame rate of the world), else the main menu.
     pub fn start_state(&self) -> UiState {
         self.ui_state.unwrap_or(if self.exit_after.is_some() { UiState::Playing } else { UiState::Menu })
+    }
+
+    /// The mode of a world that `--ui-state` starts. The normal-mode screens need the normal mode.
+    pub fn start_mode(&self) -> GameMode {
+        if self.ui_state.is_some_and(UiState::needs_normal) { GameMode::Normal } else { self.mode }
     }
 
     /// The shape of the world to make.
@@ -193,7 +261,16 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             }
             "--no-ui" => out.no_ui = true,
             "--smoke-test" => out.smoke_test = true,
+            "--mode" => {
+                out.mode = match value("--mode")?.as_str() {
+                    "normal" => GameMode::Normal,
+                    "sandbox" => GameMode::Sandbox,
+                    other => return Err(format!("--mode: unknown mode `{other}` (normal or sandbox)")),
+                }
+            }
+            "--walk" => out.walk = number(&value("--walk")?, "--walk")?,
             "--saves" => out.saves = Some(PathBuf::from(value("--saves")?)),
+            "--settings" => out.settings = Some(PathBuf::from(value("--settings")?)),
             "--ui-state" => {
                 let v = value("--ui-state")?;
                 out.ui_state = Some(UiState::parse(&v).ok_or_else(|| format!("--ui-state: unknown screen `{v}`"))?);
@@ -204,6 +281,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     return Err("--ui-scale must be 0.75 to 2".into());
                 }
                 out.ui_scale = s;
+                out.ui_scale_set = true;
             }
             "--center" => out.center = Some(pair::<f64>(&value("--center")?, ',', "--center")?),
             other => return Err(format!("unknown option `{other}`")),

@@ -5,7 +5,7 @@
 
 use foundry_content::ItemRef;
 use crate::model::BuildingSlots;
-use foundry_core::{BuildingId, RecipeId};
+use foundry_core::{BuildingId, RecipeId, TechId};
 
 /// The windows the UI can show. Used in `OpenWindow` and `CloseWindow`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -18,6 +18,31 @@ pub enum WindowKind {
     PowerNetwork,
     /// Production statistics (key P).
     Production,
+    /// Technologies: choose the research (key T). The game fills `UiModel::techs` while it is open.
+    Research,
+    /// The guide: goals for each tier (key G). The game fills `UiModel::guide`.
+    Guide,
+}
+
+/// The kind of game that "New game" starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GameMode {
+    /// The robot, the factory, research and the Hub.
+    #[default]
+    Normal,
+    /// No robot and no factory: paint any material with no limit (like the Factorio cheat mode).
+    Sandbox,
+}
+
+impl GameMode {
+    pub const ALL: [GameMode; 2] = [GameMode::Normal, GameMode::Sandbox];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GameMode::Normal => "Normal game",
+            GameMode::Sandbox => "Sandbox",
+        }
+    }
 }
 
 /// A slot that the player can click.
@@ -109,6 +134,24 @@ pub enum SettingChange {
     ShowDebug(bool),
     /// A number setting of the simulation (`SimSetting::key`).
     Simulation { key: String, value: f32 },
+    /// Match keys by the character that they type (true) or by their position (false).
+    KeysByLetter(bool),
+    /// The player clicked a row of the Controls list (`KeyRow::id`): the next key press becomes
+    /// its key. The same id again stops waiting.
+    RebindKey(String),
+    /// All keys back to the defaults.
+    ResetKeys,
+}
+
+/// A key of the UI that the game read with its key bindings (`FoundryUi::press_key`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiKey {
+    Character,
+    Production,
+    Research,
+    Guide,
+    /// Quickbar slot 0 to 19.
+    Quickbar(usize),
 }
 
 /// Everything the player can ask for.
@@ -144,12 +187,16 @@ pub enum UiAction {
     /// Change the recipe of a building. `None` clears it.
     SetRecipe { building: BuildingId, recipe: Option<RecipeId> },
 
+    // ----- Research -----
+    /// Research this technology now. The technologies it needs are queued first.
+    StartResearch(TechId),
+
     // ----- Alerts -----
     /// Show the place of an alert (by `AlertView::id`).
     ShowAlert(u32),
 
     // ----- Game flow -----
-    NewGame { seed: u64, size: WorldSize },
+    NewGame { seed: u64, size: WorldSize, mode: GameMode },
     /// Load the newest save.
     Continue,
     /// Open the pause menu and stop the simulation.
