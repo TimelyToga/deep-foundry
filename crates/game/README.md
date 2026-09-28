@@ -49,6 +49,7 @@ The keys are the defaults. Settings > Controls changes them (see "Keys and setti
 | Mouse wheel | Zoom |
 | Esc | Close the top window, or open the pause menu |
 | F3 | Debug panel |
+| F4 / F5 / F6 | Debug views: awake chunks, heat map, chunk grid |
 
 ### Building (as in Factorio)
 
@@ -90,7 +91,10 @@ The keys are the defaults (see "Keys and settings").
 | Space | Pause or resume the simulation (no menu) |
 | `.` (period) | Run one tick while paused |
 | Esc | Close the top window, or open the pause menu (Resume, Save, Load, Settings, Quit) |
-| F3 | Debug panel: simulation controls, chunk overlay, numbers |
+| F3 | Debug panel: simulation controls, debug views, light settings, tick time bars, numbers |
+| F4 | Debug view: awake chunks (yellow) and the cells the last tick updated (green) |
+| F5 | Debug view: heat map (blue cold, dark green 20 °C, then yellow, orange, red, white) |
+| F6 | Debug view: chunk grid (and the tile grid when zoomed in) |
 
 The HUD shows the frame rate, the tick time and the awake chunks at the top right, and the cell
 under the mouse (material and temperature) below them.
@@ -159,6 +163,9 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
 - `--ui-state` picks the screen (default `playing`). The UI runs several frames first, so the fonts
   and the window sizes are ready.
 - `--no-ui` draws only the world.
+- `--view LIST` turns on render views, comma separated: `nolight`, `nobloom`, `noshimmer`,
+  `heat` (heat map), `grid` (chunk grid), `light` (only the light map), `chunks` (awake chunks;
+  needs the UI).
 - `--mode normal` (or a normal-mode screen) makes a normal game: the Hub, the robot and the factory
   tick with the cells. The screens `inventory`, `building` (a crate), `ghost` (a steam crusher in
   the hand, with its ports), `ghost-red` (the same ghost in the ground, with the reason), `drag`
@@ -172,6 +179,17 @@ cargo run -p deep_foundry -- --screenshot out/hub.png --size 2560x1440 --mode no
 ```
 - `--center X,Y` sets the world cell at the image center. Any x works, for example
   `--center 64000000,1050`.
+
+## Light and the robot's look
+
+- The renderer has a light pass: caves are dark, lava, fire and hot cells give light, the sky
+  lights the surface from above, and the robot has a lamp. The Debug panel (F3) has switches
+  and sliders for it. `crates/render/src/lib.rs` explains the passes.
+- The sky light needs to know where the surface is: `render_setup::surface_level` (the sky
+  chunks of the world with no side limit, or 55% of the height of a box world).
+- The robot is a pixel-art sprite: `assets/sprites/robot.txt` (colors, glowing colors, and the
+  frames idle, walk, jump, fall, jetpack as text). The game reads the file at start; change it
+  and start the game again. `src/robot_sprite.rs` picks the frame.
 
 ## Measure the frame rate
 
