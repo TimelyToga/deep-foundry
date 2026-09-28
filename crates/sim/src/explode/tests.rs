@@ -299,6 +299,41 @@ fn building_cells_do_not_change() {
     assert_eq!(s.world_hash(), hash);
 }
 
+/// Time of explosions in a world of stone, sand and water. Run in release mode:
+/// `cargo test -p foundry_sim --release explosion_speed -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn explosion_speed() {
+    let make = || {
+        let mut s = world(8, 8);
+        fill(&mut s, 2, 200, 510, 510, "stone");
+        fill(&mut s, 2, 150, 510, 200, "sand");
+        fill(&mut s, 100, 120, 400, 150, "water");
+        s
+    };
+    for strength in [10.0, 40.0, 150.0, 255.0, 1000.0] {
+        let mut s = make();
+        let start = std::time::Instant::now();
+        s.explode(CellPos::new(256, 190), strength, 1200);
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("strength {strength}: radius {:.1}, {ms:.3} ms, {} particles", radius(strength), s.particles().len());
+    }
+    // A chain: 300 small explosions in one tick's events (as a burning gas pocket sends them).
+    let mut s = make();
+    s.tick();
+    for i in 0..300 {
+        s.events.push(SimEvent::Explosion { at: CellPos::new(60 + i * 13 % 400, 140 + i % 20), strength: 12.0, heat: 900 });
+    }
+    let mut ticks = vec![];
+    while ticks.is_empty() || s.queued_explosions() > 0 {
+        let start = std::time::Instant::now();
+        s.tick();
+        let explode_ms = s.stats().sections.iter().find(|x| x.0 == "explosions").map_or(0.0, |x| x.1);
+        ticks.push((start.elapsed().as_secs_f64() * 1000.0, explode_ms));
+    }
+    println!("chain of 300 (strength 12): {} ticks, (tick ms, explosion ms) {ticks:.2?}", ticks.len());
+}
+
 /// Pictures of the scenes: `out/explosions/<scene>_<tick>.png`.
 #[test]
 #[ignore]

@@ -693,13 +693,13 @@ struct Search {
 
 /// The cell where a landing particle becomes a grid cell:
 /// 1. `at` if it is air or gas;
-/// 1b. for a particle that is not a liquid (`back` is its velocity): else the first air cell back
+/// 2. for a particle that is not a liquid (`back` is its velocity): else the first air cell back
 ///    along the line it came from, at most `|velocity| + 2` cells (so debris piles up where it
 ///    hit something, and does not appear on top of the material it hit);
-/// 2. else the first air cell straight up (through liquid, powder and gas, not through solids);
-/// 3. else the nearest air cell around, at most `SEARCH_RING` cells away (upper cells first), with
+/// 3. else the first air cell straight up (through liquid, powder and gas, not through solids);
+/// 4. else the nearest air cell around, at most `SEARCH_RING` cells away (upper cells first), with
 ///    no solid cell on the line between it and `at`;
-/// 4. else the nearest air cell that it can reach through cells that are not solid, within
+/// 5. else the nearest air cell that it can reach through cells that are not solid, within
 ///    `SEARCH_AROUND` cells. A particle inside a solid searches through solids too.
 ///
 /// So a particle never lands on the other side of a wall. Only cells in live chunks count.
