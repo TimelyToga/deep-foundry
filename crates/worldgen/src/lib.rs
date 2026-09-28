@@ -200,9 +200,31 @@ impl WorldGen {
         }
         let support = (0..mats.len()).map(|i| if i as u16 == m.snow { m.ice } else { m.stone }).collect();
         let air = (0..settings.bottom_y.max(1)).map(|y| air_temperature(&settings, y)).collect();
+        // Random values, then smoothed twice with their 8 neighbors (the square wraps around),
+        // so the edges get small bumps and not single loose cells.
         let mut jitter = Box::new([0.0f32; 4096]);
         for (i, j) in jitter.iter_mut().enumerate() {
             *j = noise::signed(noise::hash1(0x6a09_e667, i as i32));
+        }
+        for _ in 0..2 {
+            let old = jitter.clone();
+            for y in 0..64 {
+                for x in 0..64 {
+                    let mut sum = 0.0;
+                    for dy in [63, 0, 1] {
+                        for dx in [63, 0, 1] {
+                            sum += old[((y + dy) % 64) * 64 + (x + dx) % 64];
+                        }
+                    }
+                    jitter[y * 64 + x] = sum / 9.0;
+                }
+            }
+        }
+        // Scale to a spread of about -1 to 1 (standard deviation 0.5), and never more (the carve
+        // blocks in chunk.rs count on it).
+        let sd = (jitter.iter().map(|j| j * j).sum::<f32>() / 4096.0).sqrt().max(1e-6);
+        for j in jitter.iter_mut() {
+            *j = (*j * 0.5 / sd).clamp(-1.0, 1.0);
         }
         Self { settings, m, kind, support, air, jitter }
     }
