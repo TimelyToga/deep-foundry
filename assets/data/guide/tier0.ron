@@ -1,12 +1,15 @@
 // Guide goals for Tier 0: Hand and Fire. They follow "a typical first hour"
 // (docs/design/01-game-design.md section 4) and chain A (docs/design/02-content.md section 7).
 // Goals show in this order. Fields: see crates/factory/src/progress/guide.rs.
+// `waits_for`: the game cannot do the goal yet (heat, smelting). Remove it when the game can;
+// the test `tier0_goals_can_be_done` (crates/game/src/tier0_tests.rs) then needs a script for
+// the goal.
 [
     Goal(
         id: "t0_dig",
         tier: 0,
         title: "Dig",
-        text: "Hold the left mouse button to dig. The cells you dig go into your material tank. Dig 100 units of sand.",
+        text: "Hold the left mouse button to dig. The cells you dig go into your material tanks. Sand is in the dune right of the Hub. Dig 100 units of sand.",
         condition: HaveItem("sand", 100),
         reward_points: 1,
     ),
@@ -14,15 +17,15 @@
         id: "t0_clay",
         tier: 0,
         title: "Find clay",
-        text: "Clay is a brown powder. Look near water and under the dirt. You make bricks from clay. Dig 64 units of clay.",
+        text: "Clay is a brown powder in the dirt, a few cells under the grass: right of the Hub and near the pool. You make bricks from clay. Dig 64 units of clay.",
         condition: HaveItem("clay", 64),
         reward_points: 1,
     ),
     Goal(
         id: "t0_wood",
         tier: 0,
-        title: "Cut a tree",
-        text: "Dig the trunk of a tree to get wood. Wood is fuel, and your first buildings are made of it. Collect 60 units of wood.",
+        title: "Collect wood",
+        text: "Dig wood from trees and from the wooden posts near the pool. Your first buildings are made of wood. You start with 30. Have 60 units of wood.",
         condition: HaveItem("wood", 60),
         reward_points: 1,
     ),
@@ -30,7 +33,7 @@
         id: "t0_workbench",
         tier: 0,
         title: "Build a workbench",
-        text: "Open the crafting menu and make a workbench from 20 wood. Place it. Hand crafting is 2 times faster near a workbench.",
+        text: "Open the crafting menu (E) and make a workbench from 20 wood. Choose it on the quickbar and click to place it. Hand crafting is 2 times faster near a workbench.",
         condition: Build("workbench", 1),
         reward_points: 1,
     ),
@@ -38,7 +41,7 @@
         id: "t0_copper_ore",
         tier: 0,
         title: "Find copper ore",
-        text: "Malachite is a green copper ore near the surface. Dig some and hold F over it to scan it. Each new material you scan gives a discovery point.",
+        text: "Malachite is a green copper ore in the dirt left of the Hub. Dig it, or hold F over it to scan it. Each new material you dig or scan gives a discovery point.",
         condition: Discover("malachite"),
         reward_points: 1,
     ),
@@ -46,7 +49,7 @@
         id: "t0_tin_ore",
         tier: 0,
         title: "Find tin ore",
-        text: "Cassiterite is a dark tin ore. Look for it in the gravel of river beds. Dig some and scan it with F.",
+        text: "Cassiterite is a dark tin ore. It is in a patch of gravel in the dirt right of the Hub, before the dune. Dig it, or scan it with F.",
         condition: Discover("cassiterite"),
         reward_points: 1,
     ),
@@ -54,7 +57,7 @@
         id: "t0_raw_bricks",
         tier: 0,
         title: "Make raw clay bricks",
-        text: "Make raw clay bricks by hand. Each one needs 16 units of clay. Heat turns them into hard clay bricks.",
+        text: "Make raw clay bricks in the crafting menu (E). Each one needs 16 units of clay. Later, the heat of a kiln turns them into hard clay bricks.",
         condition: HaveItem("raw_clay_brick", 8),
         reward_points: 1,
     ),
@@ -62,7 +65,7 @@
         id: "t0_campfire",
         tier: 0,
         title: "Light a campfire",
-        text: "Build a campfire. Put wood in its hopper and light it with the ignite tool. A campfire heats what is above it.",
+        text: "Make a campfire from 10 wood in the crafting menu (E) and place it. Fire does not burn in this version yet, so the campfire does not heat anything yet.",
         condition: Build("campfire", 1),
         reward_points: 1,
     ),
@@ -73,6 +76,7 @@
         text: "Build a closed room from clay brick walls. Put a kiln controller in the wall. The controller marks wrong walls in red. A kiln gets much hotter than a campfire.",
         condition: Build("kiln_controller", 1),
         reward_points: 2,
+        waits_for: Some("heat (fire and kilns), and the first clay bricks"),
     ),
     Goal(
         id: "t0_charcoal",
@@ -81,6 +85,7 @@
         text: "Heat wood in the closed kiln with no air. The wood turns into charcoal. You need charcoal to smelt ore.",
         condition: HaveItem("charcoal", 32),
         reward_points: 1,
+        waits_for: Some("heat (fire and kilns)"),
     ),
     Goal(
         id: "t0_tin",
@@ -89,6 +94,7 @@
         text: "Put tin ore and charcoal in a crucible over the fire. Tin melts at a low temperature, so this works first. Pour the molten tin into a plate mold. When it cools, it is a tin plate: your first metal part.",
         condition: HaveItem("tin_plate", 4),
         reward_points: 2,
+        waits_for: Some("smelting (molten metal and molds)"),
     ),
     Goal(
         id: "t0_bellows",
@@ -97,6 +103,7 @@
         text: "Bellows blow air into the kiln. Water must flow through the wheel of the bellows. With bellows, the kiln gets hot enough to melt copper (1100 °C).",
         condition: Build("bellows", 1),
         reward_points: 1,
+        waits_for: Some("tin plates (smelting)"),
     ),
     Goal(
         id: "t0_copper",
@@ -105,12 +112,13 @@
         text: "Smelt malachite with charcoal in the kiln with bellows. Tap the molten copper into a plate mold.",
         condition: HaveItem("copper_plate", 4),
         reward_points: 2,
+        waits_for: Some("smelting (molten metal and molds)"),
     ),
     Goal(
         id: "t0_research_bronze",
         tier: 0,
         title: "Research Bronze",
-        text: "Open the tech tree and research Bronze. It needs scans of copper ore and tin ore.",
+        text: "Open the tech tree (T) and research Bronze. It needs the discovery of copper ore and tin ore: dig or scan malachite and cassiterite.",
         condition: Research("bronze"),
         reward_points: 1,
     ),
@@ -121,6 +129,7 @@
         text: "Mix 3 parts molten copper with 1 part molten tin in a crucible above 1000 °C. Cast the molten bronze into plates.",
         condition: HaveItem("bronze_plate", 10),
         reward_points: 2,
+        waits_for: Some("smelting (molten metal and molds)"),
     ),
     Goal(
         id: "t0_gears",
@@ -129,6 +138,7 @@
         text: "Make bronze gears from bronze plates, or cast them in a gear mold. Machines need gears.",
         condition: HaveItem("bronze_gear", 4),
         reward_points: 1,
+        waits_for: Some("bronze plates (smelting)"),
     ),
     Goal(
         id: "t0_stamp_mill",
@@ -137,12 +147,13 @@
         text: "Build a stamp mill. Water must flow through its wheel. It crushes ore. Crushed ore gives more metal than raw ore.",
         condition: Build("stamp_mill", 1),
         reward_points: 1,
+        waits_for: Some("bronze gears (smelting)"),
     ),
     Goal(
         id: "t0_sluice",
         tier: 0,
         title: "Wash ore",
-        text: "Build a sluice and let water flow through it. Heavy ore stays in the sluice. Light waste washes out. Washed ore gives even more metal.",
+        text: "Make a sluice from 20 wood and place it. Later, water that flows through a sluice washes ore: heavy ore stays, light waste washes out. Washing does not work in this version yet.",
         condition: Build("sluice", 1),
         reward_points: 1,
     ),
@@ -161,14 +172,16 @@
         text: "Build a basic lab. A lab uses research kits to research technologies. More labs research faster.",
         condition: Build("basic_lab", 1),
         reward_points: 1,
+        waits_for: Some("copper plates and clay bricks (smelting and kilns)"),
     ),
     Goal(
         id: "t0_kits",
         tier: 0,
         title: "Make research kits",
-        text: "A bronze research kit needs a bronze gear, a clay brick and a tin plate. Put the kits in your labs.",
+        text: "A bronze research kit needs a bronze gear, a raw clay brick and a tin plate. Put the kits in your labs.",
         condition: HaveItem("bronze_kit", 10),
         reward_points: 1,
+        waits_for: Some("bronze gears and tin plates (smelting)"),
     ),
     Goal(
         id: "t0_hub",
@@ -177,5 +190,6 @@
         text: "The Hub is your landing pod. Open it to see the parts the first repair needs, then deliver them. This opens Tier 1: Steam.",
         condition: Stage(1),
         reward_points: 5,
+        waits_for: Some("bronze plates, bronze gears and clay bricks (smelting and kilns)"),
     ),
 ]

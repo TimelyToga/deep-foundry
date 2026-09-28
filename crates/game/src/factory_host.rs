@@ -1014,3 +1014,7 @@ pub fn save_side(host: Option<&FactoryHost>, world: &Path, notices: &mut Vec<Str
 #[cfg(test)]
 #[path = "factory_host_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tier0_tests.rs"]
+mod tier0_tests;
