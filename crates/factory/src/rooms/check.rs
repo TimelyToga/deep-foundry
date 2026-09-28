@@ -76,6 +76,19 @@ impl Problem {
         }
     }
 
+    /// A few words for the status line of the building window.
+    pub fn short(&self) -> &'static str {
+        match self {
+            Problem::NotInWall => "Not in the wall of a room",
+            Problem::Hole { .. } => "The room has a hole",
+            Problem::TooBig { .. } => "The room is too big",
+            Problem::WrongWall { .. } => "Wrong wall block",
+            Problem::BrokenWall { .. } => "A wall is broken",
+            Problem::TwoControllers { .. } => "Two controllers",
+            Problem::NoHatch => "No hatch",
+        }
+    }
+
     /// The tile to mark red.
     pub fn tile(&self) -> Option<TilePos> {
         match self {

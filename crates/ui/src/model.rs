@@ -561,6 +561,35 @@ pub struct BuildingView {
     pub milestone: Option<MilestoneView>,
     /// The Hub: the repair stages after the next one and what each needs.
     pub later_stages: Vec<MilestoneView>,
+    /// A room machine controller (kiln, coke oven, blast furnace): its room. `None` for other
+    /// buildings.
+    pub room: Option<RoomPanel>,
+}
+
+/// The room of a room machine, for the room panel of the building window.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RoomPanel {
+    /// The room is closed and correct.
+    pub valid: bool,
+    /// What is wrong, as a sentence (for example "The room has a hole 2 tiles left ...").
+    pub problem: Option<String>,
+    /// Average temperature of the room cells (°C). `None` before the first measurement.
+    pub temperature: Option<f32>,
+    /// The temperature that the recipe needs (°C).
+    pub needs: Option<f32>,
+    /// Inside tiles, and the most that the room can have.
+    pub tiles: u32,
+    pub max_tiles: u32,
+    pub hatches: u32,
+    /// Fuel cells in the room, and how many of them burn.
+    pub fuel_cells: u32,
+    pub burning: u32,
+    /// Ash that the controller took out of the fire.
+    pub ash: u32,
+    /// Extra fire temperature from bellows or a blower (°C).
+    pub blast: f32,
+    /// The wall blocks the room takes, for example "Clay brick wall or Firebrick wall".
+    pub walls: String,
 }
 
 impl BuildingView {
