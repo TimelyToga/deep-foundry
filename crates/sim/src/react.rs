@@ -10,10 +10,14 @@
 //! - **Burning** (the `burn` data of a material, see `burn.rs`).
 //! - **Timers** and **charring** (see `burn.rs`).
 //!
-//! Sleeping: a reaction that is possible but did not happen (chance) keeps the cell awake. If the
-//! random neighbor has no rule, a "keeper" material looks at all 8 neighbors. For each pair of
-//! materials with rules, one of the two is the keeper, so a slow reaction never stops because
-//! the chunk went to sleep. Materials that fade (fire, smoke) are always awake and need no keeper.
+//! Sleeping: a reaction that is possible but did not happen (chance) keeps the cell awake. The
+//! random neighbor can be one without a rule, so for each pair of materials with rules, one of the
+//! two materials also looks at all 8 neighbors (`W_LOOK_ALL`). If any neighbor can react now, the
+//! cell stays awake. So a slow reaction never stops because the chunk went to sleep. For the
+//! other material of the pair the check costs only one random neighbor. Materials that fade
+//! (fire, smoke) are always awake, so the other material does not need to look. A material whose
+//! partners all do this (water) does not check its pairs at all; the partner starts the reaction.
+//! So the `chance` of a rule is per tick for the cell that checks.
 //! A rule with a temperature condition that does not hold lets the cell sleep: the heat pass
 //! must wake the cell when its temperature changes (see `docs/design/requests/reactions.md`).
 //!
@@ -50,7 +54,7 @@ const KEEP: u16 = u16::MAX;
 /// It has pair rules.
 const W_PAIRS: u8 = 1 << 0;
 /// It looks at all 8 neighbors when the random neighbor has no rule (see the module docs).
-const W_KEEPER: u8 = 1 << 1;
+const W_LOOK_ALL: u8 = 1 << 1;
 /// It has burn data.
 const W_BURN: u8 = 1 << 2;
 /// Its phase is Fire: it ignites burnable neighbors and dies in water.
@@ -233,8 +237,10 @@ impl ReactTable {
                 timer[i] = Steps::new(t.ticks);
             }
         }
-        // Keepers: for each pair with rules, one material that is not always awake looks at all
-        // its neighbors, so the pair is never left asleep.
+        // For each pair with rules, one material that is not always awake looks at all its
+        // neighbors (`W_LOOK_ALL`), so the pair is never left asleep. It is the only one that can
+        // start the rules (the other is air, or the rule has "any"), or the one with fewer
+        // partner materials (so common materials such as water do not need to look).
         for a in 1..n {
             if mats.life[a].is_some() {
                 continue;
@@ -244,17 +250,32 @@ impl ReactTable {
                     continue;
                 }
                 let back = b != 0 && pairs[b * n + a] != 0;
-                let keeper = if !back {
+                let look = if !back {
                     true
                 } else if mats.life[b].is_some() {
                     false
                 } else {
                     (partners[a], a) <= (partners[b], b)
                 };
-                if keeper {
-                    work[a] |= W_KEEPER;
+                if look {
+                    work[a] |= W_LOOK_ALL;
                     break;
                 }
+            }
+        }
+        // A material whose partners all check the pair themselves (they look at all neighbors,
+        // or they are always awake) does not need to check it too. Water is such a material:
+        // lava, molten metal, salt, dirt and fire start their reactions with water. This keeps
+        // the most common liquid free of reaction work.
+        for a in 1..n {
+            if work[a] & W_PAIRS == 0 || work[a] & W_LOOK_ALL != 0 || mats.life[a].is_some() {
+                continue;
+            }
+            let others_check = (0..n).filter(|&b| pairs[a * n + b] != 0).all(|b| {
+                b != 0 && (work[b] & W_LOOK_ALL != 0 || mats.life[b].is_some() || work[b] & W_FIRE != 0) && pairs[b * n + a] != 0
+            });
+            if others_check {
+                work[a] &= !W_PAIRS;
             }
         }
         ReactTable {
@@ -378,7 +399,7 @@ enum Fired {
     Yes(bool),
 }
 
-/// Pair rules with one random neighbor. A keeper looks at all neighbors if that one has no rule
+/// Pair rules with one random neighbor. A material with `W_LOOK_ALL` looks at all neighbors if that one has no rule
 /// that can fire now.
 #[inline]
 fn pairs(h: &mut Hood, t: &ReactTable, x: i32, y: i32, m: MaterialId, work: u8) -> Outcome {
@@ -393,7 +414,7 @@ fn pairs(h: &mut Hood, t: &ReactTable, x: i32, y: i32, m: MaterialId, work: u8) 
             Fired::NotReady => {}
         }
     }
-    if work & W_KEEPER != 0 {
+    if work & W_LOOK_ALL != 0 {
         for (dx, dy) in DIRS {
             let (nx, ny) = (x + dx, y + dy);
             let range = t.pair(m, h.mat(nx, ny));
