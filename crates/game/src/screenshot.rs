@@ -14,6 +14,8 @@ use crate::factory_host::{FactoryCommand, FactoryFrame, FactoryHost, GameCommand
 use crate::normal::NormalMode;
 use crate::overlay;
 use crate::player::MoveInput;
+use crate::robot_sprite::{Anim, Forced, RobotLook, ToolKind, ToolUse};
+use crate::tools;
 use crate::ui::{self, SandboxUi};
 use anyhow::{Context, Result};
 use foundry_content::{Content, ItemRef};
@@ -60,6 +62,14 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     // chunks near it are made and updated.
     sim.apply(Command::SetView { area: view_of(center) });
     let tick_start = Instant::now();
+    if let (Some(h), Some(x)) = (host.as_mut(), args.robot_x) {
+        let feet = CellPos::new(x, crate::factory_host::ground_top(&sim, &content, x));
+        h.robot = crate::player::Robot::standing_at(feet);
+        if args.center.is_none() {
+            center = robot_center(h);
+            sim.apply(Command::SetView { area: view_of(center) });
+        }
+    }
     if let Some(h) = host.as_mut()
         && args.walk != 0
     {
@@ -79,6 +89,20 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
         sim.tick();
         if let Some(h) = host.as_mut() {
             h.tick(&mut sim);
+        }
+    }
+    // --pose and --face: the robot acts for the picture.
+    let mut pose = Pose::default();
+    if let Some(h) = host.as_mut() {
+        if let Some(left) = args.face_left {
+            h.robot.facing = if left { -1 } else { 1 };
+        }
+        if let Some((name, frame)) = &args.pose {
+            pose = act(h, &mut sim, name, *frame);
+            if args.center.is_none() {
+                center = robot_center(h);
+                sim.apply(Command::SetView { area: view_of(center) });
+            }
         }
     }
     let ticks_time = tick_start.elapsed();
@@ -102,6 +126,14 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
         }
     }
     let upload_time = upload_start.elapsed();
+    // The robot: sprites on the cell grid.
+    if let Some(h) = &host {
+        let look = RobotLook::load();
+        renderer.set_sprite_sheet(look.size.0, look.size.1, &look.rgba);
+        let mut sprites = vec![];
+        look.sprites(&h.robot, h.robot.draw_top_left(), pose.tool, sim.tick_count(), pose.forced, &mut sprites);
+        renderer.set_sprites(&sprites);
+    }
 
     let pixels = if args.no_ui {
         capture(&device, &queue, &mut renderer, &camera)
@@ -221,6 +253,76 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
         renderer.stats().drawn_chunks,
     );
     Ok(())
+}
+
+/// What `--pose` did: the tool in use and the fixed animation frame.
+#[derive(Default)]
+struct Pose {
+    tool: Option<ToolUse>,
+    forced: Option<Forced>,
+}
+
+/// `--pose`: the robot moves or uses a tool for some ticks, so the picture shows the real state
+/// (in the air for "jump" and "fly", an empty jetpack for "fall" and "land", dug cells for
+/// "dig"). An animation name also fixes the animation (and the frame, if given).
+fn act(h: &mut FactoryHost, sim: &mut foundry_sim::Simulation, name: &str, frame: Option<usize>) -> Pose {
+    let content = h.factory.content.clone();
+    let facing = h.robot.facing;
+    let run = |h: &mut FactoryHost, sim: &mut foundry_sim::Simulation, input: PlayerInput, ticks: u32| {
+        h.apply(FactoryCommand::Input(input), sim);
+        for _ in 0..ticks {
+            sim.tick();
+            h.tick(sim);
+        }
+    };
+    let go = |x: i8, jump: bool| PlayerInput { movement: MoveInput { x, jump }, ..Default::default() };
+    // A place in front of the robot: in the ground for dig and scan, in the air for spray.
+    let (cx, cy) = h.robot.center();
+    let front = |dx: f32, dy: f32| tools::clamp_aim(&h.robot, CellPos::new((cx + dx * facing as f32) as i32, (cy + dy) as i32));
+    let mut tool = None;
+    match name {
+        "walk" => run(h, sim, go(facing, false), 24),
+        "jump" => run(h, sim, go(0, true), 6),
+        // Fly until the fuel is empty, then fall (the gauge shows "Jet empty").
+        "fall" => run(h, sim, go(0, true), 80),
+        // The same, then land (the gauge waits for the refill).
+        "land" => {
+            run(h, sim, go(0, true), 80);
+            h.apply(FactoryCommand::Input(go(0, false)), sim);
+            for _ in 0..300 {
+                sim.tick();
+                h.tick(sim);
+                if h.robot.on_ground {
+                    break;
+                }
+            }
+            run(h, sim, go(0, false), 2);
+        }
+        "fly" => run(h, sim, go(0, true), 45),
+        "dig" => {
+            let aim = front(24.0, 16.0);
+            run(h, sim, PlayerInput { aim, dig: true, ..Default::default() }, 12);
+            let m = h.frame(sim, 0).dug_material;
+            let color = m.and_then(|m| content.materials.colors[m.index()].first().copied());
+            tool = Some(ToolUse { kind: ToolKind::Dig, aim, working: m.is_some(), color });
+        }
+        "spray" => {
+            let sand = content.expect_material("sand");
+            h.factory.player.insert(&content, ItemRef::Material(sand), 400);
+            let aim = front(22.0, -4.0);
+            run(h, sim, PlayerInput { aim, spray: Some(sand), ..Default::default() }, 10);
+            let color = content.materials.colors[sand.index()].first().copied();
+            tool = Some(ToolUse { kind: ToolKind::Spray, aim, working: true, color });
+        }
+        "scan" => {
+            let aim = front(20.0, 12.0);
+            run(h, sim, PlayerInput { aim, scan: true, ..Default::default() }, 2);
+            tool = Some(ToolUse { kind: ToolKind::Scan, aim, working: true, color: None });
+        }
+        _ => {}
+    }
+    h.apply(FactoryCommand::Input(PlayerInput { aim: tool.map_or(CellPos::default(), |t| t.aim), ..Default::default() }), sim);
+    Pose { tool, forced: Anim::from_name(name).map(|anim| Forced { anim, frame }) }
 }
 
 /// The factory views of a normal-mode picture.

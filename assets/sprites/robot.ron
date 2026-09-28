@@ -1,0 +1,37 @@
+// The robot sprite sheet. Made by tools/sprites/make_robot.py: change the script, not this file.
+//
+// - One pixel is one world cell. Every frame is `frame` pixels. Frame `i` of a row is at
+//   x = i * frame.0, y = row * frame.1 in the image.
+// - The robot looks right in the image. The game flips a frame to make it look left.
+// - `body_at`: the pixel of a body frame that is the top-left cell of the robot body
+//   (8 x 16 cells).
+// - `shoulder`: the turn point of the arm in a body frame. `arm_pivot`: the same point in an
+//   arm frame. Arm frame `i` points in direction i * 360 / arm.frames degrees, clockwise from
+//   forward (0 forward, 4 down, 8 back, 12 up). `arm_tips` are the tool tips in the arm frames.
+// - `nozzle`: the jetpack nozzle in a body frame. `flame_at`: the same point in a flame frame.
+// - An animation has a speed: Fps(n) is frames per second; Cells(n) is one frame per n
+//   cells walked. Each frame has the arm direction (when no tool is used) and how many
+//   cells the shoulder moves down in that frame.
+(
+    image: "robot.png",
+    frame: (16, 20),
+    body_at: (4, 4),
+    shoulder: (9, 12),
+    arm_pivot: (8, 10),
+    nozzle: (3, 17),
+    flame_at: (8, 1),
+    animations: {
+        "idle": (row: 0, frames: 6, speed: Fps(4.0), looped: true, poses: [(arm: 1, shoulder: 0), (arm: 1, shoulder: 0), (arm: 1, shoulder: 1), (arm: 1, shoulder: 1), (arm: 1, shoulder: 0), (arm: 1, shoulder: 0)]),
+        "walk": (row: 1, frames: 6, speed: Cells(3.0), looped: true, poses: [(arm: 2, shoulder: 0), (arm: 2, shoulder: 1), (arm: 1, shoulder: 0), (arm: 0, shoulder: 0), (arm: 0, shoulder: 1), (arm: 1, shoulder: 0)]),
+        "jump": (row: 2, frames: 2, speed: Fps(10.0), looped: false, poses: [(arm: 15, shoulder: 0), (arm: 15, shoulder: 0)]),
+        "fall": (row: 3, frames: 2, speed: Fps(8.0), looped: true, poses: [(arm: 14, shoulder: 0), (arm: 15, shoulder: 0)]),
+        "land": (row: 4, frames: 2, speed: Fps(12.0), looped: false, poses: [(arm: 2, shoulder: 2), (arm: 1, shoulder: 1)]),
+        "fly": (row: 5, frames: 3, speed: Fps(10.0), looped: true, poses: [(arm: 1, shoulder: 0), (arm: 1, shoulder: 0), (arm: 1, shoulder: 0)]),
+        "wade": (row: 6, frames: 4, speed: Fps(5.0), looped: true, poses: [(arm: 14, shoulder: 0), (arm: 14, shoulder: 1), (arm: 15, shoulder: 0), (arm: 15, shoulder: 1)]),
+    },
+    arm: (row: 7, frames: 16),
+    arm_outline: (row: 8, frames: 16),
+    arm_tips: [(13, 10), (13, 12), (12, 14), (10, 15), (8, 15), (6, 15), (4, 14), (3, 12), (3, 10), (3, 8), (4, 6), (6, 5), (8, 5), (10, 5), (12, 6), (13, 8)],
+    flame: (row: 9, frames: 4),
+    pixel: (row: 10, frames: 1),
+)

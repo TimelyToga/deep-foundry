@@ -118,6 +118,46 @@ fn fractional_camera_moves_smoothly() {
     assert_eq!(edges, vec![32, 31, 30, 29, 28]);
 }
 
+#[test]
+fn sprites_are_on_the_cell_grid_and_show_through_water() {
+    use foundry_render::{Sprite, SpriteLayer};
+    let Some(mut s) = scene(16) else { return };
+    let water = s.content.expect_material("water").0;
+    let mut snap = Snapshot { world_cells: (64, 64), ..Default::default() };
+    // Water in the right half of the chunk.
+    snap.chunks.push(chunk(ChunkPos::new(0, 0), |x, _| if x >= 32 { (water, 20) } else { (0, 20) }));
+    // A 2 x 1 sheet: a red texel and a green texel.
+    s.renderer.set_sprite_sheet(2, 1, &[255, 0, 0, 255, 0, 255, 0, 255]);
+    let sprite = |cell: [i32; 2], flip_x: bool, layer| Sprite { cell, src: [0, 0], size: [2, 1], tint: [255; 4], flip_x, layer };
+    s.renderer.set_sprites(&[
+        sprite([10, 10], false, SpriteLayer::Body),
+        sprite([10, 20], true, SpriteLayer::Body),
+        sprite([40, 10], false, SpriteLayer::Body),
+        sprite([40, 20], false, SpriteLayer::Front),
+    ]);
+    // A camera a quarter cell off the grid, at zoom 4.
+    let camera = Camera::new(DVec2::new(32.25, 32.0), 4.0, UVec2::new(256, 256));
+    s.renderer.apply_snapshot(&snap, &camera);
+    let img = capture(&s.device, &s.queue, &mut s.renderer, &camera);
+    let at = |cx: f64, cy: f64| {
+        let p = camera.cell_to_screen(DVec2::new(cx + 0.5, cy + 0.5));
+        pixel(&img, 256, p.x as u32, p.y as u32)
+    };
+    // In air: exact colors, in the right cells, flipped when asked.
+    assert_eq!(at(10.0, 10.0), [255, 0, 0, 255]);
+    assert_eq!(at(11.0, 10.0), [0, 255, 0, 255]);
+    assert_eq!(at(10.0, 20.0), [0, 255, 0, 255]);
+    assert_eq!(at(11.0, 20.0), [255, 0, 0, 255]);
+    // The sprite ends at the cell edge: the cell after it is air.
+    let air = at(12.0, 10.0);
+    assert!(air[0] < 60 && air[1] < 60, "{air:?}");
+    // In water, the body sprite is partly covered: red, but mixed with the water blue.
+    let wet = at(40.0, 10.0);
+    assert!(wet[0] > 90 && wet[0] < 230 && wet[2] > 60, "body in water {wet:?}");
+    // A front sprite is over the water.
+    assert_eq!(at(40.0, 20.0), [255, 0, 0, 255]);
+}
+
 /// Upload speed. Run with `cargo test --release -p foundry_render -- --ignored --nocapture`.
 #[test]
 #[ignore]

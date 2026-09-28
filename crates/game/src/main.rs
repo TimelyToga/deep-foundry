@@ -17,6 +17,7 @@ mod keys;
 mod normal;
 mod overlay;
 mod player;
+mod robot_sprite;
 mod saves;
 mod screenshot;
 mod settings;
@@ -35,7 +36,7 @@ fn main() -> Result<()> {
     )
     .init();
     let args = match args::parse(std::env::args().skip(1)) {
-        Ok(args::Parsed::Run(a)) => a,
+        Ok(args::Parsed::Run(a)) => *a,
         Ok(args::Parsed::Help) => {
             print!("{}", args::USAGE);
             return Ok(());

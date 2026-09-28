@@ -25,6 +25,7 @@ use crate::keys::{Action, Bindings, KeyBind, KeyNames, Press};
 use crate::settings::{self, SavedSettings};
 use crate::normal::NormalMode;
 use crate::overlay;
+use crate::robot_sprite::RobotLook;
 use crate::saves::{self, SaveMeta};
 use crate::sim_thread::SimThread;
 use crate::smoke::{Smoke, Step};
@@ -225,6 +226,10 @@ struct Game {
     config: wgpu::SurfaceConfiguration,
     present_modes: Vec<wgpu::PresentMode>,
     renderer: Renderer,
+    /// The robot sprite sheet and its animations (normal mode).
+    robot_look: RobotLook,
+    /// Reused list of sprites.
+    sprites: Vec<foundry_render::Sprite>,
 
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
@@ -322,7 +327,9 @@ impl Game {
         config.alpha_mode = caps.alpha_modes[0];
         surface.configure(&device, &config);
 
-        let renderer = Renderer::new(&device, &queue, format, &content);
+        let mut renderer = Renderer::new(&device, &queue, format, &content);
+        let robot_look = RobotLook::load();
+        renderer.set_sprite_sheet(robot_look.size.0, robot_look.size.1, &robot_look.rgba);
 
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -367,6 +374,8 @@ impl Game {
             config,
             present_modes: caps.present_modes,
             renderer,
+            robot_look,
+            sprites: Vec::new(),
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -1240,6 +1249,15 @@ impl Game {
 
         let has_world = self.world.is_some();
         if has_world {
+            // The robot and its effects, on the cell grid (normal mode).
+            self.sprites.clear();
+            if let Some(n) = self.world.as_ref().and_then(|w| w.normal.as_ref())
+                && let (Some(r), Some(at)) = (n.frame.robot.as_ref(), n.robot_pos(frame_start))
+            {
+                let tool = n.tool_use(&self.content);
+                self.robot_look.sprites(r, at, tool, n.frame.tick, None, &mut self.sprites);
+            }
+            self.renderer.set_sprites(&self.sprites);
             self.renderer.set_time(frame_start.duration_since(self.timing.start).as_secs_f64());
             self.renderer.render(&mut encoder, &target, &self.controls.camera);
         }
