@@ -203,6 +203,61 @@ fn heat_shimmer_moves_only_the_cells_above_hot_places() {
     assert_eq!(cold, 0, "nothing moves above cold stone");
 }
 
+#[test]
+fn sprites_are_drawn_lit_and_mirrored() {
+    use foundry_render::Sprite;
+    let Some(mut s) = scene(64) else { return };
+    let stone = s.id("stone");
+    // A 4 x 2 sheet: left half white, right half red. The emission sheet has one green glowing
+    // pixel at the top-right corner.
+    let mut color = vec![0u8; 4 * 2 * 4];
+    let mut emission = vec![0u8; 4 * 2 * 4];
+    for y in 0..2 {
+        for x in 0..4 {
+            let i = (y * 4 + x) * 4;
+            let c = if x < 2 { [255, 255, 255, 255] } else { [255, 0, 0, 255] };
+            color[i..i + 4].copy_from_slice(&c);
+        }
+    }
+    emission[12..16].copy_from_slice(&[0, 255, 0, 255]);
+    s.renderer.set_sprite_sheet(&color, &emission, 4, 2);
+    // A closed dark room; a sky-lit open area above y = 40.
+    let snap = world(4, 4, |x, y| {
+        if y < 40 || ((20..200).contains(&x) && (100..180).contains(&y)) { (0, 20) } else { (stone, 20) }
+    });
+    s.renderer.set_surface_level(40);
+    let sprite = |pos: DVec2, flip_x| Sprite { pos, src: [0, 0, 4, 2], pivot: [0.0, 0.0], scale: 4.0, angle: 0.0, flip_x };
+    // One sprite in the sky light, one in the dark room, one mirrored in the sky light.
+    s.renderer.set_sprites(&[
+        sprite(DVec2::new(40.0, 10.0), false),
+        sprite(DVec2::new(100.0, 140.0), false),
+        sprite(DVec2::new(140.0, 10.0), true),
+    ]);
+    let camera = Camera::new(DVec2::new(128.0, 96.0), 2.0, UVec2::new(512, 384));
+    let img = s.shot(&snap, &camera);
+    let px = |x: f64, y: f64| {
+        let p = camera.cell_to_screen(DVec2::new(x, y));
+        let i = ((p.y as u32 * 512 + p.x as u32) * 4) as usize;
+        [img[i], img[i + 1], img[i + 2]]
+    };
+    // In the sky light: white on the left, red on the right.
+    let white = px(42.0, 12.0);
+    let red = px(54.0, 16.0);
+    assert!(white[0] > 200 && white[1] > 200, "white part in daylight: {white:?}");
+    assert!(red[0] > 200 && red[1] < 90, "red part in daylight: {red:?}");
+    // In the dark room the sprite is dark, but its glowing pixel shows.
+    let dark = px(102.0, 142.0);
+    let glow = px(114.0, 141.0);
+    assert!(dark[0] < 80, "the sprite is dark in the dark room: {dark:?}");
+    assert!(glow[1] > 150, "the glowing pixel shows in the dark: {glow:?}");
+    // Mirrored around its pivot: the white half is now just left of the pivot, the red half
+    // further left.
+    let mirrored_white = px(138.0, 16.0);
+    let mirrored_red = px(130.0, 16.0);
+    assert!(mirrored_red[0] > 200 && mirrored_red[1] < 90, "mirrored red: {mirrored_red:?}");
+    assert!(mirrored_white[1] > 200, "mirrored white: {mirrored_white:?}");
+}
+
 /// A test world: air above row `surface`, stone below with round caves; lava or water in some caves.
 fn cave_world(s: &Scene, chunks: (i32, i32), surface: i32) -> Snapshot {
     let (stone, lava, water) = (s.id("stone"), s.id("lava"), s.id("water"));

@@ -9,7 +9,8 @@
 //!    simulation in `Command::ForgetChunks`.
 //! 3. For each frame, call `render` with a `Camera`.
 //! 4. Optional: `settings_mut` (light, bloom, debug views), `set_surface_level` (where the sky
-//!    light starts), `set_lights` (point lights such as the robot's lamp).
+//!    light starts), `set_lights` (point lights such as the robot's lamp), `set_sprite_sheet` and
+//!    `set_sprites` (pictures over the world).
 //!
 //! World data on the GPU: a texture array with one 64 × 64 layer for each chunk (format `Rgba16Uint`,
 //! each texel is a `CellTexel`). Only chunks that arrive in a snapshot are uploaded. A chunk the renderer
@@ -25,6 +26,8 @@
 //! 3. Composite pass (`passes::composite`): the screen image. Background (sky or rock wall), cells
 //!    with sharp bilinear filtering, color = base x (ambient + light) + emitted light, gas, bloom,
 //!    heat shimmer, and the debug views (heat map, chunk grid, light only).
+//! 4. Sprite pass (`passes::sprite`): pictures from the sprite sheet (the robot) at screen
+//!    resolution, lit by the light map.
 //!
 //! The WGSL files are in `assets/shaders/`.
 
@@ -40,7 +43,7 @@ mod sky;
 mod targets;
 
 pub use camera::Camera;
-pub use renderer::{LIGHT_MARGIN, PointLight, RenderSettings, RenderStats, Renderer, RendererOptions};
+pub use renderer::{LIGHT_MARGIN, PointLight, RenderSettings, RenderStats, Renderer, RendererOptions, Sprite};
 pub use shaders::default_shader_dir;
 
 /// Re-exported so that users of this crate use the same wgpu version.

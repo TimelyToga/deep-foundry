@@ -13,6 +13,7 @@ pub(crate) enum ShaderFile {
     World,
     Light,
     Composite,
+    Sprite,
 }
 
 const COMMON: &str = include_str!("../../../assets/shaders/common.wgsl");
@@ -23,6 +24,7 @@ impl ShaderFile {
             ShaderFile::World => "world.wgsl",
             ShaderFile::Light => "light.wgsl",
             ShaderFile::Composite => "composite.wgsl",
+            ShaderFile::Sprite => "sprite.wgsl",
         }
     }
 
@@ -31,6 +33,7 @@ impl ShaderFile {
             ShaderFile::World => include_str!("../../../assets/shaders/world.wgsl"),
             ShaderFile::Light => include_str!("../../../assets/shaders/light.wgsl"),
             ShaderFile::Composite => include_str!("../../../assets/shaders/composite.wgsl"),
+            ShaderFile::Sprite => include_str!("../../../assets/shaders/sprite.wgsl"),
         }
     }
 

@@ -3,10 +3,11 @@
 //! Group 0 is the same for all passes: the frame uniforms (`FrameUniforms`).
 //! Group 1 belongs to each pass (or to each step of the light pass).
 //!
-//! Later passes (sprites, back layer) go here as new modules.
+//! Later passes (back layer, buildings) go here as new modules.
 
 pub(crate) mod composite;
 pub(crate) mod light;
+pub(crate) mod sprite;
 pub(crate) mod world;
 
 use wgpu::{BindGroupLayoutEntry, BindingType, ShaderStages, TextureSampleType, TextureViewDimension};

@@ -105,9 +105,11 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     renderer.set_time(args.ticks as f64 * foundry_core::TICK_SECONDS);
     renderer.set_surface_level(render_setup::surface_level(snapshot.world_cells));
     *renderer.settings_mut() = render_settings;
+    render_setup::load_robot_sheet(&mut renderer);
     if let Some(h) = &host {
-        let (x, y) = h.robot.center();
-        renderer.set_lights(&[render_setup::robot_lamp((x, y), h.robot.facing)]);
+        let r = &h.robot;
+        let at = (r.left as f32 + r.rem.0, r.top as f32 + r.rem.1);
+        render_setup::show_robot(&mut renderer, Some((r, at)), args.ticks as u64);
     }
     let upload_start = Instant::now();
     if state.has_world() {
