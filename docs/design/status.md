@@ -19,6 +19,7 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 |---|---|---|
 | Play-test fixes (Opus): save-menu bug, bigger tanks, crates take bulk, Factorio transfers, tank trash, Hub take-back, dig discovers, guide goal checks | agent worktree (ac372d6) | crates/factory, crates/ui, small factory_host/app edits. Told to merge main (liquids) before its report. |
 | Character (Opus): new robot sprites (user's image skill), animations, sprite pass in crates/render, smoother movement | agent worktree | crates/game player.rs + drawing, new crates/render sprite file, assets/sprites, tools/sprites. |
+| Stutter when mining (Opus): measure sim vs main thread while digging; pointer/dig target must follow the mouse every frame | agent worktree | Small changes in crates/game; may touch app.rs, sim_thread.rs, factory_host.rs. |
 | Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
 
 ## Next
