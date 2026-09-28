@@ -12,14 +12,18 @@ mod construct_draw;
 mod controls;
 mod debug_panel;
 mod demo;
+#[cfg(test)]
+mod dig_perf;
 mod factory_host;
 mod keys;
 mod normal;
 mod overlay;
+mod perf;
 mod player;
 mod saves;
 mod screenshot;
 mod settings;
+mod sim_pool;
 mod sim_thread;
 mod smoke;
 mod tools;
