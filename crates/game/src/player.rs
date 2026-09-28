@@ -86,7 +86,7 @@ const BURIED_RISE: f32 = 0.7;
 /// tick.
 const POWDER_LIFT: i32 = 2;
 /// Jetpack fuel: ticks of flight.
-pub const JET_FUEL: f32 = 50.0;
+pub const JET_FUEL: f32 = 90.0;
 /// Upward push per tick at full power. Gravity pulls down at the same time, so the robot rises
 /// when this is more than `GRAVITY`.
 const JET_THRUST: f32 = 0.24;

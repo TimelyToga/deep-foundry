@@ -190,9 +190,11 @@ impl DemoSource {
         let deposit = |cx: i32, rx: i32, ry: i32| Ellipse { cx, cy: self.surface(cx, phases) + 4 + ry, rx, ry };
         // The start is at 0.48 with the Hub there and the robot right of it: clay is in reach of
         // the robot, malachite is left of the Hub, the tin gravel is before the dune.
-        // The second clay deposit is left of the Hub, under the wooden posts: together they are
-        // enough for the first 8 bricks and a kiln (24 more bricks).
-        let clay = [deposit(at(0.497), 12, 5), deposit(at(0.445), 16, 5)];
+        // The second clay deposit is left of the Hub, under the wooden posts. Together they hold
+        // about 570 cells: enough for the first 8 bricks and a kiln (24 more bricks, 16 clay
+        // each). The near one is the larger one, so the player does not have to walk far.
+        // Keep the left one small: a deep pit there makes the climb over the Hub too high.
+        let clay = [deposit(at(0.497), 17, 6), deposit(at(0.445), 16, 5)];
         let malachite = deposit(at(0.459), 9, 4);
         let tin = deposit(at(0.512), 12, 4);
         Section { pool, water_top, ball, dune, posts, lava, gravel, clay, malachite, tin }
