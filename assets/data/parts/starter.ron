@@ -7,7 +7,7 @@
     Part(id: "copper_plate", name: "Copper plate", category: "intermediate", material: Some("copper_block"), units: 16, icon: Some("plate")),
     Part(id: "bronze_plate", name: "Bronze plate", category: "intermediate", material: Some("bronze_block"), units: 16, icon: Some("plate")),
     Part(id: "bronze_gear", name: "Bronze gear", category: "intermediate", material: Some("bronze_block"), units: 48, icon: Some("gear")),
-    Part(id: "raw_clay_brick", name: "Raw clay brick", description: "Bake it in a kiln to make a clay brick.", category: "intermediate", material: Some("clay"), units: 16, icon: Some("brick")),
+    Part(id: "raw_clay_brick", name: "Raw clay brick", description: "Fire it in a campfire (slow) or in a kiln to make a clay brick.", category: "intermediate", material: Some("clay"), units: 16, icon: Some("brick")),
     Part(id: "clay_brick", name: "Clay brick", description: "A fired brick. Kiln walls, crucibles and molds are made of it.", category: "intermediate", material: Some("clay_brick_block"), units: 16, icon: Some("brick")),
     Part(id: "raw_firebrick", name: "Raw firebrick", description: "Clay and sand. Bake it hot to make a firebrick.", category: "intermediate", material: Some("clay"), units: 16, icon: Some("brick")),
     Part(id: "firebrick", name: "Firebrick", description: "A brick that stays strong up to 1800 degrees C. Furnace walls.", category: "intermediate", material: Some("firebrick_block"), units: 16, icon: Some("brick")),

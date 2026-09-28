@@ -177,6 +177,7 @@ impl Factory {
         // Older saves have smaller robot tanks and crates for parts only.
         self.player.grow_tanks(inventory::PLAYER_TANKS, inventory::PLAYER_TANK_UNITS);
         self.buildings.upgrade_storage(&self.content);
+        self.buildings.upgrade_machines(&self.content);
         self.update_hub_rule();
     }
 
@@ -210,7 +211,16 @@ impl Factory {
         flip: bool,
         sim: &mut Simulation,
     ) -> Result<BuildingId, PlaceError> {
-        self.buildings.place(&self.content, kind, at, Transform::new(rotation, flip), sim)
+        let id = self.buildings.place(&self.content, kind, at, Transform::new(rotation, flip), sim)?;
+        // A machine with a fuel slot (the campfire) that can make only one known recipe starts
+        // with it, like a furnace in Factorio.
+        let burner = matches!(self.buildings.get(id).map(|b| &b.logic), Some(Logic::Machine(m)) if m.fuel.is_some());
+        let known: Vec<RecipeId> =
+            Buildings::recipes_for(&self.content, kind).into_iter().filter(|r| self.is_recipe_known(*r)).collect();
+        if let ([only], true) = (&known[..], burner) {
+            let _ = self.buildings.set_recipe(&self.content, id, Some(*only));
+        }
+        Ok(id)
     }
 
     /// The ports a building would have at this place (arrows on the ghost).

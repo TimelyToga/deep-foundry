@@ -11,6 +11,8 @@
 //! | Ctrl + left | Move this material from every tank. | Move all of this part. | Move all of this item to the robot. |
 //! | Ctrl + right | Move half of all of it. | Move half of all of it. | Move half of all of it. |
 //!
+//! - A machine with a fuel slot (the campfire): a tank click puts a fuel (wood, charcoal) into
+//!   the fuel slot when no recipe input takes it. A click on the fuel slot gives it back.
 //! - The Hub: a click on an item it holds gives it back to the robot. A part in the hand goes
 //!   into the Hub, and only if a repair stage needs it (see `HubRule`).
 //! - With no building window open, a click on a tank chooses the spray material (the game does
@@ -152,6 +154,21 @@ impl Factory {
         }
         self.player.insert(&content, s.item, n);
         self.buildings.wake(id);
+        Ok(n)
+    }
+
+    /// A click on the fuel slot of a machine window: the fuel goes back into the robot's tanks
+    /// (all of it, or half with the right button). Returns the units moved.
+    pub fn fuel_to_robot(&mut self, id: BuildingId, click: Click) -> Result<u32, String> {
+        let Some(f) = self.buildings.view(&self.content, id).and_then(|v| v.fuel) else { return Ok(0) };
+        let Some(m) = f.material else { return Ok(0) };
+        let item = ItemRef::Material(m);
+        let n = self.player.room_for(&self.content, item, amount(click, f.units));
+        if n == 0 {
+            return Err(format!("Tanks full: no room for {}", self.content.item_name(item)));
+        }
+        let Some((m, n)) = self.buildings.take_fuel(id, n) else { return Ok(0) };
+        self.player.insert(&self.content.clone(), ItemRef::Material(m), n);
         Ok(n)
     }
 
@@ -370,6 +387,39 @@ mod tests {
             t.units = t.capacity;
         }
         assert!(!f.take_dug_cell(malachite));
+    }
+
+    #[test]
+    fn the_campfire_fires_raw_clay_bricks_with_wood_fuel() {
+        let (mut f, mut sim) = setup();
+        let c = f.content.clone();
+        let fire = place(&mut f, &mut sim, "campfire", TilePos::new(4, 4));
+        // A machine with a fuel slot and one recipe starts with that recipe.
+        assert_eq!(f.building_view(fire).unwrap().recipe, c.factory.recipe("pit_fired_clay_brick"));
+        let (raw, brick, wood) = (part(&f, "raw_clay_brick"), part(&f, "clay_brick"), mat(&f, "wood"));
+        f.player.insert(&c, raw, 3);
+        let slot = f.player.slots.iter().position(|s| s.is_some()).unwrap();
+        assert_eq!(f.parts_to_building(slot, Click::Shift, fire), Ok(3));
+        for _ in 0..20 {
+            f.tick(&mut sim);
+        }
+        let v = f.building_view(fire).unwrap();
+        assert_eq!((v.status, v.reason.as_str()), (crate::Status::NoFuel, "No fuel: put wood in the fuel slot"));
+        // A tank click puts the wood into the fuel slot (wood is not a recipe input).
+        f.player.insert(&c, wood, 50);
+        assert_eq!(f.tank_to_building(0, Click::Left, fire), Ok(50));
+        // 3 bricks of 30 seconds; one unit of wood burns for 5 seconds.
+        for _ in 0..3 * 30 * 60 + 5 {
+            f.tick(&mut sim);
+        }
+        let v = f.building_view(fire).unwrap();
+        assert_eq!(v.outputs[0].count, 3, "{v:?}");
+        let fuel = v.fuel.unwrap();
+        assert_eq!((fuel.material, fuel.units), (Some(c.expect_material("wood")), 50 - 18));
+        // The output goes to the robot; a click on the fuel slot gives the wood back.
+        assert_eq!(f.take_outputs_to_player(fire), vec![Stack { item: brick, count: 3 }]);
+        assert_eq!(f.fuel_to_robot(fire, Click::Left), Ok(32));
+        assert_eq!(f.player.count(wood), 32);
     }
 
     #[test]

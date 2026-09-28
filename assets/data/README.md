@@ -51,7 +51,7 @@ Do not invent new tags; ask for a schema change instead (see `docs/design/reques
 | `oil` | A crude-oil family liquid. |
 | `ore` | A vein, or a raw/crushed/washed ore powder. |
 | `gangue` | Waste rock from an ore, not yet used in the Tier 0-1 data. |
-| `fuel` | Burns and is meant to power furnaces and boilers. |
+| `fuel` | Burns and is meant to power furnaces and boilers. A burner machine (the campfire) takes a powder or solid with this tag in its fuel slot. |
 | `carbon` | A carbon fuel (charcoal, coke, coal) used to reduce ore in smelting. |
 | `organic` | Comes from a living thing (wood, resin, rubber). |
 | `soluble` | Dissolves in water. |

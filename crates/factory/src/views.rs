@@ -5,7 +5,7 @@ use crate::buildings::PlacedPort;
 use crate::inventory::InventoryView;
 use crate::machines::Status;
 use foundry_content::{Building as BuildingDef, Content, ItemRef, PortKind, Side};
-use foundry_core::{BuildingId, BuildingKindId, RecipeId, TilePos};
+use foundry_core::{BuildingId, BuildingKindId, MaterialId, RecipeId, TilePos};
 
 /// One buffer of a machine (or one kind of item in a hopper or lab).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +22,19 @@ impl BufferView {
     pub fn new(content: &Content, item: ItemRef, count: u32, capacity: u32, per_craft: u32) -> Self {
         Self { item, name: content.item_name(item).to_string(), count, capacity, per_craft }
     }
+}
+
+/// The fuel slot of a burner machine (a campfire).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FuelView {
+    /// The fuel in the slot. `None`: the slot is empty.
+    pub material: Option<MaterialId>,
+    pub units: u32,
+    pub capacity: u32,
+    /// A fuel that the machine burns, for the picture of an empty slot.
+    pub hint: Option<MaterialId>,
+    /// The part of the burning unit that is left, 0 to 1.
+    pub burning: f32,
 }
 
 /// A port as the player sees it: the world tile it is on and the side it faces.
@@ -75,6 +88,8 @@ pub struct BuildingView {
     pub inputs: Vec<BufferView>,
     /// Machine output buffers (outputs, then byproducts).
     pub outputs: Vec<BufferView>,
+    /// The fuel slot of a burner machine.
+    pub fuel: Option<FuelView>,
     /// Slots and tanks of a storage building or the Hub.
     pub inventory: Option<InventoryView>,
     /// Progress of the current craft, 0 to 1.
