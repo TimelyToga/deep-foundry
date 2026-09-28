@@ -145,7 +145,7 @@
     Building(
         id: "sluice",
         name: "Sluice",
-        description: "Water flows through it. It washes crushed ore, washes light tailings away and discharges the used water.",
+        description: "Water flows through it. It washes crushed ore into the product port and carries light tailings out with the used water.",
         kind: "sluice",
         size: (3, 1),
         tier: 0,
@@ -153,7 +153,8 @@
         ports: [
             (kind: BulkIn, tile: (0, 0), side: Left),
             (kind: FluidIn, tile: (0, 0), side: Up),
-            (kind: BulkOut, tile: (2, 0), side: Right),
+            (kind: BulkOut, tile: (2, 0), side: Right, filter: ["washed_malachite", "washed_cassiterite", "washed_coal", "washed_magnetite", "washed_hematite", "washed_chalcopyrite", "washed_limestone"]),
+            (kind: BulkOut, tile: (2, 0), side: Down, filter: ["silt"]),
             (kind: FluidOut, tile: (2, 0), side: Down),
         ],
         crafts: ["washing"],

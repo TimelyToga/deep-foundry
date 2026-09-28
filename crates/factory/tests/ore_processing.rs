@@ -3,7 +3,7 @@
 mod common;
 
 use common::*;
-use foundry_core::TilePos;
+use foundry_core::{CellRect, TilePos};
 use foundry_factory::Factory;
 
 #[test]
@@ -80,10 +80,10 @@ fn hopper_stamp_mill_belt_sluice_and_crate_run_without_player_actions() {
         f.building_view(stamp),
         f.building_view(sluice)
     );
-    assert!(
-        inv.count(item(&c, "sand")) > 0,
-        "the sluice separates light sand tailings"
-    );
+    let silt = mat(&c, "silt");
+    assert_eq!(inv.count(item(&c, "silt")), 0, "tailings do not enter the product crate");
+    assert!(count_all(&sim, silt) > 0, "the sluice carries light tailings into the flowing water");
+    assert!(sim.count_material(CellRect::new(96, 104, 128, 112), silt) > 0, "tailings leave the lower waste outlet downstream of the sluice");
     assert!(belt_moved_ore, "crushed ore travels across the wood belt");
     let hopper_view = f.building_view(hopper).unwrap();
     assert!(hopper_view.inputs.iter().map(|b| b.count).sum::<u32>() < 16);
