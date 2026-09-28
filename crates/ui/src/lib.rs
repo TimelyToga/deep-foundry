@@ -283,6 +283,11 @@ impl FoundryUi {
         self.state.menu.confirm = Some(Confirm::Overwrite(name.to_string()));
     }
 
+    /// Where the button with this label was drawn in the last frame (for the smoke test).
+    pub fn button_rect(ctx: &egui::Context, label: &str) -> Option<egui::Rect> {
+        widgets::button_rect(ctx, label)
+    }
+
     /// True if the mouse is over the UI, so the game should not use the click for the world.
     pub fn wants_pointer(ctx: &egui::Context) -> bool {
         ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer()
