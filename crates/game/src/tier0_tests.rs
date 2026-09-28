@@ -353,6 +353,9 @@ impl Player {
     }
 
     /// Play one goal with the player actions. `None`: there is no script for this goal.
+    // The scripts for "t0_stamp_mill" and "t0_wash_ore". They wait for bronze gears (smelting);
+    // add them back to `play` when the smelting goals have scripts.
+    #[allow(dead_code)]
     fn process_ore(&mut self, wash: bool) -> Result<(), String> {
         ore_guide::process(self, wash)
     }
@@ -371,8 +374,6 @@ impl Player {
             "t0_campfire" => self.dig("wood", has("wood", 10)).and_then(|_| self.craft("campfire", 1)).and_then(|_| self.place("campfire")),
             "t0_fire_bricks" => self.fire_bricks(8),
             "t0_sluice" => self.dig("wood", has("wood", 20)).and_then(|_| self.craft("sluice", 1)).and_then(|_| self.place("sluice")),
-            "t0_stamp_mill" => self.process_ore(false),
-            "t0_wash_ore" => self.process_ore(true),
             "t0_research_labs" => self.research("research"),
             "t0_kiln" => self.build_kiln(),
             "t0_charcoal" => self.make_charcoal(32),
