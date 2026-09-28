@@ -23,6 +23,12 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 
 ## Next
 1. Merge play-test fixes when it finishes. Then tell the user: good test point.
+   Then launch play-test round 2 (Opus, new agent), from the user's second play-test:
+   - Digging fills the tank with dirt and stone. Make digging useful: common materials (dirt, stone, sand...) are knocked loose or dropped instead of stored, ores and wanted materials are kept; the player can set keep/drop per material in the tank UI.
+   - Move resources between the HUD quickbar and the tanks (both ways) without opening the inventory: drag, click and shift-click like Factorio.
+   - Guide: after the workbench the user did not know what to do. Check the whole path from spawn to the kiln step: each step says what to do, where, and with which key; the guide advances on every goal. Check the play-test fixes (dig discovers, crate storage) on the merged build.
+   - Kiln, charcoal, smelting need F2b machines, which do not exist yet. The guide must not point to a step the player cannot do; mark such steps "coming soon".
+   Sent to the character agent (running): no auto-jump when blocked, stuck cases, jetpack fuel gauge and recharge, draw pixel art directly.
    - Open: part/building ids `clay_brick`, `firebrick`, `wood_block` clash with material ids. F1 data renames the materials. Check wood_block too.
    - Open: `crates/ui/src/slots.rs` must move to foundry_factory (F2a) so the sim thread can apply slot clicks.
 2. Wave B workflow: RUNNING (explosions need its particles; heat/react touch the same sim files). Heat should use `World::worked_chunks()`; worldgen implements `ChunkSource` (see crates/sim/src/source.rs docs). Reactions task must add `SimEvent::Reaction { index: u16, at: CellPos }` (max one per reaction per tick; see requests/factory-core.md). The game passes it to `Factory::observe_reaction`.
