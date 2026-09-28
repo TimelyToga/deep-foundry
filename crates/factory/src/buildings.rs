@@ -17,9 +17,9 @@ use crate::cells::{self, is_fluid, phase};
 use crate::geometry::{Transform, neighbor_tile, opposite, tiles_to_cells};
 use crate::inventory::{Inventory, TankRule};
 use crate::logistics::{Belt, Hopper, Lab, steps_in_tick};
-use crate::machines::{self, Conditions, Machine, RecipeError, Status, output_stack};
+use crate::machines::{self, Conditions, Fuel, Machine, RecipeError, Status, is_fuel, output_stack};
 use crate::progress_link::{self, ProgressLink};
-use crate::views::{BufferView, BuildingView, PortView};
+use crate::views::{BufferView, BuildingView, FuelView, PortView};
 use foundry_content::{Building as BuildingDef, Content, ItemRef, Layer, Phase, PortKind, Side, Stack};
 use foundry_core::{BuildingId, BuildingKindId, CellPos, MaterialId, PartId, RecipeId, TILE_SIZE, TilePos};
 use foundry_sim::Simulation;
@@ -75,7 +75,16 @@ impl Logic {
             "belt" => Logic::Belt(Belt::default()),
             "hub" => Logic::Hub(Inventory::mixed(def.param("slots", 16.0).max(0.0) as usize, capacity, TankRule::Any)),
             "lab" => Logic::Lab(Lab::new(def.param("kit_buffer", 10.0) as u32)),
-            _ if !def.crafts.is_empty() => Logic::Machine(Machine::new(def.param("buffer_crafts", 2.0) as u32)),
+            _ if !def.crafts.is_empty() => {
+                let m = Machine::new(def.param("buffer_crafts", 2.0) as u32);
+                // A crafter with the param "fuel_capacity" has a fuel slot (the campfire).
+                let capacity = def.param("fuel_capacity", 0.0);
+                if capacity >= 1.0 {
+                    Logic::Machine(m.with_fuel(Fuel::new(capacity as u32, def.param("fuel_ticks", 60.0).max(1.0) as u32)))
+                } else {
+                    Logic::Machine(m)
+                }
+            }
             _ => Logic::Passive,
         }
     }
@@ -369,10 +378,10 @@ impl HubRule {
 /// How many of an item a building can take now.
 fn accept_room(logic: &Logic, content: &Content, item: ItemRef, hub: &HubRule) -> u32 {
     match logic {
-        Logic::Machine(m) => match m.recipe {
-            Some(r) => m.input_room(content.factory.recipe_def(r), item),
-            None => 0,
-        },
+        Logic::Machine(m) => {
+            let input = m.recipe.map_or(0, |r| m.input_room(content.factory.recipe_def(r), item));
+            input.saturating_add(fuel_room(m, content, item))
+        }
         Logic::Storage(inv) => inv.room_for(content, item, u32::MAX),
         Logic::Hub(inv) => hub.room(content, item, inv.count(item)).min(inv.room_for(content, item, u32::MAX)),
         Logic::Lab(lab) => match item {
@@ -389,6 +398,23 @@ fn accept_room(logic: &Logic, content: &Content, item: ItemRef, hub: &HubRule) -
     }
 }
 
+/// How many units of `item` the fuel slot of a machine takes now (0 if it is not a fuel).
+fn fuel_room(m: &Machine, content: &Content, item: ItemRef) -> u32 {
+    match (item, &m.fuel) {
+        (ItemRef::Material(mat), Some(f)) if is_fuel(content, mat) => f.room(mat),
+        _ => 0,
+    }
+}
+
+/// A fuel that a burner building burns, for the empty fuel slot: the first fuel in the filter of
+/// its input ports.
+fn fuel_hint(content: &Content, def: &BuildingDef) -> Option<MaterialId> {
+    def.ports.iter().flat_map(|p| p.filter.iter()).find_map(|i| match *i {
+        ItemRef::Material(m) if is_fuel(content, m) => Some(m),
+        _ => None,
+    })
+}
+
 /// Give up to `n` of an item to a building. Returns the count taken.
 fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub: &HubRule) -> u32 {
     let n = n.min(accept_room(logic, content, item, hub));
@@ -396,10 +422,15 @@ fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub: &Hub
         return 0;
     }
     match logic {
-        Logic::Machine(m) => match m.recipe {
-            Some(r) => m.add_input(content.factory.recipe_def(r), item, n),
-            None => 0,
-        },
+        Logic::Machine(m) => {
+            // Recipe inputs first, then the fuel slot.
+            let taken = m.recipe.map_or(0, |r| m.add_input(content.factory.recipe_def(r), item, n));
+            let fuel = match (item, m.fuel.as_mut()) {
+                (ItemRef::Material(mat), Some(f)) if taken < n && is_fuel(content, mat) => f.add(mat, n - taken),
+                _ => 0,
+            };
+            taken + fuel
+        }
         Logic::Storage(inv) | Logic::Hub(inv) => n - inv.insert(content, item, n),
         Logic::Lab(lab) => match item {
             ItemRef::Part(p) => {
@@ -419,7 +450,11 @@ fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub: &Hub
 /// Everything a building holds, as stacks. The building is emptied.
 pub(crate) fn take_contents(logic: &mut Logic, content: &Content) -> Vec<Stack> {
     match logic {
-        Logic::Machine(m) => m.take_contents(content),
+        Logic::Machine(m) => {
+            let mut out = m.take_contents(content);
+            out.extend(m.take_fuel());
+            out
+        }
         Logic::Storage(inv) | Logic::Hub(inv) => inv.take_all(),
         Logic::Hopper(h) => {
             let out = h.counts().into_iter().map(|(m, n)| Stack { item: ItemRef::Material(m), count: n }).collect();
@@ -753,6 +788,17 @@ impl Buildings {
         taken
     }
 
+    /// Take up to `n` units out of the fuel slot of a machine. Returns the material and the count.
+    pub fn take_fuel(&mut self, id: BuildingId, n: u32) -> Option<(MaterialId, u32)> {
+        let Some(b) = self.get_mut(id) else { return None };
+        let Logic::Machine(m) = &mut b.logic else { return None };
+        let taken = m.fuel.as_mut()?.take(n);
+        if taken.is_some() {
+            self.wake(id);
+        }
+        taken
+    }
+
     /// Take all finished products out of a machine.
     pub fn take_outputs(&mut self, content: &Content, id: BuildingId) -> Vec<Stack> {
         let Some(b) = self.get_mut(id) else { return vec![] };
@@ -848,6 +894,21 @@ impl Buildings {
         }
     }
 
+    /// Buildings from an older save whose kind has new logic now: a passive building that is a
+    /// machine now (the campfire), and a machine that has a fuel slot now.
+    pub fn upgrade_machines(&mut self, content: &Content) {
+        for i in 0..self.slots.len() {
+            let Some(b) = self.slots[i].building.as_mut() else { continue };
+            let new = Logic::for_kind(content.factory.building_def(b.kind));
+            match (&mut b.logic, new) {
+                (Logic::Passive, new @ Logic::Machine(_)) => b.logic = new,
+                (Logic::Machine(old), Logic::Machine(new)) if old.fuel.is_none() && new.fuel.is_some() => old.fuel = new.fuel,
+                _ => continue,
+            }
+            self.wake_index(i as u32);
+        }
+    }
+
     /// Set the material filter of a hopper (`None`: all powders).
     pub fn set_hopper_filter(&mut self, id: BuildingId, filter: Option<MaterialId>) -> bool {
         let Some(b) = self.get_mut(id) else { return false };
@@ -935,19 +996,27 @@ impl Buildings {
             };
             let taken = match &mut b.logic {
                 Logic::Machine(m) => {
-                    let Some(r) = m.recipe else { continue };
-                    let recipe = content.factory.recipe_def(r);
-                    // Do not read the world when no input of this phase has room.
-                    let wanted = recipe.inputs.iter().any(|s| match s.item {
-                        ItemRef::Material(mat) => phases.contains(&phase(content, mat)) && m.input_room(recipe, s.item) > 0,
-                        ItemRef::Part(_) => false,
+                    let recipe = m.recipe.map(|r| content.factory.recipe_def(r));
+                    // Do not read the world when no input of this phase (and no fuel slot) has room.
+                    let wanted = recipe.is_some_and(|recipe| {
+                        recipe.inputs.iter().any(|s| match s.item {
+                            ItemRef::Material(mat) => phases.contains(&phase(content, mat)) && m.input_room(recipe, s.item) > 0,
+                            ItemRef::Part(_) => false,
+                        })
                     });
-                    if !wanted {
+                    let fuel_room = m.fuel.is_some_and(|f| f.units < f.capacity);
+                    if !wanted && !fuel_room {
                         continue;
                     }
                     cells::take_from_side(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, phases, |mat| {
                         let item = ItemRef::Material(mat);
-                        port_allows(def, &port, item) && m.add_input(recipe, item, 1) == 1
+                        if !port_allows(def, &port, item) {
+                            return false;
+                        }
+                        if recipe.is_some_and(|r| m.add_input(r, item, 1) == 1) {
+                            return true;
+                        }
+                        is_fuel(content, mat) && m.fuel.as_mut().is_some_and(|f| f.add(mat, 1) == 1)
                     })
                 }
                 Logic::Hopper(h) => {
@@ -1400,6 +1469,7 @@ impl Buildings {
             recipes: Self::recipes_for(content, b.kind),
             inputs: vec![],
             outputs: vec![],
+            fuel: None,
             inventory: None,
             progress: 0.0,
             power_w: b.power_w,
@@ -1411,6 +1481,13 @@ impl Buildings {
         };
         match &b.logic {
             Logic::Machine(m) => {
+                v.fuel = m.fuel.map(|f| FuelView {
+                    material: f.material,
+                    units: f.units,
+                    capacity: f.capacity,
+                    hint: fuel_hint(content, def),
+                    burning: f.burn as f32 / f.ticks_per_unit.max(1) as f32,
+                });
                 if let Some(r) = m.recipe {
                     let recipe = content.factory.recipe_def(r);
                     v.recipe = Some(r);
@@ -1442,6 +1519,10 @@ impl Buildings {
                             format!("Too cold: {} °C, needs {} °C", b.heat, recipe.min_temp.unwrap_or(0))
                         }
                         Status::TooHot => format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp),
+                        Status::NoFuel => match fuel_hint(content, def) {
+                            Some(f) => format!("No fuel: put {} in the fuel slot", content.materials.names[f.index()].to_lowercase()),
+                            None => "No fuel".into(),
+                        },
                         s => s.text().to_string(),
                     };
                 } else {
