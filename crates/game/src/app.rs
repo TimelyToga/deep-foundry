@@ -419,7 +419,7 @@ impl Game {
             UiState::Inventory => self.ui.ui.open_window(WindowKind::Character),
             UiState::Debug => self.ui.model.settings.show_debug = true,
             UiState::Research => self.ui.ui.open_window(WindowKind::Research),
-            UiState::Guide => self.ui.ui.open_window(WindowKind::Guide),
+            UiState::Guide | UiState::GuideWorkbench | UiState::GuideDone => self.ui.ui.open_window(WindowKind::Guide),
             // Screens for `--screenshot`. In the window they start the normal game.
             UiState::Building
             | UiState::Ghost
@@ -428,7 +428,8 @@ impl Game {
             | UiState::Drag
             | UiState::Alt
             | UiState::Remove
-            | UiState::Tanks => {}
+            | UiState::Tanks
+            | UiState::Campfire => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {

@@ -306,8 +306,16 @@ fn tank_summary(cx: &mut Cx, qb: Rect) {
         let tx = grid.right() + 10.0;
         let mut y = grid.top() + 2.0;
         let spray = model.player.spray.filter(|m| tank.iter().any(|t| t.material == Some(*m) && t.units > 0));
-        match spray {
-            Some(m) => {
+        match (spray, &model.building) {
+            // A building window is open: a tank click moves the tank into it.
+            (_, Some(b)) => {
+                let name = item::building_name(&model.content, b.kind);
+                p.text(pos2(tx, y), Align2::LEFT_TOP, format!("{name} open:"), font_regular(text::SMALL), color::TEXT_DIM);
+                y += 17.0;
+                let how = format!("Click a tank to move it into the {name}. Right click: half. Or drag it there.");
+                widgets::wrapped(&p, pos2(tx, y), &how, font_regular(text::SMALL), color::ORANGE, TANK_TEXT_W);
+            }
+            (Some(m), None) => {
                 let it = ItemRef::Material(m);
                 p.text(pos2(tx, y), Align2::LEFT_TOP, "Spray tool:", font_regular(text::SMALL), color::TEXT_DIM);
                 y += 17.0;
@@ -319,7 +327,7 @@ fn tank_summary(cx: &mut Cx, qb: Rect) {
                 y = widgets::wrapped(&p, pos2(tx, y), &how, font_regular(text::SMALL), color::TEXT, TANK_TEXT_W).bottom() + 2.0;
                 widgets::wrapped(&p, pos2(tx, y), "Click a tank to choose another.", font_regular(text::SMALL), color::TEXT_FAINT, TANK_TEXT_W);
             }
-            None => {
+            (None, None) => {
                 let text = if used == 0 { "The tanks are empty. Dig to fill them." } else { "Click a tank to choose what the spray tool puts out." };
                 widgets::wrapped(&p, pos2(tx, y), text, font_regular(text::SMALL), color::TEXT_DIM, TANK_TEXT_W);
             }
