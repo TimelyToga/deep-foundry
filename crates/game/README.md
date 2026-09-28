@@ -30,6 +30,8 @@ refresh rate.
 
 ## Controls of the normal game
 
+The keys are the defaults. Settings > Controls changes them (see "Keys and settings" below).
+
 | Input | Action |
 |---|---|
 | A / D | Walk left / right. The robot walks up low steps. It cannot pass solid cells or powder; it wades through liquids. |
@@ -37,22 +39,41 @@ refresh rate.
 | Left mouse (hold) | Dig the cells at the mouse (in reach). Dug cells go into the material tanks as their broken form. Stone is too hard at the start. |
 | Right mouse (hold) | Spray material from the tank at the mouse. Click a tank slot (or a material on the quickbar) to choose the material; else the first tank is used. |
 | F (hold) | Scan the material under the mouse. The first scan of a material discovers it. |
-| Building in the hand | A ghost follows the mouse: green if it can be placed, red with the reason. Left click places it. R rotates it. |
-| Left click on a building (empty hand) | Open its window. |
-| Right click on a building | Take it back into the inventory (not the Hub). |
-| Q | Empty the hand |
+| Left click on a building (empty hand) | Open its window (in reach). The window closes when the robot walks out of reach. |
+| Q | On a building: take that building kind from the inventory into the hand, with the building's rotation, flip and recipe (the pipette). Elsewhere: empty the hand. |
 | E | Character screen: inventory, tank and hand crafting |
-| T | Research |
+| T | Research. A technology that waits for earlier technologies has a Queue button: it queues them first. |
 | G | Guide (goals for each tier) |
+| P | Production statistics |
 | 1 to 0, Shift + 1 to 0 | Quickbar: take that building into the hand, or choose that spray material |
 | Mouse wheel | Zoom |
 | Esc | Close the top window, or open the pause menu |
 | F3 | Debug panel |
 
+### Building (as in Factorio)
+
+| Input | Action |
+|---|---|
+| Building in the hand | The tile grid shows. A ghost follows the mouse: the building's shape, its ports (arrows: yellow bulk, blue fluids, white parts, orange heat and exhaust; dots: pipes and power), green if it can be placed, red with the reason next to the mouse. |
+| Left mouse | Place the building. Hold and move: a line along the first direction of the move, one footprint per step. Belts in a sideways line face the line direction. The line stops at the first place that fails (the red ghost shows why). |
+| R / Shift + R | Turn the building in the hand (belts: left or right). With an empty hand: turn the building under the mouse. Each building kind keeps its rotation for the next placement. |
+| F | Flip the building in the hand, if its mirror image is different (with no building in the hand F scans). |
+| Right mouse on a building (hold) | Remove buildings: each building under the path of the mouse is taken, one after another. Each takes a short time (a ring shows the progress). Items and contents go into the inventory. The Hub cannot be removed. |
+| Ctrl + Z / Ctrl + Y (Ctrl + Shift + Z) | Undo / redo the last place, remove or turn action. A drag line or a remove drag is one action. Undo of a removal needs the building item in the inventory. |
+| Shift + right click / Shift + left click | Copy the recipe of a machine / paste it to another machine of the same kind. |
+| Alt | Alt mode on or off: the product of each machine's recipe over it, and belt directions. Machines that do not work always show a "!" icon. |
+| Mouse over a building | A thin outline. The hover box at the top center shows its name, status and reason, recipe and hit points. Over a cell: the material, its state, temperature, "Can dig" or what is needed, what it breaks into, and "Not discovered" if it was never scanned. |
+
+Placement and removal work only in reach of the robot (80 cells, 10 tiles). Out of reach, the
+ghost says "Out of reach". In machine windows, a click on an input slot with an empty hand takes
+the items back (right click: half; Shift + click: into the inventory).
+
 The Hub takes the items of the next repair stage: open it and shift + click stacks from the
 inventory into it. New buildings go to a free quickbar slot the first time you get them.
 
 ## Controls of the sandbox
+
+The keys are the defaults (see "Keys and settings").
 
 | Input | Action |
 |---|---|
@@ -73,6 +94,22 @@ inventory into it. New buildings go to a free quickbar slot the first time you g
 
 The HUD shows the frame rate, the tick time and the awake chunks at the top right, and the cell
 under the mouse (material and temperature) below them.
+
+## Keys and settings
+
+- Every game key is a binding in one table (`src/keys.rs`): action -> keys. Esc and the mouse
+  buttons are fixed.
+- Settings > Controls lists the keys of the mode. Click a row, then press the new key (Ctrl +
+  a key binds with Ctrl; Esc stops). "Reset to defaults" restores all keys.
+- "Match keys by position" (the default) uses the place of the key on the keyboard: on Dvorak
+  the movement keys stay where W A S D are on QWERTY. "Match keys by letter" uses the letter
+  that the key types on the keyboard layout (keys that type no letter still match by place).
+- The game shows each key with its name on the player's keyboard. It learns the name of a key
+  the first time the key is pressed; before that it shows the QWERTY name.
+- The settings (UI scale, vertical sync, FPS, debug panel, keys, learned key names) are saved in
+  `settings.ron` in the app data folder, next to the `saves` folder (macOS:
+  `~/Library/Application Support/DeepFoundry/settings.ron`). `--settings FILE` uses another
+  file. `--ui-scale` and `--no-vsync` win over the file.
 
 ## Saves
 
@@ -96,14 +133,17 @@ the newest save.
 --size WxH             Window size in screen pixels
 --saves DIR            Folder for saved games
 --ui-state STATE       Start screen: menu, newgame, load, settings, pause, save, playing, inventory, debug;
-                       normal mode only: building, ghost, hub, research, guide
+                       normal mode only: building, ghost, hub, research, guide,
+                       ghost-red, drag, alt, remove
 --mode MODE            Mode of a world that --ui-state starts: sandbox (default) or normal
---ui-scale S           Size of the UI, 0.75 to 2
+--ui-scale S           Size of the UI, 0.75 to 2 (wins over the settings file)
+--settings FILE        The settings file (default: settings.ron in the app data folder)
 --exit-after SECONDS   Quit after this time and print the average FPS and frame time (starts in the game)
 --no-vsync             Do not wait for the display refresh (to measure the highest FPS)
 --smoke-test           Play the sandbox (new game, paint, pause, save, load, quit to menu, continue,
                        delete) and the normal game (new game, dig clay, hand craft, place a
-                       workbench, open its window, save, load, delete), then quit
+                       workbench, open its window, drag a belt line, undo, redo, remove by drag,
+                       pipette, save, load, delete), then quit
 --help                 Show all options
 ```
 
@@ -120,8 +160,11 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
   and the window sizes are ready.
 - `--no-ui` draws only the world.
 - `--mode normal` (or a normal-mode screen) makes a normal game: the Hub, the robot and the factory
-  tick with the cells. The screens `inventory`, `building` (a crate), `ghost` (a workbench in the
-  hand), `hub` and `guide` put a few items into the inventory first, so the picture shows them.
+  tick with the cells. The screens `inventory`, `building` (a crate), `ghost` (a steam crusher in
+  the hand, with its ports), `ghost-red` (the same ghost in the ground, with the reason), `drag`
+  (a belt line in progress), `alt` (the alt mode over two machines), `remove` (the remove button
+  on a belt row), `hub` and `guide` put a few items into the inventory first, so the picture
+  shows them. `--zoom 8` shows the construction shapes well.
   `--walk N` lets the robot walk N ticks first (N < 0: to the left).
 
 ```sh

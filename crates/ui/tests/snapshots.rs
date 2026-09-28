@@ -66,6 +66,7 @@ fn hud_building_hover_and_hand() {
     let mut model = playing();
     let c = model.content.clone();
     model.hover = Some(mock::hover_building(&c));
+    model.hover_detail = mock::hover_building_detail();
     model.player.hand = Some(foundry_ui::Stack { item: mock::it(&c, "bronze_gear"), count: 17 });
     let mut h = harness(HD, model, |_| {});
     settle(&mut h);

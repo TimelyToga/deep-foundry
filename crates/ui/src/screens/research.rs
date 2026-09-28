@@ -309,10 +309,19 @@ fn tech_card(ui: &mut Ui, cx: &mut Cx, p: &Painter, card: Rect, e: &TechEntry, t
         }
     }
 
-    // Research button.
+    // Research button. A locked technology that waits only for earlier technologies has a
+    // Queue button: it queues them first, then this one.
+    let br = Rect::from_min_size(pos2(cols.button_left, card.center().y - 16.0), vec2(BUTTON_W, 32.0));
     if e.state == TechState::Available {
-        let br = Rect::from_min_size(pos2(cols.button_left, card.center().y - 16.0), vec2(BUTTON_W, 32.0));
         if widgets::button(ui, Id::new(("tech-research", e.id.0)), br, "Research", ButtonKind::Confirm, true).clicked() {
+            cx.act(UiAction::StartResearch(e.id));
+        }
+    } else if e.state == TechState::Locked && e.can_queue && e.queue_position.is_none() {
+        let resp = widgets::button(ui, Id::new(("tech-queue", e.id.0)), br, "Queue", ButtonKind::Normal, true);
+        if resp.hovered() {
+            cx.tip(Tip::Text { title: "Queue".into(), body: "Research the technologies it needs first, then this one.".into() });
+        }
+        if resp.clicked() {
             cx.act(UiAction::StartResearch(e.id));
         }
     }

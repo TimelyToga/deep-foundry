@@ -4,13 +4,16 @@
 //!   the save;
 //! - normal mode: new game, dig clay, hand craft a clay brick and a workbench, place the
 //!   workbench, open its window, dig until the tanks are full, place a crate and move a tank
-//!   into it, save from the pause menu with mouse clicks, load, check the inventory, delete the
+//!   into it, craft belts, drag a line of belts, undo, redo, remove belts with the remove button,
+//!   pick a belt with the pipette, save from the pause menu with mouse clicks, load, check the
+//!   inventory, delete the
 //!   save;
 //! - quit.
 //!
 //! The steps `Key` and `Click` go through egui like the player's keys and clicks, so they find
 //! menus that do not take clicks.
 
+use foundry_core::TilePos;
 use foundry_ui::{GameMode, UiAction, WorldSize};
 use egui::Key;
 use std::collections::VecDeque;
@@ -54,6 +57,22 @@ pub enum Step {
     ClickIfShown(&'static str),
     /// Type this name into the save dialog.
     SaveName(&'static str),
+    /// Normal mode: take belts into the hand, find a free row of `tiles` tiles in the air near the
+    /// robot, press the left button on its first tile and move the mouse one tile per frame to its
+    /// end, then let go. `step` counts the frames.
+    DragBelts { tiles: i32, step: i32 },
+    /// Normal mode: exactly this many of an item in the inventory and the hand.
+    Count(&'static str, u32),
+    /// Normal mode: Ctrl + Z, Ctrl + Y.
+    Undo,
+    Redo,
+    /// Normal mode: press the right button on the first belt of the row and move over `tiles`
+    /// belts. The button stays down until `StopTools`.
+    RemoveDrag { tiles: i32, step: i32 },
+    /// Normal mode: the pipette (Q) on the belt at this place in the row.
+    Pipette(i32),
+    /// Normal mode: this item is in the hand.
+    InHand(&'static str),
     /// The test passed: close the window.
     Done,
 }
@@ -72,6 +91,8 @@ pub struct Smoke {
     pub failure: Option<String>,
     /// egui input for the next frame (keys and clicks of the steps).
     pub events: Vec<egui::Event>,
+    /// The first tile of the belt row of `DragBelts`.
+    pub row: Option<TilePos>,
 }
 
 impl Smoke {
@@ -119,9 +140,23 @@ impl Smoke {
             (1, Step::WindowOf("crate")),
             (5, Step::ClickTankOf("clay")),
             (1, Step::InBuilding("clay")),
+            (5, Step::Key(Key::Escape)),
+            // Construction: a drag line, undo, redo, the remove button, the pipette.
+            (5, Step::Craft("wood_belt", 2)),
+            (1, Step::Have("wood_belt", 4)),
+            (5, Step::DragBelts { tiles: 4, step: 0 }),
+            (1, Step::Count("wood_belt", 0)),
+            (5, Step::Undo),
+            (1, Step::Count("wood_belt", 4)),
+            (5, Step::Redo),
+            (1, Step::Count("wood_belt", 0)),
+            (5, Step::RemoveDrag { tiles: 3, step: 0 }),
+            (1, Step::Count("wood_belt", 3)),
+            (1, Step::StopTools),
+            (5, Step::Pipette(3)),
+            (1, Step::InHand("wood_belt")),
             // Save from the pause menu with mouse clicks.
-            (5, Step::Key(Key::Escape)),
-            (5, Step::Key(Key::Escape)),
+            (10, Step::Key(Key::Escape)),
             (5, Step::SaveName(normal_save)),
             (5, Step::Click("Save game")),
             (5, Step::Click("Save")),
@@ -136,7 +171,7 @@ impl Smoke {
             (1, Step::Expect("Deleted: smoke normal")),
             (10, Step::Done),
         ];
-        Self { steps: steps.into_iter().collect(), wait: 0, tries: 0, failure: None, events: vec![] }
+        Self { steps: steps.into_iter().collect(), wait: 0, tries: 0, failure: None, events: vec![], row: None }
     }
 
     /// The step to run in this frame, if its wait is over.
