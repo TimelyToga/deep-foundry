@@ -18,12 +18,14 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 | Work | Where | Merge notes |
 |---|---|---|
 | Play-test fixes (Opus): save-menu bug, bigger tanks, crates take bulk, Factorio transfers, tank trash, Hub take-back, dig discovers, guide goal checks | agent worktree (ac372d6) | crates/factory, crates/ui, small factory_host/app edits. Told to merge main (liquids) before its report. |
+| Character (Opus): new robot sprites (user's image skill), animations, sprite pass in crates/render, smoother movement | agent worktree | crates/game player.rs + drawing, new crates/render sprite file, assets/sprites, tools/sprites. |
+| Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
 
 ## Next
 1. Merge play-test fixes when it finishes. Then tell the user: good test point.
    - Open: part/building ids `clay_brick`, `firebrick`, `wood_block` clash with material ids. F1 data renames the materials. Check wood_block too.
    - Open: `crates/ui/src/slots.rs` must move to foundry_factory (F2a) so the sim thread can apply slot clicks.
-2. Wave B workflow: ready to launch (liquids merged; explosions need its particles; heat/react touch the same sim files). Heat should use `World::worked_chunks()`; worldgen implements `ChunkSource` (see crates/sim/src/source.rs docs). Reactions task must add `SimEvent::Reaction { index: u16, at: CellPos }` (max one per reaction per tick; see requests/factory-core.md). The game passes it to `Factory::observe_reaction`.
+2. Wave B workflow: RUNNING (explosions need its particles; heat/react touch the same sim files). Heat should use `World::worked_chunks()`; worldgen implements `ChunkSource` (see crates/sim/src/source.rs docs). Reactions task must add `SimEvent::Reaction { index: u16, at: CellPos }` (max one per reaction per tick; see requests/factory-core.md). The game passes it to `Factory::observe_reaction`.
    Wave B (script: scratchpad wave_b.js): heat, reactions + burning, explosions (uses existing particles), render light + debug overlays, worldgen (must use the ChunkSource trait), content scene tests (Sonnet), then integrate, review, fix. Update the worldgen and render prompts for the infinite world first.
 3. At the same time, F2a: player (movement, dig, spray, inventory), construction UX (ghosts, drag, rotate, pick, undo, remove), factory in the sim thread (make Factory, set guide = Guide::load_default(), scan tool calls Factory::scan), UI connected to real data.
 4. F2b after wave B: room machines (kiln, coke oven, blast furnace), T0 special machines (crucible, mold, sluice, stamp mill), then play-test to milestone 1.
