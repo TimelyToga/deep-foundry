@@ -342,7 +342,7 @@ fn look_image() {
             if y >= top {
                 return (wood, 400, 0, BURNING);
             }
-            if y >= top - 14 && h % 3 != 0 {
+            if y >= top - 14 && !h.is_multiple_of(3) {
                 return (fire, 800, (10 + h % 30) as u8, 0);
             }
             if (40..92).contains(&y) && h % 5 < 3 {

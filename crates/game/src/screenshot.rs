@@ -107,7 +107,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     *renderer.settings_mut() = render_settings;
     if let Some(h) = &host {
         let (x, y) = h.robot.center();
-        renderer.set_lights(&[render_setup::robot_lamp((x as f32, y as f32), h.robot.facing)]);
+        renderer.set_lights(&[render_setup::robot_lamp((x, y), h.robot.facing)]);
     }
     let upload_start = Instant::now();
     if state.has_world() {
