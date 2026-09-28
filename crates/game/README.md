@@ -36,7 +36,7 @@ The keys are the defaults. Settings > Controls changes them (see "Keys and setti
 |---|---|
 | A / D | Walk left / right. The robot walks up low steps. It cannot pass solid cells or powder; it wades through liquids. |
 | W or Space | Jump. Hold it in the air: a small jetpack (the fuel fills on the ground). In a liquid: swim up. |
-| Left mouse (hold) | Dig the cells at the mouse (in reach). Dug cells go into the material tanks as their broken form. Stone is too hard at the start. |
+| Left mouse (hold) | Dig the cells at the mouse (in reach). Each dug cell becomes its broken form (stone becomes gravel). The robot keeps useful materials in its tanks and throws the others out behind itself as loose material (see "Digging: keep or drop"). Stone is too hard at the start. |
 | Right mouse (hold) | Spray material from the tank at the mouse. Click a tank slot (or a material on the quickbar) to choose the material; else the first tank is used. |
 | F (hold) | Scan the material under the mouse. The first scan of a material discovers it. |
 | Left click on a building (empty hand) | Open its window (in reach). The window closes when the robot walks out of reach. |
@@ -49,6 +49,44 @@ The keys are the defaults. Settings > Controls changes them (see "Keys and setti
 | Mouse wheel | Zoom |
 | Esc | Close the top window, or open the pause menu |
 | F3 | Debug panel |
+
+### Digging: keep or drop
+
+- By default the robot keeps the materials that the data uses: recipe inputs (clay, sand, wood,
+  raw coal, ...), fuels that a building port takes (wood, charcoal), and the inputs of reactions
+  that make a useful material (the raw ores and charcoal, which smelt into molten metal). The rule
+  is in `foundry_factory::digging`; nothing is listed by hand.
+- The robot drops the rest (dirt, gravel from stone, snow, leaves, water): the dug cell becomes
+  air, and one unit of it flies out behind the robot and lands as loose material
+  (`src/spoil.rs`). If the space behind the robot is blocked, it flies out over the robot's head.
+  No material is lost, and the dig speed is the same.
+- A small button on each tank slot (HUD and inventory) changes keep or drop with one click: a
+  green check is keep, a red arrow down is drop. The character screen lists every known material
+  ("Digging: keep or drop"). The setting is saved in the `.dfgame` file.
+
+### Moving items without the inventory
+
+With a building window open (a crate, a barrel, the Hub, a machine), the HUD bar at the bottom
+works as the robot's side:
+
+| Input | Action |
+|---|---|
+| Click a HUD tank | Move it into the building (right click: half). |
+| Click a material on the quickbar | Move that material from every tank into the building. |
+| Shift + click a part on the quickbar | Move all of that part into the building. |
+| Shift + click a building slot | Move it back to the robot. |
+| Drag between the HUD bar (or the inventory) and the building window | Move it in or back. |
+| Drag a tank or an item onto a quickbar slot | Put it on the quickbar. Drag a quickbar slot onto another one to swap them. |
+
+The first building window shows a hint about this above the quickbar.
+
+### The campfire
+
+The campfire fires raw clay bricks into clay bricks, slowly (30 seconds each, pit firing). It
+has a fuel slot for wood or charcoal: one unit of wood burns for 5 seconds, so a brick needs 6
+wood. Click a wood tank on the HUD with the campfire open to fill the fuel slot. A click on the
+fuel slot gives the fuel back. So the first clay bricks, and the kiln controller that needs 8 of
+them, do not need a kiln.
 
 ### Building (as in Factorio)
 
@@ -134,7 +172,8 @@ the newest save.
 --saves DIR            Folder for saved games
 --ui-state STATE       Start screen: menu, newgame, load, settings, pause, save, playing, inventory, debug;
                        normal mode only: building, ghost, hub, research, guide,
-                       ghost-red, drag, alt, remove
+                       ghost-red, drag, alt, remove, tanks, guide-workbench,
+                       guide-done, campfire
 --mode MODE            Mode of a world that --ui-state starts: sandbox (default) or normal
 --ui-scale S           Size of the UI, 0.75 to 2 (wins over the settings file)
 --settings FILE        The settings file (default: settings.ron in the app data folder)
@@ -166,6 +205,9 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
   on a belt row), `hub` and `guide` put a few items into the inventory first, so the picture
   shows them. `--zoom 8` shows the construction shapes well.
   `--walk N` lets the robot walk N ticks first (N < 0: to the left).
+  `guide-workbench` shows the guide after the first goals (up to the workbench and the two
+  ores), `guide-done` the guide when every goal that the game can do is done ("Next: the kiln.
+  It comes in a later update."), and `campfire` a campfire window that fires clay bricks.
 
 ```sh
 cargo run -p deep_foundry -- --screenshot out/hub.png --size 2560x1440 --mode normal --ui-state hub --ticks 60

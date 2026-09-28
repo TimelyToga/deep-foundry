@@ -81,6 +81,9 @@ Details of the player:
 - `hand: Option<Stack>`: the stack that the mouse holds, as in Factorio. The UI draws it at the mouse.
 - `hotbar: Vec<Option<ItemRef>>`: 20 quickbar slots. A quickbar slot holds an item type, not items. The count shown is the number in the inventory.
 - `crafting: Vec<CraftJobView>`: the hand crafting queue. Only the first job has progress.
+- `dig: Vec<DigRule>`: keep or drop for each known dug material (`material`, `keep`). The game
+  sends the discovered materials that can be in a tank and the materials in the tanks.
+  `PlayerView::keeps(m)` finds the setting. Empty in the sandbox.
 
 Details of a building window (`BuildingView`): status and status text, the current recipe, input, output and fuel slots (each slot can have a `filter`: the item it expects), material buffers (for example "Water in", "Steam out"), progress, speed, power use (with the voltage of the building and of its network), temperature, and `milestone` (only for the Hub, section 3.5). The name, the icon, the maximum temperature and the list of recipes that the building can make come from the content (`item::building_recipes`).
 
@@ -127,7 +130,11 @@ The keys (the game owns the key table; see `crates/game/README.md`, "Keys and se
 
 ### 3.4 Guide
 
-`guide: Vec<GuideGoal>` has the goals of the open tiers, in order. A goal has an `id`, a `tier`, a `title`, a hint `text`, `done`, an optional `count` (have, need), for example (40, 64), and `reward_points` (discovery points it gives).
+`guide: Vec<GuideGoal>` has the goals of the open tiers, in order. A goal has an `id`, a `tier`, a `title`, a hint `text`, `done`, an optional `count` (have, need), for example (40, 64), `reward_points` (discovery points it gives), and `waits_for`: the machine that the goal needs and that the game does not have yet (for example "the kiln").
+
+`next_goal(&guide)` gives the next step: `Goal` (the first open goal with no `waits_for`), `Waiting` (every goal that the game can do is done; this goal waits) or `AllDone`. For `Waiting`, `GuideGoal::next_text` is "Next: the kiln. It comes in a later update." The HUD tracker and the guide window use it, so the player always sees a next step.
+
+Guide texts write keys as `{key:ID}` (all keys of the action, "A / Left") or `{key1:ID}` (the first key, "A"). `Settings::with_keys` puts in the player's keys. Never write a fixed letter.
 
 ### 3.5 Hub repair stage
 
@@ -142,7 +149,8 @@ Graphs use `TimeSeries`: 300 samples for each time range (5 s, 1 m, 10 m, 1 h, 1
 | `OpenWindow(kind)` | Information only. For `Production`, the game can start to fill `stats`. For `Research`, it can start to fill `techs`. |
 | `CloseWindow(kind)` | For `Building` and `PowerNetwork`: set `model.building` or `model.power` to `None`. For the others: information only. |
 | `OpenPowerNetwork(building)` | Fill `model.power` with the network of this building. |
-| `ClickSlot { slot, click }` | Apply the Factorio slot rules (section 5) to the real inventories. |
+| `ClickSlot { slot, click }` | Apply the Factorio slot rules (section 5) to the real inventories. Drag and drop also sends it (section 5.1). |
+| `SetKeep { material, keep }` | Keep (true) or drop (false) this material when the robot digs. |
 | `SelectHotbar(i)` | Put that item in the hand or select the build tool for it. |
 | `SetHotbar { index, item }` | Put an item type in a quickbar slot, or clear it (`None`). |
 | `ClearHand` | Put the stack in the hand back into the inventory. |
@@ -175,6 +183,22 @@ The UI only reports the click. The owner of the items applies the rules with `fo
 Items move into stacks of the same item first, then into empty slots, in slot order. Each slot list has a `limit(slot, item)` function: the most of an item that the slot can hold (0 = the slot does not take it). So a tank slot takes only materials, a part slot takes only parts, an output slot takes nothing, and a filtered input slot takes only its item.
 
 "The other inventory": for a player slot, the open building (fuel slots first, then input slots). For a building slot, the player inventory, then the tank. With no building open, shift-click and ctrl-click do nothing. On macOS, Cmd counts as Ctrl.
+
+### 5.1 Moving items with the HUD bar
+
+With a building window open, the HUD bar (the quickbar and the tank panel) works as the robot's side of the transfer, so the player does not need the inventory:
+
+| Input | Action sent |
+|---|---|
+| Click a HUD tank | `ClickSlot(Tank)`: the tank moves into the building (right click: half). |
+| Click a material on the quickbar | Ctrl + click on a tank of it: that material from every tank. |
+| Shift + click a part on the quickbar | Ctrl + click on an inventory slot of it: all of that part. A plain click takes it in the hand. |
+| Drag a tank, a quickbar slot or an inventory slot onto the building window | The same as the click above (an inventory slot: Shift + click). |
+| Drag a building slot onto the HUD bar or the inventory | Shift + click on the building slot: it goes back to the robot. |
+| Drag a tank or an inventory slot onto a quickbar slot | `SetHotbar`: the quickbar shows that item. |
+| Drag a quickbar slot onto another quickbar slot | Two `SetHotbar`: the slots change places. |
+
+The game applies these actions with the rules of `foundry_factory::transfer`; the UI has no rules of its own (`screens/drag.rs`). While the player drags, the item is drawn at the mouse and the place where it can go has an orange frame. The first building window of a game shows a hint above the quickbar: "Move items with the bar below".
 
 ## 6. Crafting clicks
 
@@ -210,14 +234,16 @@ The UI ignores keys while a text field has the keyboard.
 
 | Screen | Contents |
 |---|---|
-| HUD | Hover box at the top center (as in the Minecraft mod WAILA): the icon and name of the cell or building under the mouse, then for a cell its state, temperature, "Can dig" or what is needed, what it breaks into and "Not discovered: scan with F"; for a building its status and reason, recipe with progress, hit points and temperature. Nothing for air. It stays right of the boxes on the left; the message line moves under it. Quickbar (2 rows of 10) with hull and heat bars at the bottom center. Tank summary on its right. Crafting queue at the bottom left. Research box at the top left (a click opens the research window). Guide tracker under the research box, or at the top left when there is no research: the first 2 goals that are not done, with the title, the count and the text (a click opens the guide; not in the sandbox mode; nothing when no goal is open). Alerts at the bottom right. FPS at the top right corner. |
+| HUD | Hover box at the top center (as in the Minecraft mod WAILA): the icon and name of the cell or building under the mouse, then for a cell its state, temperature, "Can dig" or what is needed, what it breaks into and "Not discovered: scan with F"; for a building its status and reason, recipe with progress, hit points and temperature. Nothing for air. It stays right of the boxes on the left; the message line moves under it. Quickbar (2 rows of 10) with hull and heat bars at the bottom center. Tank summary on its right. Crafting queue at the bottom left. Research box at the top left (a click opens the research window). Guide tracker under the research box, or at the top left when there is no research: the first 2 open goals that the game can do, with the title, the count and the text. When the game can do no more goals, it says "You did every goal for now" and "Next: the kiln. It comes in a later update." (a click opens the guide; not in the sandbox mode; nothing when every goal is done). Alerts at the bottom right. FPS at the top right corner. |
 | Character screen (E) | Inventory grid and tank on the left. Crafting on the right: 5 tabs (Logistics, Production, Intermediate products, Power, Research), a search field, and the recipe grid. |
 | Building window | Status line with a colored dot, tier, picture, Hub repair stage (only the Hub), recipe selector (a click opens a grid of recipes), input slots, progress arrow, output slots, fuel slots, material buffers, power bar (a click opens the power network), temperature bar. |
 | Hub repair stage | In the Hub window: "Repair stage N: name", the description, one row for each item (icon, name, a bar with "delivered / need"), and a hint: shift + click moves a stack from the inventory into the Hub. Under it, "Later repair stages" (`BuildingView::later_stages`) and "Held items": the items the Hub keeps for a later stage. A click on a held item gives it back to the robot. The Hub takes only what the stages still need. |
-| Tanks | HUD: a slot for each tank (icon, amount, fill bar), the spray material with an orange frame and "Hold right mouse to spray it out"; a click chooses the spray material. `PlayerView::tanks_full` shows a red box: "Tanks full: put material in a crate, spray it out, or empty a tank". Inventory panel: a trash button under each tank (`UiAction::EmptyTank`; 1,000 units or more asks first). With a building window open, a click on a tank moves it into the building. |
+| Tanks | HUD: a slot for each tank (icon, amount, fill bar), the spray material with an orange frame and "Hold right mouse to spray it out"; a click chooses the spray material. `PlayerView::tanks_full` shows a red box: "Tanks full: put material in a crate, spray it out, or empty a tank". Inventory panel: a trash button under each tank (`UiAction::EmptyTank`; 1,000 units or more asks first). With a building window open, a click on a tank moves it into the building, and the text next to the HUD tanks says so (section 5.1). |
+| Keep or drop | Each tank slot (HUD and inventory) has a small button in its top-left corner: a green check (keep: dug units go into the tanks) or a red arrow down (drop: the robot throws them out behind itself). One click changes it (`UiAction::SetKeep`). The character screen has the list "Digging: keep or drop" under the inventory with every known material and a key of the two marks. The hover box of a diggable cell says "When dug: kept in the tanks" or "thrown out". |
+| Fuel slot | A machine with a fuel slot (the campfire) shows it under "Fuel" as a material slot with a fill bar (`BuildingView::fuel`). A click on it gives the fuel back to the robot. |
 | Menus | All menu windows (the pause dim, the page, the yes/no question) are in one egui layer, drawn in that order. Separate layers kept an old order, and the pause dim covered the menu buttons. |
 | Research (T) | Discovery points at the top. A list with a scroll bar, grouped by tier. Each technology: icon, name, a state badge (Done, Researching, Available, Locked), the queue place, the cost (kits per unit × units, discovery points, discoveries to scan), a progress bar when progress is above 0, the lock reasons in red, the icons of the recipes it unlocks (with recipe tooltips), and a Research button for available technologies (a Queue button for technologies that wait only for earlier technologies). An empty list shows "No technologies yet." |
-| Guide (G) | Goals done and discovery points at the top. The goals grouped by tier. A done goal is one dim line with a check mark. An open goal shows the title, the reward, the text, and a bar with "have / need" when it counts something. |
+| Guide (G) | Goals done and discovery points at the top. The goals grouped by tier. A done goal is one dim line with a check mark. An open goal shows the title, the reward, the text, and a bar with "have / need" when it counts something. The next goal has an orange frame and a "Next" mark. A goal that waits is gray with "Waits for the kiln. It comes in a later update." When no goal can be done now, a yellow line at the top says "You did every goal for now. Next: the kiln. It comes in a later update." |
 | Power network | Voltage tier, satisfaction, production, storage and current bars, warnings, consumers and producers by building type, graphs of consumption and production with time ranges 5s / 1m / 10m / 1h / 10h. |
 | Production statistics (P) | Time range tabs, graphs of made and used per minute, and lists of items with bars and rates. |
 | Main menu | Continue, New game, Load game, Settings, Quit game. |
