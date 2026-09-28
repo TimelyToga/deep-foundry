@@ -7,7 +7,8 @@ Run it from the repository root:
 It writes:
 - assets/sprites/robot.png: the sprite sheet. One pixel is one world cell.
 - assets/sprites/robot.ron: the description (frame size, animations, frame counts, speed).
-- tools/sprites/robot_preview.png: all frames side by side at 4x, on three backgrounds.
+- tools/sprites/robot_preview.png: every animation frame as the game draws it, side by side at
+  4x, on a cave, a sand and a water background.
 
 How the art is made:
 - The robot is drawn from parts (head, body, backpack, legs) with a small palette.
@@ -314,7 +315,7 @@ def main():
     os.makedirs(os.path.dirname(OUT_SHEET), exist_ok=True)
     sheet.save(OUT_SHEET)
     write_description(rows, arms)
-    write_preview(rows)
+    write_preview()
     print(f"wrote {OUT_SHEET} ({sheet.width} x {sheet.height}), {OUT_DESC}, {OUT_PREVIEW}")
 
 
@@ -364,25 +365,51 @@ def write_description(rows, arms):
         f.write("\n".join(lines) + "\n")
 
 
-def write_preview(rows, scale=4):
-    """All frames side by side at `scale`, on a dark cave, sand and water background."""
-    backgrounds = [((18, 18, 24), "cave"), ((214, 188, 122), "sand"), ((40, 92, 176), "water")]
+def write_preview(scale=4):
+    """Every animation frame as the game draws it (body, arm, flame), side by side at `scale`,
+    on a dark cave, a sand and a water background. Also the robot looking left, the arm
+    pointing in the directions a tool uses, and the flame frames."""
+    arms = [arm(i) for i in range(ARM_DIRS)]
+    arm_imgs = [to_image(a) for a, _, _ in arms]
+    line_imgs = [to_image(o) for _, o, _ in arms]
+    flames = [to_image(flame(i)) for i in range(len(FLAMES))]
+    rows = []
+    for name, _, _, poses in ANIMATIONS:
+        frames = []
+        for i, p in enumerate(poses):
+            fl = flames[len(FLAMES) - 2 + i % 2] if name == "fly" else None
+            frames.append(composite(to_image(body(p)), p, arm_imgs, line_imgs, fl))
+        rows.append((name, frames))
+    walk = rows[1][1]
+    rows.append(("walk left", [f.transpose(Image.FLIP_LEFT_RIGHT) for f in walk]))
+    idle = ANIMATIONS[0][3][0]
+    aims = [12, 13, 14, 15, 0, 1, 2, 3, 4]
+    rows.append(("tool aim", [composite(to_image(body(idle)), idle, arm_imgs, line_imgs, None, d) for d in aims]))
+    rows.append(("flame", [f.crop((0, 0, FW + 8, FH + 8)) if f.width < FW + 8 else f for f in (pad(f) for f in flames)]))
+    backgrounds = [(18, 18, 24), (214, 188, 122), (40, 92, 176)]
     cols = max(len(f) for _, f in rows)
-    cell_w, cell_h = FW * scale + 4, FH * scale + 4
-    label_w = 60
-    band_h = len(rows) * cell_h
-    im = Image.new("RGB", (label_w + cols * cell_w, band_h * len(backgrounds)), (0, 0, 0))
+    cw, ch = (FW + 8) * scale + 4, (FH + 8) * scale + 4
+    label_w = 70
+    band_w = label_w + cols * cw
+    im = Image.new("RGB", (band_w * len(backgrounds), len(rows) * ch), (0, 0, 0))
     draw = ImageDraw.Draw(im)
-    for b, (bg, _) in enumerate(backgrounds):
-        y0 = b * band_h
-        draw.rectangle([0, y0, im.width, y0 + band_h], fill=bg)
+    for b, bg in enumerate(backgrounds):
+        x0 = b * band_w
+        draw.rectangle([x0, 0, x0 + band_w, im.height], fill=bg)
         for r, (name, frames) in enumerate(rows):
-            y = y0 + r * cell_h + 2
-            draw.text((4, y + 4), name, fill=(255, 255, 255) if b != 1 else (0, 0, 0))
+            y = r * ch + 2
+            draw.text((x0 + 4, y + 4), name, fill=(0, 0, 0) if b == 1 else (255, 255, 255))
             for i, f in enumerate(frames):
-                big = f.resize((FW * scale, FH * scale), Image.NEAREST)
-                im.paste(big, (label_w + i * cell_w + 2, y), big)
+                big = f.resize((f.width * scale, f.height * scale), Image.NEAREST)
+                im.paste(big, (x0 + label_w + i * cw + 2, y), big)
     im.save(OUT_PREVIEW)
+
+
+def pad(img):
+    """A frame on a canvas of the composite size."""
+    out = Image.new("RGBA", (FW + 8, FH + 8), (0, 0, 0, 0))
+    out.alpha_composite(img, (4, 2))
+    return out
 
 
 if __name__ == "__main__":

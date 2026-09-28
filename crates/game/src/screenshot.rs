@@ -262,8 +262,8 @@ struct Pose {
 }
 
 /// `--pose`: the robot moves or uses a tool for some ticks, so the picture shows the real state
-/// (in the air for "jump" and "fly", dug cells for "dig"). An animation name also fixes the
-/// animation (and the frame, if given).
+/// (in the air for "jump" and "fly", an empty jetpack for "fall" and "land", dug cells for
+/// "dig"). An animation name also fixes the animation (and the frame, if given).
 fn act(h: &mut FactoryHost, sim: &mut foundry_sim::Simulation, name: &str, frame: Option<usize>) -> Pose {
     let content = h.factory.content.clone();
     let facing = h.robot.facing;
@@ -282,9 +282,20 @@ fn act(h: &mut FactoryHost, sim: &mut foundry_sim::Simulation, name: &str, frame
     match name {
         "walk" => run(h, sim, go(facing, false), 24),
         "jump" => run(h, sim, go(0, true), 6),
-        "fall" => {
-            run(h, sim, go(0, true), 3);
-            run(h, sim, go(0, false), 30);
+        // Fly until the fuel is empty, then fall (the gauge shows "Jet empty").
+        "fall" => run(h, sim, go(0, true), 80),
+        // The same, then land (the gauge waits for the refill).
+        "land" => {
+            run(h, sim, go(0, true), 80);
+            h.apply(FactoryCommand::Input(go(0, false)), sim);
+            for _ in 0..300 {
+                sim.tick();
+                h.tick(sim);
+                if h.robot.on_ground {
+                    break;
+                }
+            }
+            run(h, sim, go(0, false), 2);
         }
         "fly" => run(h, sim, go(0, true), 45),
         "dig" => {
