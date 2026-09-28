@@ -7,8 +7,11 @@
 //!   the cells.
 //! - The robot looks right in the sheet. When it looks left, every sprite is mirrored.
 //! - The body, the arm and the arm outline are in `SpriteLayer::Body` (behind liquids and partly
-//!   through them). The flame, the exhaust, the tool beam, the sparks and the dust are in
-//!   `SpriteLayer::Front`.
+//!   through them). The flame, the hot exhaust, the tool beams and the sparks are in
+//!   `SpriteLayer::Glow`: they give light, so they are bright in a dark cave. The smoke of the
+//!   exhaust, the dust and the flying cells are in `SpriteLayer::Front` (lit like the cells).
+//! - The sheet colors in `glow` (robot.ron) give light too: the visor and the antenna light.
+//!   `RobotLook::glow` is the mask for `Renderer::set_sprite_glow`.
 //! - The front arm with the tool is a separate sprite in 16 directions. With a tool in use it
 //!   points at the aim point, and the robot turns to the aim point.
 //! - Particles have no state: their places come from the tick number. So the picture of any tick
@@ -48,6 +51,9 @@ pub struct SheetDesc {
     pub arm_tips: Vec<(i32, i32)>,
     pub flame: Strip,
     pub pixel: Strip,
+    /// Sheet colors (RGB) that give light, for example the visor.
+    #[serde(default)]
+    pub glow: Vec<(u8, u8, u8)>,
 }
 
 /// One animation: a row of frames.
@@ -151,6 +157,8 @@ pub struct RobotLook {
     pub desc: SheetDesc,
     /// RGBA8 texels, row by row from the top.
     pub rgba: Vec<u8>,
+    /// The glow mask: the texels of `rgba` with a `glow` color; the others are transparent.
+    pub glow: Vec<u8>,
     pub size: (u32, u32),
 }
 
@@ -200,7 +208,9 @@ impl RobotLook {
                 bail!("robot.ron: a strip is outside the image");
             }
         }
-        Ok(Self { desc, rgba: image.into_raw(), size: (w, h) })
+        let rgba = image.into_raw();
+        let glow = glow_mask(&rgba, &desc.glow);
+        Ok(Self { desc, rgba, glow, size: (w, h) })
     }
 
     fn anim(&self, a: Anim) -> &AnimDesc {
@@ -297,7 +307,7 @@ impl RobotLook {
             let n = d.flame.frames as usize;
             let flicker = (tick / 2 % 2) as usize;
             let i = if power < 0.6 { flicker } else { n.saturating_sub(2) + flicker }.min(n - 1);
-            out.push(sprite([nozzle.0 - mx(d.flame_at.0), nozzle.1 - d.flame_at.1], rect(d.flame.row, i), SpriteLayer::Front));
+            out.push(sprite([nozzle.0 - mx(d.flame_at.0), nozzle.1 - d.flame_at.1], rect(d.flame.row, i), SpriteLayer::Glow));
             self.exhaust(nozzle, facing, tick, out);
         }
         out.push(sprite([ax, ay], rect(d.arm_outline.row, dir), SpriteLayer::Body));
@@ -311,11 +321,16 @@ impl RobotLook {
         }
     }
 
-    /// A one-cell particle.
+    /// A one-cell particle that gives light (sparks, beams, hot exhaust).
     fn pixel(&self, x: i32, y: i32, color: [u8; 4], out: &mut Vec<Sprite>) {
+        self.pixel_in(x, y, color, SpriteLayer::Glow, out);
+    }
+
+    /// A one-cell particle in a sprite layer.
+    fn pixel_in(&self, x: i32, y: i32, color: [u8; 4], layer: SpriteLayer, out: &mut Vec<Sprite>) {
         let p = &self.desc.pixel;
         let src = [0, (p.row as i32 * self.desc.frame.1) as u16];
-        out.push(Sprite { cell: [x, y], src, size: [1, 1], tint: color, flip_x: false, layer: SpriteLayer::Front });
+        out.push(Sprite { cell: [x, y], src, size: [1, 1], tint: color, flip_x: false, layer });
     }
 
     /// Hot gas and sparks below the jetpack flame, moving down and back.
@@ -328,14 +343,14 @@ impl RobotLook {
             let jitter = (seed % 3) as i32 - 1;
             let x = nozzle.0 - (facing as f32 * t * 4.0).round() as i32 + jitter;
             let y = nozzle.1 + 5 + (t * 12.0) as i32;
-            let color = if t < 0.3 {
-                [255, 214, 90, 255]
+            if t < 0.3 {
+                self.pixel(x, y, [255, 214, 90, 255], out);
             } else if t < 0.6 {
-                [236, 96, 30, 220]
+                self.pixel(x, y, [236, 96, 30, 220], out);
             } else {
-                [90, 84, 92, (200.0 * (1.0 - t)) as u8 + 40]
-            };
-            self.pixel(x, y, color, out);
+                // Smoke gives no light.
+                self.pixel_in(x, y, [90, 84, 92, (200.0 * (1.0 - t)) as u8 + 40], SpriteLayer::Front, out);
+            }
         }
     }
 
@@ -346,8 +361,8 @@ impl RobotLook {
         for k in 0..3 {
             let spread = 2 + age / 2 + k;
             let y = feet_y - (k + age / 3).min(2);
-            self.pixel(left - 1 - spread, y, [196, 184, 160, alpha], out);
-            self.pixel(left + ROBOT_W + spread, y, [196, 184, 160, alpha], out);
+            self.pixel_in(left - 1 - spread, y, [196, 184, 160, alpha], SpriteLayer::Front, out);
+            self.pixel_in(left + ROBOT_W + spread, y, [196, 184, 160, alpha], SpriteLayer::Front, out);
         }
     }
 
@@ -386,14 +401,18 @@ impl RobotLook {
                         let k = ((tick * 2 + i * 7) % 20) as f32 / 20.0;
                         let p = line[((1.0 - k) * (n - 1) as f32) as usize];
                         let wobble = (hash(i + tick / 4) % 3) as i32 - 1;
-                        self.pixel(p.x + wobble, p.y - wobble, material, out);
+                        self.pixel_in(p.x + wobble, p.y - wobble, material, SpriteLayer::Front, out);
                     }
                 }
             }
             ToolKind::Spray => {
                 for (i, p) in line.iter().enumerate() {
                     if (i as u64 + tick * 2).is_multiple_of(4) {
-                        self.pixel(p.x, p.y, if t.working { material } else { [150, 190, 230, 150] }, out);
+                        if t.working {
+                            self.pixel_in(p.x, p.y, material, SpriteLayer::Front, out);
+                        } else {
+                            self.pixel(p.x, p.y, [150, 190, 230, 150], out);
+                        }
                     }
                 }
             }
@@ -412,6 +431,17 @@ impl RobotLook {
             }
         }
     }
+}
+
+/// The glow mask of a sheet: the texels with one of the `colors` (RGB), the others transparent.
+fn glow_mask(rgba: &[u8], colors: &[(u8, u8, u8)]) -> Vec<u8> {
+    let mut out = vec![0; rgba.len()];
+    for (texel, mask) in rgba.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+        if texel[3] > 0 && colors.contains(&(texel[0], texel[1], texel[2])) {
+            mask.copy_from_slice(texel);
+        }
+    }
+    out
 }
 
 /// The cells on a line from `a` to `b` (Bresenham), without `a`, with `b`.
@@ -458,6 +488,10 @@ mod tests {
     fn built_in_sheet_and_files_are_valid() {
         let look = RobotLook::built_in();
         assert_eq!(look.rgba.len() as u32, look.size.0 * look.size.1 * 4);
+        // The visor glows: the mask has texels, and only texels of the sheet.
+        assert_eq!(look.glow.len(), look.rgba.len());
+        let lit = look.glow.chunks_exact(4).filter(|t| t[3] > 0).count();
+        assert!(lit > 10 && lit < look.rgba.len() / 40, "glow texels: {lit}");
         let dir = foundry_content::default_assets_dir().join("sprites");
         RobotLook::from_dir(&dir).unwrap();
     }
@@ -534,7 +568,8 @@ mod tests {
             look.sprites(&r, (96.0, 184.0), Some(tool), 0, None, &mut out);
             assert_eq!(dir_of(&out), dir, "aim {aim:?}");
             assert_eq!(out[1].flip_x, flip, "aim {aim:?}");
-            assert!(out.iter().any(|s| s.layer == SpriteLayer::Front), "beam and sparks");
+            assert!(out.iter().any(|s| s.layer == SpriteLayer::Glow), "beam and sparks give light");
+            assert!(out.iter().any(|s| s.layer == SpriteLayer::Front), "flying cells are lit like cells");
         }
     }
 
