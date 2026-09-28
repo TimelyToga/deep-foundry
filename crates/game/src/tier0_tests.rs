@@ -275,6 +275,7 @@ impl Player {
             "t0_campfire" => self.dig("wood", has("wood", 10)).and_then(|_| self.craft("campfire", 1)).and_then(|_| self.place("campfire")),
             "t0_fire_bricks" => self.fire_bricks(8),
             "t0_sluice" => self.dig("wood", has("wood", 20)).and_then(|_| self.craft("sluice", 1)).and_then(|_| self.place("sluice")),
+            "t0_stamp_mill" => self.dig("wood", has("wood", 30)).and_then(|_| self.craft("stamp_mill", 1)).and_then(|_| self.place("stamp_mill")),
             "t0_research_labs" => self.research("research"),
             _ => return None,
         })
