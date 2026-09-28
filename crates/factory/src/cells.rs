@@ -115,6 +115,20 @@ pub fn take_from_side(
     phases: &[Phase],
     mut accept: impl FnMut(MaterialId) -> bool,
 ) -> u32 {
+    take_from_side_with_temperature(sim, content, tile, side, depth, max, phases, |material, _| accept(material))
+}
+
+/// Like take_from_side, but the accept function also receives the cell temperature.
+pub fn take_from_side_with_temperature(
+    sim: &mut Simulation,
+    content: &Content,
+    tile: TilePos,
+    side: Side,
+    depth: i32,
+    max: u32,
+    phases: &[Phase],
+    mut accept: impl FnMut(MaterialId, i16) -> bool,
+) -> u32 {
     let mut taken = 0;
     for p in outside_cells(tile, side, depth) {
         if taken >= max {
@@ -124,7 +138,7 @@ pub fn take_from_side(
         if m.is_air() || !phases.contains(&phase(content, m)) {
             continue;
         }
-        if accept(m) {
+        if accept(m, sim.cell(p).temperature) {
             sim.set_cell(p, MaterialId::AIR, None);
             taken += 1;
         }
