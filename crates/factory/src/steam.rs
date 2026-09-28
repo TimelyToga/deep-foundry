@@ -4,6 +4,7 @@
 //! directly to these tanks, and each simulation tick moves one sixtieth of a second's flow.
 
 use crate::buildings::Buildings;
+use crate::cells;
 use foundry_content::{Content, PortKind};
 use foundry_core::{MaterialId, TilePos};
 use serde::{Deserialize, Serialize};
@@ -126,6 +127,70 @@ impl Buildings {
     ) {
         let steam = content.material("steam");
         let Some(steam) = steam else { return };
+        let water = content.material("water");
+        let pipe_indices: Vec<u32> = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                slot.building
+                    .as_ref()
+                    .is_some_and(|b| matches!(b.steam, SteamState::Pipe(_)))
+                    .then_some(i as u32)
+            })
+            .collect();
+
+        // A bronze pipe can take water cells along its exposed pipe ports. Taking the cell makes
+        // the supply finite, and the tank then carries that water through the same network as steam.
+        if let Some(water) = water {
+            for &i in &pipe_indices {
+                let ports = self
+                    .at_index(i)
+                    .map(|b| b.ports.clone())
+                    .unwrap_or_default();
+                for port in ports.into_iter().filter(|p| p.kind == PortKind::Pipe) {
+                    let room = self
+                        .at_index(i)
+                        .and_then(|b| match b.steam {
+                            SteamState::Pipe(t) => Some(t.room_for(water)),
+                            _ => None,
+                        })
+                        .unwrap_or(0.0);
+                    let max = room
+                        .floor()
+                        .min(crate::buildings::PORT_CELLS_PER_TICK as f64)
+                        as u32;
+                    if max == 0 {
+                        continue;
+                    }
+                    let mut taken = 0;
+                    cells::take_from_side(
+                        sim,
+                        content,
+                        port.tile,
+                        port.side,
+                        3,
+                        max,
+                        &[foundry_content::Phase::Liquid],
+                        |mat| {
+                            if mat == water {
+                                taken += 1;
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    );
+                    if taken > 0 {
+                        if let Some(b) = self.at_index_mut(i)
+                            && let SteamState::Pipe(tank) = &mut b.steam
+                        {
+                            tank.add(water, taken as f64);
+                        }
+                    }
+                }
+            }
+        }
         for slot in &mut self.slots {
             let Some(b) = slot.building.as_mut() else {
                 continue;
@@ -187,17 +252,6 @@ impl Buildings {
 
         // Pipes connect to another pipe on a cardinal tile, or to a machine port occupying the
         // same back-layer tile. Each edge has a finite flow, so visible sections fill in order.
-        let pipe_indices: Vec<u32> = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| {
-                s.building
-                    .as_ref()
-                    .is_some_and(|b| matches!(b.steam, SteamState::Pipe(_)))
-                    .then_some(i as u32)
-            })
-            .collect();
         for i in pipe_indices {
             let Some(pipe_pos) = self.at_index(i).map(|b| b.at) else {
                 continue;
@@ -213,7 +267,7 @@ impl Buildings {
                 if j == i {
                     continue;
                 }
-                transfer_pipe_to_pipe(self, i, j, steam);
+                transfer_pipe_to_pipe(self, i, j);
             }
             let endpoints: Vec<u32> = self
                 .slots
@@ -232,7 +286,7 @@ impl Buildings {
                 })
                 .collect();
             for j in endpoints {
-                transfer_endpoint(self, i, j, content, steam);
+                transfer_endpoint(self, i, j, content, steam, water.unwrap_or(steam));
             }
         }
     }
@@ -256,7 +310,7 @@ pub(crate) fn consume_steam(state: &mut SteamState, amount: f64) {
     }
 }
 
-fn transfer_pipe_to_pipe(buildings: &mut Buildings, a: u32, b: u32, steam: MaterialId) {
+fn transfer_pipe_to_pipe(buildings: &mut Buildings, a: u32, b: u32) {
     let Some((left, right)) = two_mut_local(&mut buildings.slots, a as usize, b as usize) else {
         return;
     };
@@ -266,7 +320,7 @@ fn transfer_pipe_to_pipe(buildings: &mut Buildings, a: u32, b: u32, steam: Mater
     let (SteamState::Pipe(x), SteamState::Pipe(y)) = (&mut left.steam, &mut right.steam) else {
         return;
     };
-    transfer_tanks(x, y, steam);
+    transfer_tanks(x, y);
 }
 
 fn transfer_endpoint(
@@ -275,6 +329,7 @@ fn transfer_endpoint(
     endpoint_index: u32,
     content: &Content,
     steam: MaterialId,
+    water: MaterialId,
 ) {
     let Some((pipe, endpoint)) = two_mut_local(
         &mut buildings.slots,
@@ -297,39 +352,70 @@ fn transfer_endpoint(
             })
             .and_then(|p| p.name.as_deref())
     };
-    let is_output = endpoint.ports.iter().any(|p| {
+    let steam_out = endpoint.ports.iter().any(|p| {
         p.kind == PortKind::Pipe && p.tile == pipe.at && port_name(p) == Some("Steam out")
     });
+    let water_in = endpoint
+        .ports
+        .iter()
+        .any(|p| p.kind == PortKind::Pipe && p.tile == pipe.at && port_name(p) == Some("Water in"));
+    let steam_in = endpoint
+        .ports
+        .iter()
+        .any(|p| p.kind == PortKind::Pipe && p.tile == pipe.at && port_name(p) == Some("Steam in"));
     if let SteamState::Pipe(tank) = &mut pipe.steam {
-        if is_output {
+        if steam_out && tank.room_for(steam) > 0.0 {
             if let SteamState::Boiler { steam: amount, .. } = &mut endpoint.steam {
                 let moved = (*amount).min(PIPE_FLOW_PER_TICK).min(tank.room_for(steam));
                 *amount -= tank.add(steam, moved);
             }
-        } else {
-            let accepts = endpoint.ports.iter().any(|p| {
-                p.kind == PortKind::Pipe && p.tile == pipe.at && port_name(p) == Some("Steam in")
-            });
-            if accepts {
-                if let SteamState::Machine(machine) = &mut endpoint.steam {
-                    let moved = tank
-                        .amount
-                        .min(PIPE_FLOW_PER_TICK)
-                        .min(machine.room_for(steam));
-                    machine.add(steam, tank.take(moved));
-                }
+        } else if water_in && tank.material == Some(water) {
+            if let SteamState::Boiler { water: amount, .. } = &mut endpoint.steam {
+                let moved = tank
+                    .amount
+                    .min(PIPE_FLOW_PER_TICK)
+                    .min(TANK_CAPACITY - *amount);
+                *amount += tank.take(moved);
+            }
+        } else if steam_in && tank.material == Some(steam) {
+            if let SteamState::Machine(machine) = &mut endpoint.steam {
+                let moved = tank
+                    .amount
+                    .min(PIPE_FLOW_PER_TICK)
+                    .min(machine.room_for(steam));
+                machine.add(steam, tank.take(moved));
             }
         }
     }
 }
 
-fn transfer_tanks(a: &mut FluidTank, b: &mut FluidTank, steam: MaterialId) {
-    if a.material == Some(steam) {
-        let moved = a.amount.min(PIPE_FLOW_PER_TICK).min(b.room_for(steam));
-        b.add(steam, a.take(moved));
-    } else if b.material == Some(steam) {
-        let moved = b.amount.min(PIPE_FLOW_PER_TICK).min(a.room_for(steam));
-        a.add(steam, b.take(moved));
+fn transfer_tanks(a: &mut FluidTank, b: &mut FluidTank) {
+    let Some(material) = a.material.or(b.material) else {
+        return;
+    };
+    if a.material.is_some_and(|m| m != material) || b.material.is_some_and(|m| m != material) {
+        return;
+    }
+    let ratio_a = if a.capacity > 0.0 {
+        a.amount / a.capacity
+    } else {
+        0.0
+    };
+    let ratio_b = if b.capacity > 0.0 {
+        b.amount / b.capacity
+    } else {
+        0.0
+    };
+    if ratio_a > ratio_b {
+        let delta =
+            ((ratio_a - ratio_b) * a.capacity.min(b.capacity) * 0.5).min(PIPE_FLOW_PER_TICK);
+        let moved = delta.min(a.amount).min(b.room_for(material));
+        b.add(material, a.take(moved));
+    } else if ratio_b > ratio_a {
+        let delta =
+            ((ratio_b - ratio_a) * a.capacity.min(b.capacity) * 0.5).min(PIPE_FLOW_PER_TICK);
+        let moved = delta.min(b.amount).min(a.room_for(material));
+        a.add(material, b.take(moved));
     }
 }
 

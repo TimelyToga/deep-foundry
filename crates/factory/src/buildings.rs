@@ -346,10 +346,6 @@ fn port_allows(def: &BuildingDef, port: &PlacedPort, item: ItemRef) -> bool {
     }
 }
 
-fn port_name(def: &BuildingDef, port: &PlacedPort) -> Option<String> {
-    port.def.and_then(|i| def.ports.get(i as usize)).and_then(|p| p.name.clone())
-}
-
 /// True if a part is a research kit: a technology needs it, or it is a part (not a building) in
 /// the "research" category.
 pub fn is_kit(content: &Content, part: PartId) -> bool {
@@ -1005,7 +1001,6 @@ impl Buildings {
             let phases: &[Phase] = match port.kind {
                 PortKind::BulkIn => &[Phase::Powder],
                 PortKind::FluidIn => &[Phase::Liquid, Phase::Gas],
-                PortKind::Pipe if def.kind == "boiler" && port_name(def, &port).as_deref() == Some("Water in") => &[Phase::Liquid],
                 PortKind::PartIn => {
                     if now >= b.next_pull {
                         pull_ports.push(port);
@@ -1062,7 +1057,7 @@ impl Buildings {
                     })
                 }
                 Logic::Passive if def.kind == "boiler" => {
-                    if let SteamState::Boiler { fuel, fuel_units, water, .. } = &mut b.steam {
+                    if let SteamState::Boiler { fuel, fuel_units, .. } = &mut b.steam {
                         if port.kind == PortKind::BulkIn && *fuel_units < 32 {
                             cells::take_from_side(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, &[Phase::Powder], |mat| {
                                 if !port_allows(def, &port, ItemRef::Material(mat)) || !is_fuel(content, mat) || fuel.is_some_and(|f| f != mat) {
@@ -1072,16 +1067,6 @@ impl Buildings {
                                 *fuel_units += 1;
                                 true
                             })
-                        } else if port.kind == PortKind::Pipe && port_name(def, &port).as_deref() == Some("Water in") && *water < 200.0 {
-                            let water_material = content.material("water");
-                            let mut taken = 0;
-                            if let Some(water_mat) = water_material {
-                                cells::take_from_side(sim, content, port.tile, port.side, 12, PORT_CELLS_PER_TICK, &[Phase::Liquid], |mat| {
-                                    if mat == water_mat { taken += 1; true } else { false }
-                                });
-                            }
-                            *water = (*water + taken as f64).min(200.0);
-                            taken
                         } else { 0 }
                     } else { 0 }
                 }
