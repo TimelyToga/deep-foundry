@@ -59,6 +59,10 @@ pub struct Hood<'a> {
     pub levels: Vec<CellPos>,
     /// World positions of top liquid cells that moved away (see `movement::wake_row_ends`).
     pub opened: Vec<CellPos>,
+    /// True in the fall pass. Its jobs run one per chunk column at the same time, so a job may
+    /// read and write only cells of its own chunk column (hood x in 0..64). Marks can still go to
+    /// the side chunks: they stay in the hood until the pass ends.
+    pub fall_pass: bool,
 }
 
 impl<'a> Hood<'a> {
@@ -86,6 +90,7 @@ impl<'a> Hood<'a> {
             free_rows_known: 0,
             levels: Vec::new(),
             opened: Vec::new(),
+            fall_pass: false,
         }
     }
 
@@ -111,8 +116,8 @@ impl<'a> Hood<'a> {
         let p = self.world_pos(sx, sy);
         let (temp, shade, life) = (self.temp(x, y), self.read_u8(x, y, |p| unsafe { addr_of!((*p).shade).cast::<u8>() }), self.life(x, y));
         self.spawns.push(Spawn {
-            x: p.x as f32 + 0.5,
-            y: p.y as f32 + 0.5,
+            x: p.x as f64 + 0.5,
+            y: p.y as f64 + 0.5,
             vx,
             vy,
             material: m,
@@ -131,6 +136,15 @@ impl<'a> Hood<'a> {
         self.events.push(event);
     }
 
+    /// Slot and index of a cell that is read or written. In the fall pass the cell must be in the
+    /// center chunk column (slots 1, 4 and 7).
+    #[inline(always)]
+    fn cell(&self, x: i32, y: i32) -> (usize, usize) {
+        let (s, i) = Self::slot(x, y);
+        debug_assert!(!self.fall_pass || s % 3 == 1, "fall pass reads a cell outside its chunk column: {x},{y}");
+        (s, i)
+    }
+
     #[inline(always)]
     fn slot(x: i32, y: i32) -> (usize, usize) {
         debug_assert!((-REACH..64 + REACH).contains(&x) && (-REACH..64 + REACH).contains(&y), "hood access out of reach: {x},{y}");
@@ -142,12 +156,12 @@ impl<'a> Hood<'a> {
     /// True if the cell is inside the world.
     #[inline(always)]
     pub fn inside(&self, x: i32, y: i32) -> bool {
-        !self.ptrs[Self::slot(x, y).0].is_null()
+        !self.ptrs[self.cell(x, y).0].is_null()
     }
 
     #[inline(always)]
     pub fn mat(&self, x: i32, y: i32) -> MaterialId {
-        let (s, i) = Self::slot(x, y);
+        let (s, i) = self.cell(x, y);
         let p = self.ptrs[s];
         if p.is_null() {
             return self.outside;
@@ -235,7 +249,7 @@ impl<'a> Hood<'a> {
         let mut n = 0;
         let mut cx = x + dir;
         while n < max {
-            let (s, i) = Self::slot(cx, y);
+            let (s, i) = self.cell(cx, y);
             let p = self.ptrs[s];
             if p.is_null() {
                 return n;
@@ -266,7 +280,7 @@ impl<'a> Hood<'a> {
 
     #[inline(always)]
     pub fn temp(&self, x: i32, y: i32) -> i16 {
-        let (s, i) = Self::slot(x, y);
+        let (s, i) = self.cell(x, y);
         let p = self.ptrs[s];
         if p.is_null() {
             return foundry_core::DEFAULT_TEMPERATURE;
@@ -278,7 +292,7 @@ impl<'a> Hood<'a> {
     /// Set the temperature. Does not mark the cell; call `mark_changed` or `keep_awake` if needed.
     #[inline(always)]
     pub fn set_temp(&mut self, x: i32, y: i32, t: i16) {
-        let (s, i) = Self::slot(x, y);
+        let (s, i) = self.cell(x, y);
         let p = self.ptrs[s];
         if !p.is_null() {
             self.touched |= 1 << s;
@@ -345,7 +359,7 @@ impl<'a> Hood<'a> {
 
     #[inline(always)]
     fn read_u8(&self, x: i32, y: i32, field: impl Fn(*mut Chunk) -> *const u8) -> u8 {
-        let (s, i) = Self::slot(x, y);
+        let (s, i) = self.cell(x, y);
         let p = self.ptrs[s];
         if p.is_null() {
             return 0;
@@ -356,7 +370,7 @@ impl<'a> Hood<'a> {
 
     #[inline(always)]
     fn write_u8(&mut self, x: i32, y: i32, v: u8, field: impl Fn(*mut Chunk) -> *mut u8) {
-        let (s, i) = Self::slot(x, y);
+        let (s, i) = self.cell(x, y);
         let p = self.ptrs[s];
         if !p.is_null() {
             self.touched |= 1 << s;
@@ -382,8 +396,8 @@ impl<'a> Hood<'a> {
     /// updated and changed. Both cells must be inside the world.
     #[inline]
     pub fn swap(&mut self, ax: i32, ay: i32, bx: i32, by: i32) {
-        let (sa, ia) = Self::slot(ax, ay);
-        let (sb, ib) = Self::slot(bx, by);
+        let (sa, ia) = self.cell(ax, ay);
+        let (sb, ib) = self.cell(bx, by);
         let (pa, pb) = (self.ptrs[sa], self.ptrs[sb]);
         debug_assert!(!pa.is_null() && !pb.is_null());
         self.touched |= (1 << sa) | (1 << sb);
@@ -412,7 +426,7 @@ impl<'a> Hood<'a> {
     /// Marks the cell as updated and changed.
     #[inline]
     pub fn replace(&mut self, x: i32, y: i32, m: MaterialId, temp: Option<i16>) {
-        let (s, i) = Self::slot(x, y);
+        let (s, i) = self.cell(x, y);
         let p = self.ptrs[s];
         if p.is_null() {
             return;

@@ -237,6 +237,7 @@ fn fall_pass(
             // SAFETY: a falling cell moves straight down, so this job reads and writes only cells
             // in its own column of chunks. Marks go to the hood and are merged after the pass.
             let mut hood = unsafe { Hood::new(ptrs.get(i), input, rng, parity, outside, c.origin()) };
+            hood.fall_pass = true;
             if fall_chunk(&mut hood, rect, left_to_right) {
                 out.push(JobOut::from_hood(i, hood));
             }

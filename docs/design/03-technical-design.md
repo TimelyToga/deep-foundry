@@ -282,7 +282,7 @@ Extra rules:
 
 ### 6.6 Particles
 
-- Free-flying cells come from explosions, spray, splashes and digging. Each has a position (f32), a velocity, a material, a temperature and a shade.
+- Free-flying cells come from explosions, spray, splashes and digging. Each has a position (a cell, plus the place inside the cell as f32), a velocity, a material, a temperature and a shade.
 - Each tick: apply gravity, move, and check for a hit on the grid along the path. On a hit, the particle becomes a grid cell at the nearest free position.
 - Visual particles (sparks, dust, smoke puffs) never enter the grid. Only the renderer uses them.
 

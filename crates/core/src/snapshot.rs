@@ -56,9 +56,9 @@ pub struct SimStats {
 /// A free-flying cell (from explosions, spray, digging) or a visual-only particle, for drawing.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ParticleView {
-    /// Position in cells (x right, y down).
-    pub x: f32,
-    pub y: f32,
+    /// Position in cells (x right, y down). `f64`, so it is exact far from x = 0.
+    pub x: f64,
+    pub y: f64,
     /// Velocity in cells per tick, for motion blur and interpolation.
     pub vx: f32,
     pub vy: f32,

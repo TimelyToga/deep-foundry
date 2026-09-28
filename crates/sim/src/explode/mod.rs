@@ -249,7 +249,8 @@ impl Explosions {
         self.power.resize((w * w) as usize, 0.0);
         let (rays, steps) = b.rays();
         let turn = rng.unit() * TAU / rays as f32;
-        let (ox, oy) = (b.at.x as f32 + 0.5, b.at.y as f32 + 0.5);
+        // The middle of the explosion cell, for particles (`f64`: exact far from x = 0).
+        let (ox, oy) = (b.at.x as f64 + 0.5, b.at.y as f64 + 0.5);
         let mut reader = Reader::default();
         // The open side: the sum of the ray directions, each times the free cells (air, gas, fire)
         // on the ray. `free` is the number of free cells on all rays.
@@ -266,7 +267,8 @@ impl Explosions {
                 if power <= 0.0 {
                     break;
                 }
-                let p = CellPos::new((ox + dx * d).floor() as i32, (oy + dy * d).floor() as i32);
+                // Relative to the explosion cell, so the `f32` numbers stay small.
+                let p = b.at.offset((0.5 + dx * d).floor() as i32, (0.5 + dy * d).floor() as i32);
                 if p == last {
                     continue;
                 }
@@ -376,7 +378,7 @@ impl Explosions {
                             let (vx, vy) = (ux * speed, uy * speed - speed * UP_BIAS);
                             let temp = ch.temp[i].max(heat);
                             let life = if into == m { ch.life[i] } else { new_life(mats, into, &mut rng) };
-                            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
                             let spawn = Spawn { x: px, y: py, vx, vy, material: into, temperature: temp, shade: ch.shade[i], life, flags: 0 };
                             particles.spawn(spawn, usize::MAX);
                             if rng.chance(DUST_CHANCE) {
@@ -454,8 +456,8 @@ impl Explosions {
                 let d = rng.unit() * core.max(1.0);
                 let speed = 0.3 + rng.unit() * 0.6;
                 let puff = Spawn {
-                    x: ox + a.cos() * d,
-                    y: oy + a.sin() * d,
+                    x: ox + (a.cos() * d) as f64,
+                    y: oy + (a.sin() * d) as f64,
                     vx: a.cos() * speed,
                     vy: a.sin() * speed - 0.3,
                     material: smoke,

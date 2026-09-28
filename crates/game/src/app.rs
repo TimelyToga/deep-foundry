@@ -683,6 +683,9 @@ impl Game {
                 _ => {}
             }
         }
+        // Keep the presses for the next input, also if the key is up again before it is made.
+        let (h, t) = (n.held, &mut n.pressed);
+        (t.left, t.right, t.jump, t.scan) = (t.left || h.left, t.right || h.right, t.jump || h.jump, t.scan || h.scan);
         if !down || repeat || !playing {
             return;
         }
@@ -862,6 +865,7 @@ impl Game {
         self.stroke.end();
         if let Some(n) = self.normal_mut() {
             n.held = Default::default();
+            n.pressed = Default::default();
             n.release(true);
             n.release(false);
         }
