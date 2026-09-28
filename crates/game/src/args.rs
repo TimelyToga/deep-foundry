@@ -22,10 +22,12 @@ OPTIONS:
     --ui-state STATE         Start in this screen: menu, newgame, load, settings, pause, save,
                              playing, inventory or debug (default: menu; playing with --exit-after).
                              Normal mode only: building (a workbench window), ghost (a building in
-                             the hand), research, guide, hub (the Hub window)
+                             the hand), research, guide, hub (the Hub window),
+                             ghost-red, drag (a belt line), alt (alt mode), remove
     --mode MODE              The mode of a world that --ui-state starts: sandbox (default) or
                              normal (the robot, the factory and the Hub)
-    --ui-scale S             Size of the UI, 0.75 to 2 (default 1)
+    --ui-scale S             Size of the UI, 0.75 to 2 (default: the settings file, else 1)
+    --settings FILE          The settings file (default: settings.ron in the app data folder)
     --smoke-test             Play a fixed list of UI actions in the window (new game, paint, pause,
                              save, load, quit to menu, continue, delete) and quit; exit code 1 on a
                              failure. Use it with --saves and an empty folder.
@@ -61,6 +63,10 @@ pub struct Args {
     /// The screen to start in. `None`: the default.
     pub ui_state: Option<UiState>,
     pub ui_scale: f32,
+    /// `--ui-scale` was given (it wins over the settings file).
+    pub ui_scale_set: bool,
+    /// The settings file. `None`: `settings.ron` in the app data folder.
+    pub settings: Option<PathBuf>,
     /// Run the scripted check of the UI flow in the window.
     pub smoke_test: bool,
     /// The mode of the world that `--ui-state` starts.
@@ -91,6 +97,14 @@ pub enum UiState {
     Guide,
     /// Normal mode: the Hub window.
     Hub,
+    /// Normal mode: a ghost that cannot be placed, with the reason.
+    GhostRed,
+    /// Normal mode: a line of belts is dragged.
+    Drag,
+    /// Normal mode: the alt mode with recipe icons over machines.
+    Alt,
+    /// Normal mode: the remove button takes a building.
+    Remove,
 }
 
 impl UiState {
@@ -110,6 +124,10 @@ impl UiState {
             "research" => UiState::Research,
             "guide" => UiState::Guide,
             "hub" => UiState::Hub,
+            "ghost-red" => UiState::GhostRed,
+            "drag" => UiState::Drag,
+            "alt" => UiState::Alt,
+            "remove" => UiState::Remove,
             _ => return None,
         })
     }
@@ -121,7 +139,18 @@ impl UiState {
 
     /// True for the screens that exist only in the normal mode.
     pub fn needs_normal(self) -> bool {
-        matches!(self, UiState::Building | UiState::Ghost | UiState::Research | UiState::Guide | UiState::Hub)
+        matches!(
+            self,
+            UiState::Building
+                | UiState::Ghost
+                | UiState::Research
+                | UiState::Guide
+                | UiState::Hub
+                | UiState::GhostRed
+                | UiState::Drag
+                | UiState::Alt
+                | UiState::Remove
+        )
     }
 }
 
@@ -142,6 +171,8 @@ impl Default for Args {
             saves: None,
             ui_state: None,
             ui_scale: 1.0,
+            ui_scale_set: false,
+            settings: None,
             smoke_test: false,
             mode: GameMode::Sandbox,
             walk: 0,
@@ -239,6 +270,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             }
             "--walk" => out.walk = number(&value("--walk")?, "--walk")?,
             "--saves" => out.saves = Some(PathBuf::from(value("--saves")?)),
+            "--settings" => out.settings = Some(PathBuf::from(value("--settings")?)),
             "--ui-state" => {
                 let v = value("--ui-state")?;
                 out.ui_state = Some(UiState::parse(&v).ok_or_else(|| format!("--ui-state: unknown screen `{v}`"))?);
@@ -249,6 +281,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     return Err("--ui-scale must be 0.75 to 2".into());
                 }
                 out.ui_scale = s;
+                out.ui_scale_set = true;
             }
             "--center" => out.center = Some(pair::<f64>(&value("--center")?, ',', "--center")?),
             other => return Err(format!("unknown option `{other}`")),

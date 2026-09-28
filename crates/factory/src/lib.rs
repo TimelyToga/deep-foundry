@@ -218,6 +218,11 @@ impl Factory {
         Buildings::ghost_ports(&self.content, kind, at, Transform::new(rotation, flip))
     }
 
+    /// Turn or mirror a placed building where it stands (see `Buildings::set_transform`).
+    pub fn set_transform(&mut self, id: BuildingId, rotation: u8, flip: bool) -> Result<(), PlaceError> {
+        self.buildings.set_transform(&self.content, id, Transform::new(rotation, flip))
+    }
+
     /// Remove a building. Returns its item and its contents as stacks. The body cells become air.
     pub fn remove(&mut self, id: BuildingId, sim: &mut Simulation) -> Result<Vec<Stack>, RemoveError> {
         self.buildings.remove(&self.content, id, sim)

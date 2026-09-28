@@ -64,6 +64,14 @@ impl Game {
         (id, b.cell_rect())
     }
 
+    /// Take the building at a cell into the inventory at once (an action of its own).
+    fn remove_at(&mut self, p: CellPos) {
+        let action = self.host.action_id(0);
+        if let Some(id) = self.host.removable_at(p) {
+            self.host.remove_building(id, action, &mut self.sim);
+        }
+    }
+
     /// A free place for a building right of the robot.
     fn free_place(&self, kind: BuildingKindId) -> TilePos {
         self.host.free_place(kind, &self.sim).expect("a free place")
@@ -139,7 +147,7 @@ fn hand_craft_place_open_and_take_back_a_workbench() {
     assert_eq!(g.host.factory.cursor.map(|c| c.part), Some(workbench));
     let kind = g.content.factory.building("workbench").unwrap();
     let at = g.free_place(kind);
-    let ghost = GhostRequest { kind, at, rotation: 0 };
+    let ghost = GhostRequest { kind, at, rotation: 0, flip: false };
     g.apply(FactoryCommand::Input(PlayerInput { ghost: Some(ghost), ..Default::default() }));
     let f = g.frame();
     assert_eq!(f.ghost.as_ref().unwrap().error, None);
@@ -149,7 +157,7 @@ fn hand_craft_place_open_and_take_back_a_workbench() {
     let err = g.frame().ghost.unwrap().error.unwrap();
     assert!(err.contains("dig first") || err.contains("Blocked"), "{err}");
 
-    g.apply(FactoryCommand::Place { kind, at, rotation: 0 });
+    g.apply(FactoryCommand::Place(Placement::new(kind, at, 0)));
     assert_eq!(g.host.factory.buildings.count_of(kind), 1);
     assert_eq!(g.host.factory.cursor, None);
     g.apply(FactoryCommand::OpenAt(at.origin()));
@@ -158,7 +166,7 @@ fn hand_craft_place_open_and_take_back_a_workbench() {
     g.ticks(2);
     assert!(g.frame().craft_speed > 1.0, "the workbench makes hand crafting faster");
 
-    g.apply(FactoryCommand::RemoveAt(at.origin().offset(3, 3)));
+    g.remove_at(at.origin().offset(3, 3));
     assert_eq!(g.host.factory.buildings.count_of(kind), 0);
     assert_eq!(g.count(ItemRef::Part(workbench)), 1, "back in the inventory");
     assert!(g.frame().building.is_none(), "the window closed");
@@ -169,12 +177,12 @@ fn placing_needs_the_building_in_the_hand_and_reach() {
     let mut g = Game::new();
     let kind = g.content.factory.building("crate").unwrap();
     let at = g.free_place(kind);
-    g.apply(FactoryCommand::Place { kind, at, rotation: 0 });
+    g.apply(FactoryCommand::Place(Placement::new(kind, at, 0)));
     assert_eq!(g.host.factory.buildings.count_of(kind), 0);
     assert!(g.frame().notices.iter().any(|n| n.contains("in the hand")));
     g.apply(FactoryCommand::PickToCursor(g.part("crate")));
     let far = TilePos::new(at.x, at.y - 20);
-    assert_eq!(g.host.check_place(kind, far, 0, &g.sim), Err("Too far away".to_string()));
+    assert_eq!(g.host.check_place(kind, far, 0, false, &g.sim), Err("Out of reach".to_string()));
 }
 
 #[test]
@@ -194,7 +202,7 @@ fn the_hub_takes_deliveries_and_cannot_be_removed() {
     let m = g.host.factory.progress.milestone_view(&g.content).unwrap();
     let d = m.items.iter().find(|d| d.item == brick).unwrap();
     assert_eq!(d.delivered, 30);
-    g.apply(FactoryCommand::RemoveAt(CellPos::new(rect.x0 + 2, rect.y0 + 2)));
+    g.remove_at(CellPos::new(rect.x0 + 2, rect.y0 + 2));
     assert!(g.host.factory.buildings.get(hub).is_some());
     assert!(g.frame().notices.iter().any(|n| n.contains("cannot be removed")));
 }
@@ -206,7 +214,7 @@ fn storage_slot_clicks_move_items() {
     let kind = g.content.factory.building("crate").unwrap();
     g.apply(FactoryCommand::PickToCursor(crate_part));
     let at = g.free_place(kind);
-    g.apply(FactoryCommand::Place { kind, at, rotation: 0 });
+    g.apply(FactoryCommand::Place(Placement::new(kind, at, 0)));
     g.apply(FactoryCommand::OpenAt(at.origin()));
     let id = g.host.building_at(at.origin()).unwrap();
     let brick = ItemRef::Part(g.part("raw_clay_brick"));
@@ -226,7 +234,7 @@ fn open_crate(g: &mut Game) -> BuildingId {
     let kind = g.content.factory.building("crate").unwrap();
     g.apply(FactoryCommand::PickToCursor(g.part("crate")));
     let at = g.free_place(kind);
-    g.apply(FactoryCommand::Place { kind, at, rotation: 0 });
+    g.apply(FactoryCommand::Place(Placement::new(kind, at, 0)));
     g.apply(FactoryCommand::OpenAt(at.origin()));
     g.host.building_at(at.origin()).unwrap()
 }
@@ -335,6 +343,30 @@ fn research_needs_discoveries_then_starts() {
 }
 
 #[test]
+fn research_queues_the_technologies_it_needs_first() {
+    let mut g = Game::new();
+    let (bronze, research) = (g.content.factory.tech("bronze").unwrap(), g.content.factory.tech("research").unwrap());
+    // Research needs Bronze, and Bronze needs discoveries: both wait in the queue, in order.
+    g.apply(FactoryCommand::StartResearch(research));
+    assert_eq!(g.host.factory.progress.queue(), &[bronze, research]);
+    // The research window offers the Queue button for such a technology.
+    let views = g.host.factory.progress.tech_views(&g.content);
+    let entry = crate::normal::tech_entry(&views[research.0 as usize]);
+    assert!(!entry.can_queue, "it is queued already");
+    let steam = g.content.factory.tech("steam_power").unwrap();
+    let entry = crate::normal::tech_entry(&views[steam.0 as usize]);
+    assert!(!entry.can_queue, "Tier 1 is not open yet");
+    // When the discoveries are made, Bronze runs, then Research follows from the queue.
+    for id in ["malachite", "cassiterite"] {
+        g.host.factory.scan(g.content.expect_material(id));
+    }
+    g.ticks(2);
+    let p = &g.host.factory.progress;
+    assert!(p.is_researched(bronze));
+    assert!(p.is_researched(research) || p.current() == Some(research), "{:?} {:?}", p.current(), p.queue());
+}
+
+#[test]
 fn cancel_craft_gives_the_ingredients_back() {
     let mut g = Game::new();
     let wood = ItemRef::Material(g.content.expect_material("wood"));
@@ -352,7 +384,7 @@ fn save_text_round_trip() {
     let kind = g.content.factory.building("crate").unwrap();
     g.apply(FactoryCommand::PickToCursor(g.part("crate")));
     let at = g.free_place(kind);
-    g.apply(FactoryCommand::Place { kind, at, rotation: 0 });
+    g.apply(FactoryCommand::Place(Placement::new(kind, at, 0)));
     g.apply(FactoryCommand::SetHotbar { index: 3, item: Some(ItemRef::Material(g.content.expect_material("wood"))) });
     let text = g.host.save_text().unwrap();
     let loaded = FactoryHost::from_save_text(g.content.clone(), g.host.factory.guide.clone(), &text).unwrap();
@@ -374,4 +406,37 @@ fn mailbox_keeps_notices_and_lists() {
     assert_eq!(f.notices, vec!["a".to_string(), "b".to_string()]);
     assert!(f.guide.is_some());
     assert!(mb.take().is_none());
+}
+
+#[test]
+fn items_can_be_taken_back_out_of_machine_input_slots() {
+    let mut g = Game::new();
+    let drawer = g.content.factory.building("steam_wire_drawer").unwrap();
+    g.give(ItemRef::Part(g.part("steam_wire_drawer")), 1);
+    g.apply(FactoryCommand::PickToCursor(g.part("steam_wire_drawer")));
+    let at = g.free_place(drawer);
+    g.apply(FactoryCommand::Place(Placement::new(drawer, at, 0)));
+    let id = g.host.building_at(at.origin()).unwrap();
+    let c = g.content.clone();
+    g.host.factory.buildings.set_recipe(&c, id, c.factory.recipe("copper_wire")).unwrap();
+    let plate = ItemRef::Part(g.part("copper_plate"));
+    assert_eq!(g.host.factory.buildings.insert(&c, id, plate, 2), 2);
+    let slot = |click| FactoryCommand::Click { target: SlotTarget::Building { id, group: SlotGroup::Input, index: 0 }, click };
+    let input = |g: &mut Game| g.frame().building.map_or(0, |b| b.inputs[0].count);
+    g.apply(FactoryCommand::OpenAt(at.origin()));
+    // A right click with an empty hand takes half, a left click the rest.
+    g.apply(slot(Click::Right));
+    assert_eq!(g.host.factory.cursor.map(|c| c.count), Some(1));
+    assert_eq!(input(&mut g), 1);
+    // With plates in the hand, a left click puts them back.
+    g.apply(slot(Click::Left));
+    assert_eq!(g.host.factory.cursor, None);
+    assert_eq!(input(&mut g), 2);
+    g.apply(slot(Click::Left));
+    assert_eq!(g.host.factory.cursor.map(|c| c.count), Some(2));
+    g.apply(slot(Click::Left));
+    // Shift + click moves them into the inventory.
+    g.apply(slot(Click::Shift));
+    assert_eq!(input(&mut g), 0);
+    assert_eq!(g.count(plate), 2);
 }

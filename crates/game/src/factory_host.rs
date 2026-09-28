@@ -15,6 +15,9 @@
 
 use crate::player::{MoveInput, Robot};
 use crate::tools;
+
+#[path = "host_build.rs"]
+mod build;
 use foundry_content::{Content, ItemRef, Layer, Stack};
 use foundry_core::{BuildingId, BuildingKindId, CellPos, CellRect, Command, MaterialId, PartId, RecipeId, TILE_SIZE, TechId, TilePos};
 use foundry_factory::progress::{Discovered, LockReason, MilestoneView, ResearchStatus, TechView};
@@ -44,6 +47,8 @@ pub const HOTBAR_SLOTS: usize = 20;
 const TANKS_FULL_TICKS: u64 = 90;
 /// The message when the dig tool finds no room in the tanks.
 pub use foundry_ui::TANKS_FULL;
+/// The building window closes when the building is this many cells farther than the reach.
+const CLOSE_SLACK: i32 = 8;
 /// Start inventory of a new game: materials in the tank, then parts.
 const START_MATERIALS: [(&str, u32); 1] = [("wood", 30)];
 const START_PARTS: [(&str, u32); 1] = [("crate", 1)];
@@ -74,6 +79,37 @@ pub struct GhostRequest {
     /// Top-left tile.
     pub at: TilePos,
     pub rotation: u8,
+    pub flip: bool,
+}
+
+/// A building to place from the hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placement {
+    pub kind: BuildingKindId,
+    /// Top-left tile.
+    pub at: TilePos,
+    pub rotation: u8,
+    pub flip: bool,
+    /// Set this recipe after the placement (from the pipette).
+    pub recipe: Option<RecipeId>,
+    /// The player action (one mouse press) for undo. One drag line is one action. After a failed
+    /// placement, the other placements of the same action are ignored, so a drag line stops
+    /// there. 0: a new action of its own.
+    pub action: u32,
+}
+
+impl Placement {
+    pub fn new(kind: BuildingKindId, at: TilePos, rotation: u8) -> Self {
+        Self { kind, at, rotation, flip: false, recipe: None, action: 0 }
+    }
+}
+
+/// How to turn a placed building.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Turn {
+    Clockwise,
+    CounterClockwise,
+    To { rotation: u8, flip: bool },
 }
 
 /// The keys and the mouse of the player. The main thread sends it when it changes.
@@ -92,6 +128,11 @@ pub struct PlayerInput {
     pub ghost: Option<GhostRequest>,
     /// The cells on the screen (for the status marks).
     pub view: CellRect,
+    /// The remove button is down (it went down on a building): remove the buildings under the
+    /// path of the mouse, one after another. The number of that press (for undo).
+    pub remove: Option<u32>,
+    /// Alt mode: the frame has recipe icons and belt directions for the buildings in the view.
+    pub alt: bool,
 }
 
 /// A slot group of a building window.
@@ -130,13 +171,21 @@ pub enum FactoryCommand {
     ClearCursor,
     /// Take a stack of this part from the inventory into the hand.
     PickToCursor(PartId),
-    /// Place the building in the hand with its top-left tile at `at`.
-    Place { kind: BuildingKindId, at: TilePos, rotation: u8 },
+    /// Place the building in the hand.
+    Place(Placement),
     /// Place the building in the hand at the first free place right of the robot (for tests and
     /// the smoke test).
     PlaceNear,
-    /// Take the building at this cell back into the inventory.
-    RemoveAt(CellPos),
+    /// Turn the placed building at this cell. `action` is for undo (0: an action of its own).
+    Turn { at: CellPos, turn: Turn, action: u32 },
+    /// Take back the last build, remove or turn action of the player.
+    Undo,
+    /// Do again the last action that undo took back.
+    Redo,
+    /// Remember the settings (the recipe) of the building at this cell.
+    CopySettings(CellPos),
+    /// Give the remembered settings to the building at this cell (the same building kind).
+    PasteSettings(CellPos),
     /// Open the window of the building at this cell.
     OpenAt(CellPos),
     CloseBuilding,
@@ -167,17 +216,44 @@ pub struct HoverBuilding {
     pub id: BuildingId,
     pub kind: BuildingKindId,
     pub rect: CellRect,
+    pub rotation: u8,
+    pub flip: bool,
     pub status: Status,
+    /// Why it does not work (for the hover box).
+    pub reason: String,
+    /// Hit points now and at most.
+    pub hit_points: (u32, u32),
     pub recipe: Option<RecipeId>,
     pub progress: f32,
     pub temperature: i16,
 }
 
-/// A building in the view that does not work, for the status icon over it.
+/// A building in the view that does not work (for the status icon over it), or, in the alt
+/// mode, any building with a recipe or a direction.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BuildingMark {
     pub rect: CellRect,
     pub status: Status,
+    /// Alt mode: the first product of its recipe.
+    pub output: Option<ItemRef>,
+    /// Alt mode: the belt direction (+1 right, -1 left), 0 for other buildings.
+    pub belt: i8,
+}
+
+/// A drag line stopped: the placement at `at` failed for this reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DragStop {
+    pub action: u32,
+    pub at: TilePos,
+    pub reason: String,
+}
+
+/// The building that the remove button takes now.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RemoveView {
+    pub rect: CellRect,
+    /// 0 to 1.
+    pub progress: f32,
 }
 
 /// Everything the UI needs from the factory, made after each loop of the simulation thread.
@@ -219,6 +295,15 @@ pub struct FactoryFrame {
     pub last_placed: Option<(BuildingKindId, CellRect)>,
     /// Name tags over buildings in the view (the Hub and its next repair stage).
     pub labels: Vec<(CellRect, String)>,
+    /// The last failed placement of a drag line (the main thread stops the line there).
+    pub drag_stop: Option<DragStop>,
+    /// The building that the remove button takes now, and the ones that wait after it.
+    pub removing: Option<RemoveView>,
+    pub remove_queue: Vec<CellRect>,
+    /// The hardest material the drill head digs now (for the hover box).
+    pub dig_limit: u8,
+    /// Materials the player has discovered (scanned).
+    pub discovered: Vec<MaterialId>,
     /// Messages for the player.
     pub notices: Vec<String>,
 }
@@ -320,6 +405,17 @@ pub struct FactoryHost {
     on_quickbar: std::collections::BTreeSet<PartId>,
     /// The last ghost check: the request, its result and the tick of the check.
     ghost_check: Option<(GhostRequest, Option<String>, u64)>,
+    /// Build, remove and turn actions of the player, for undo and redo.
+    undo: build::UndoStack,
+    /// The last failed placement. Other placements of its action are ignored.
+    drag_stop: Option<DragStop>,
+    /// The settings that Shift + right click copied: the building kind and its recipe.
+    copied: Option<(BuildingKindId, Option<RecipeId>)>,
+    /// The buildings that the remove button takes, in order, and the ticks spent on the first.
+    removal: build::Removal,
+    /// Numbers for actions that come without one (action 0). They count down from the top, so
+    /// they do not meet the numbers of the main thread.
+    own_actions: u32,
 }
 
 impl FactoryHost {
@@ -344,6 +440,11 @@ impl FactoryHost {
             last_placed: None,
             on_quickbar: Default::default(),
             ghost_check: None,
+            undo: Default::default(),
+            drag_stop: None,
+            copied: None,
+            removal: Default::default(),
+            own_actions: u32::MAX,
         }
         .with_quickbar_seen()
     }
@@ -502,7 +603,7 @@ impl FactoryHost {
     /// Apply one command from the main thread.
     pub fn apply(&mut self, cmd: FactoryCommand, sim: &mut Simulation) {
         match cmd {
-            FactoryCommand::Input(i) => self.input = i,
+            FactoryCommand::Input(i) => self.set_input(i),
             FactoryCommand::Click { target, click } => self.click(target, click),
             FactoryCommand::Craft { recipe, count } => {
                 if let Err(e) = self.factory.craft(recipe, count) {
@@ -522,19 +623,26 @@ impl FactoryHost {
             FactoryCommand::StartResearch(tech) => self.start_research(tech),
             FactoryCommand::ClearCursor => self.clear_cursor(),
             FactoryCommand::PickToCursor(part) => self.pick_to_cursor(part),
-            FactoryCommand::Place { kind, at, rotation } => self.place(kind, at, rotation, sim),
+            FactoryCommand::Place(p) => self.place(p, sim),
             FactoryCommand::PlaceNear => {
                 let content = self.factory.content.clone();
                 let kind = self.factory.cursor.and_then(|c| content.factory.part_def(c.part).building);
                 match kind.and_then(|k| self.free_place(k, sim).map(|at| (k, at))) {
-                    Some((kind, at)) => self.place(kind, at, 0, sim),
+                    Some((kind, at)) => self.place(Placement::new(kind, at, 0), sim),
                     None => self.notice("No free place for the building in the hand"),
                 }
             }
-            FactoryCommand::RemoveAt(p) => self.remove_at(p, sim),
+            FactoryCommand::Turn { at, turn, action } => self.turn_at(at, turn, action),
+            FactoryCommand::Undo => self.undo(sim),
+            FactoryCommand::Redo => self.redo(sim),
+            FactoryCommand::CopySettings(p) => self.copy_settings(p),
+            FactoryCommand::PasteSettings(p) => self.paste_settings(p, sim),
             FactoryCommand::OpenAt(p) => {
                 if let Some(id) = self.building_at(p) {
-                    self.open = Some(id);
+                    match self.factory.buildings.get(id).map(|b| b.cell_rect()) {
+                        Some(r) if self.out_of_reach(r) => self.notice("Out of reach"),
+                        _ => self.open = Some(id),
+                    }
                 }
             }
             FactoryCommand::CloseBuilding => self.open = None,
@@ -615,7 +723,7 @@ impl FactoryHost {
         match group {
             SlotGroup::Input => {
                 let Some(buf) = view.inputs.get(index) else { return };
-                self.cursor_into_building(id, buf.item, click);
+                self.input_slot_click(id, buf.item, buf.count, click);
             }
             SlotGroup::Output => {
                 let Some(buf) = view.outputs.get(index) else { return };
@@ -630,11 +738,34 @@ impl FactoryHost {
         }
     }
 
-    /// A click on a machine input slot: put the parts in the hand into the machine (a right
-    /// click puts one).
-    fn cursor_into_building(&mut self, id: BuildingId, item: ItemRef, click: Click) {
+    /// A click on a machine input slot, as in Factorio:
+    /// - parts in the hand: put them into the machine (a right click puts one);
+    /// - an empty hand: take the parts into the hand (a right click takes half);
+    /// - Shift or Ctrl: move the items of the slot into the inventory.
+    ///
+    /// Materials cannot be in the hand, so a click with an empty hand moves them into the tank.
+    fn input_slot_click(&mut self, id: BuildingId, item: ItemRef, count: u32, click: Click) {
         let content = self.factory.content.clone();
-        let Some(c) = self.factory.cursor else { return };
+        let empty_hand = self.factory.cursor.is_none();
+        if matches!(click, Click::Shift | Click::Ctrl) || (empty_hand && matches!(item, ItemRef::Material(_))) {
+            let room = self.factory.player.room_for(&content, item, count);
+            let n = self.factory.buildings.take_input(&content, id, item, room);
+            self.factory.player.insert(&content, item, n);
+            if n < count && room < count {
+                self.notice("The inventory is full");
+            }
+            return;
+        }
+        let Some(c) = self.factory.cursor else {
+            let ItemRef::Part(part) = item else { return };
+            let want = if click == Click::Right { count.div_ceil(2) } else { count };
+            let want = want.min(foundry_factory::inventory::stack_size(&content, part));
+            let n = self.factory.buildings.take_input(&content, id, item, want);
+            if n > 0 {
+                self.factory.cursor = Some(PartStack::new(part, n));
+            }
+            return;
+        };
         if ItemRef::Part(c.part) != item {
             self.notice(format!("This slot takes {}", content.item_name(item)));
             return;
@@ -652,7 +783,9 @@ impl FactoryHost {
         let reasons = p.lock_reasons(&content, tech);
         let result = if reasons.is_empty() {
             p.start_research(&content, tech)
-        } else if reasons.iter().all(|r| matches!(r, LockReason::NeedsTech(_))) {
+        } else if reasons.iter().any(|r| matches!(r, LockReason::NeedsTech(_))) {
+            // As in Factorio: queue the technologies it needs, then this one. The queue starts
+            // each one when it can (tier, points and discoveries are checked then).
             p.queue_research(&content, tech)
         } else {
             Err(reasons[0].clone())
@@ -699,10 +832,15 @@ impl FactoryHost {
     }
 
     /// Check a placement: the placement rules, reach, and the robot's own body.
-    pub fn check_place(&self, kind: BuildingKindId, at: TilePos, rotation: u8, sim: &Simulation) -> Result<(), String> {
+    pub fn check_place(&self, kind: BuildingKindId, at: TilePos, rotation: u8, flip: bool, sim: &Simulation) -> Result<(), String> {
+        self.check_place_reach(kind, at, rotation, flip, true, sim)
+    }
+
+    /// `check_place`; `reach` false skips the reach check (undo and redo work at any distance).
+    fn check_place_reach(&self, kind: BuildingKindId, at: TilePos, rotation: u8, flip: bool, reach: bool, sim: &Simulation) -> Result<(), String> {
         let content = &self.factory.content;
         let Some(def) = content.factory.buildings.get(kind.0 as usize) else { return Err("Unknown building".into()) };
-        self.factory.can_place(kind, at, rotation, false, sim).map_err(|e| match e {
+        self.factory.can_place(kind, at, rotation, flip, sim).map_err(|e| match e {
             // The robot cannot dig this material yet: say so, not "dig first".
             foundry_factory::PlaceError::Blocked { material, name, can_dig: true, .. }
                 if content.materials.hardness[material.index()] > tools::dig_limit(&self.factory) =>
@@ -718,45 +856,13 @@ impl FactoryHost {
             (at.x + size.0 as i32) * TILE_SIZE,
             (at.y + size.1 as i32) * TILE_SIZE,
         );
-        if self.out_of_reach(r) {
-            return Err("Too far away".into());
+        if reach && self.out_of_reach(r) {
+            return Err("Out of reach".into());
         }
         if def.layer == Layer::Front && !r.intersect(&self.robot.rect()).is_empty() {
             return Err("The robot is in the way".into());
         }
         Ok(())
-    }
-
-    fn place(&mut self, kind: BuildingKindId, at: TilePos, rotation: u8, sim: &mut Simulation) {
-        let content = self.factory.content.clone();
-        let part = content.factory.building_def(kind).part;
-        if !self.factory.cursor.is_some_and(|c| c.part == part) {
-            self.notice(format!("No {} in the hand", content.factory.part_def(part).name));
-            return;
-        }
-        if let Err(e) = self.check_place(kind, at, rotation, sim) {
-            self.notice(e);
-            return;
-        }
-        match self.factory.place(kind, at, rotation, false, sim) {
-            Ok(id) => self.last_placed = self.factory.buildings.get(id).map(|b| (kind, b.cell_rect())),
-            Err(e) => {
-                self.notice(e.to_string());
-                return;
-            }
-        }
-        if let Some(c) = self.factory.cursor.as_mut() {
-            c.count -= 1;
-            if c.count == 0 {
-                self.factory.cursor = None;
-                // As in Factorio: the next stack of this building comes into the hand.
-                let size = foundry_factory::inventory::stack_size(&content, part);
-                let n = self.factory.player.remove(ItemRef::Part(part), size);
-                if n > 0 {
-                    self.factory.cursor = Some(PartStack::new(part, n));
-                }
-            }
-        }
     }
 
     /// The first free place right of the robot for a building (rotation 0), near its feet: the
@@ -781,38 +887,12 @@ impl FactoryHost {
         for dx in 1..12 {
             for dy in (-3..=3).rev() {
                 let at = TilePos::new(r.x1.div_euclid(TILE_SIZE) + dx, r.y1.div_euclid(TILE_SIZE) - size.1 as i32 + dy);
-                if empty(at) && self.check_place(kind, at, 0, sim).is_ok() {
+                if empty(at) && self.check_place(kind, at, 0, false, sim).is_ok() {
                     return Some(at);
                 }
             }
         }
         None
-    }
-
-    fn remove_at(&mut self, p: CellPos, sim: &mut Simulation) {
-        let content = self.factory.content.clone();
-        let Some(id) = self.building_at(p) else { return };
-        let Some(b) = self.factory.buildings.get(id) else { return };
-        let def = content.factory.building_def(b.kind);
-        if def.kind == "hub" {
-            self.notice("The Hub cannot be removed");
-            return;
-        }
-        if self.out_of_reach(b.cell_rect()) {
-            self.notice("Too far away");
-            return;
-        }
-        match self.factory.remove_to_player(id, sim) {
-            Ok(report) => {
-                if self.open == Some(id) {
-                    self.open = None;
-                }
-                if !report.dropped.is_empty() || !report.left.is_empty() {
-                    self.notice("The inventory is full: some items fell out");
-                }
-            }
-            Err(e) => self.notice(e.to_string()),
-        }
     }
 
     /// Items that did not fit into the inventory: materials become cells near the robot.
@@ -862,6 +942,7 @@ impl FactoryHost {
         } else {
             self.last_scan = None;
         }
+        self.tick_removal(sim);
 
         self.factory.tick(sim);
         // The simulation has no reaction events yet (`SimEvent::Reaction`, see
@@ -910,7 +991,9 @@ impl FactoryHost {
         let content = self.factory.content.clone();
         let f = &self.factory;
         let cursor = f.cursor.map(|c| c.to_stack());
-        let building = self.open.and_then(|id| f.building_view(id));
+        // As in Factorio, the building window closes when the robot walks out of reach.
+        let in_reach = |id: BuildingId| f.buildings.get(id).is_some_and(|b| !self.out_of_reach(b.cell_rect().expand(CLOSE_SLACK)));
+        let building = self.open.filter(|id| in_reach(*id)).and_then(|id| f.building_view(id));
         if building.is_none() {
             self.open = None;
         }
@@ -926,14 +1009,14 @@ impl FactoryHost {
             let error = match &self.ghost_check {
                 Some((r, e, t)) if *r == g && self.ticks < t + 10 => e.clone(),
                 _ => {
-                    let e = self.check_place(g.kind, g.at, g.rotation, sim).err();
+                    let e = self.check_place(g.kind, g.at, g.rotation, g.flip, sim).err();
                     self.ghost_check = Some((g, e.clone(), self.ticks));
                     e
                 }
             };
             let def = content.factory.building_def(g.kind);
             let size = if g.rotation & 1 == 1 { (def.size.1, def.size.0) } else { def.size };
-            GhostView { request: g, size, error, ports: self.factory.ghost_ports(g.kind, g.at, g.rotation, false) }
+            GhostView { request: g, size, error, ports: self.factory.ghost_ports(g.kind, g.at, g.rotation, g.flip) }
         });
         let f = &self.factory;
         let hover = self.building_at(self.input.aim).and_then(|id| {
@@ -943,6 +1026,10 @@ impl FactoryHost {
                 id,
                 kind: b.kind,
                 rect: b.cell_rect(),
+                rotation: b.transform.rotation,
+                flip: b.transform.flip,
+                reason: v.reason.clone(),
+                hit_points: (v.hit_points, v.max_hit_points),
                 status: b.status,
                 recipe: v.recipe,
                 progress: v.progress,
@@ -950,11 +1037,24 @@ impl FactoryHost {
             })
         });
         let view = self.input.view;
+        let alt = self.input.alt;
         let marks = f
             .buildings
             .iter()
-            .filter(|(_, b)| b.status.is_problem() && !b.cell_rect().intersect(&view).is_empty())
-            .map(|(_, b)| BuildingMark { rect: b.cell_rect(), status: b.status })
+            .filter(|(_, b)| !b.cell_rect().intersect(&view).is_empty())
+            .filter_map(|(id, b)| {
+                let output = if alt { mark_output(f, id, b) } else { None };
+                let belt = match &b.logic {
+                    foundry_factory::Logic::Belt(_) if alt => foundry_factory::buildings::belt_direction(b.transform) as i8,
+                    _ => 0,
+                };
+                (b.status.is_problem() || output.is_some() || belt != 0).then_some(BuildingMark {
+                    rect: b.cell_rect(),
+                    status: b.status,
+                    output,
+                    belt,
+                })
+            })
             .collect();
         let labels = f
             .buildings
@@ -994,9 +1094,22 @@ impl FactoryHost {
             marks,
             last_placed: self.last_placed,
             labels,
+            drag_stop: self.drag_stop.clone(),
+            removing: self.removal_view(),
+            remove_queue: self.removal_queue_rects(),
+            dig_limit: tools::dig_limit(f),
+            discovered: f.progress.discovered_materials().collect(),
             notices: std::mem::take(&mut self.notices),
         }
     }
+}
+
+/// The first product of the recipe of a machine, for the alt mode icon.
+fn mark_output(f: &Factory, id: BuildingId, b: &foundry_factory::Building) -> Option<ItemRef> {
+    let foundry_factory::Logic::Machine(m) = &b.logic else { return None };
+    let _ = id;
+    let recipe = f.content.factory.recipe_def(m.recipe?);
+    recipe.outputs.first().map(|s| s.item)
 }
 
 /// The top of the ground in a column: the first cell from the top that stops the robot.

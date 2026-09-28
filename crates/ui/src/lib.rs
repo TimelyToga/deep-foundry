@@ -26,7 +26,7 @@ pub mod widgets;
 
 mod screens;
 
-pub use action::{ClickButton, GameMode, SettingChange, SlotClick, SlotRef, UiAction, WindowKind, WorldSize};
+pub use action::{ClickButton, GameMode, SettingChange, SlotClick, SlotRef, UiAction, UiKey, WindowKind, WorldSize};
 pub use foundry_content::{ItemRef, Stack};
 pub use item::{CraftGroup, ItemKind, Maker};
 pub use model::*;
@@ -183,6 +183,10 @@ pub struct FoundryUi {
     state: UiState,
     stock: Stock,
     actions: Vec<UiAction>,
+    /// Keys that the game read with its key bindings, for the next `show`.
+    keys: Vec<UiKey>,
+    /// The game gives the keys (`press_key`): the UI does not read E, P, T, G and 1 to 0 itself.
+    game_keys: bool,
 }
 
 /// The name the design documents use for the UI type.
@@ -192,7 +196,7 @@ impl FoundryUi {
     /// Install the fonts and the style into `ctx`. Call once, before the first `show`.
     pub fn new(ctx: &egui::Context) -> Self {
         theme::install(ctx);
-        Self { atlas: None, state: UiState::default(), stock: Stock::default(), actions: vec![] }
+        Self { atlas: None, state: UiState::default(), stock: Stock::default(), actions: vec![], keys: vec![], game_keys: false }
     }
 
     /// Draw the UI for one frame and return what the player asked for.
@@ -224,7 +228,30 @@ impl FoundryUi {
             tooltip::show(ctx, t, model, &self.stock, atlas);
         }
         screens::hand::show(ctx, model, atlas);
+        // The Controls list waits for a key, but the settings page is closed: stop the wait.
+        let settings_open = matches!(model.state, GameState::MainMenu | GameState::Paused) && self.state.menu.page == MenuPage::Settings;
+        if let Some(id) = model.settings.key_waiting.as_ref().filter(|_| !settings_open) {
+            self.actions.push(UiAction::ChangeSetting(SettingChange::RebindKey(id.clone())));
+        }
         std::mem::take(&mut self.actions)
+    }
+
+    /// The game reads the keys with its own key bindings and gives the UI its keys with
+    /// `press_key`. After this call the UI no longer reads E, P, T, G and 1 to 0 itself (Esc stays
+    /// with the UI).
+    pub fn use_game_keys(&mut self) {
+        self.game_keys = true;
+    }
+
+    /// A key that the game read with its key bindings (see `use_game_keys`).
+    pub fn press_key(&mut self, key: UiKey) {
+        self.game_keys = true;
+        self.keys.push(key);
+    }
+
+    /// The item icons (after the first `show`), so the game can draw icons over the world.
+    pub fn atlas(&self) -> Option<&IconAtlas> {
+        self.atlas.as_ref()
     }
 
     /// Open a window that the UI owns (`Character`, `Production`, `Research` or `Guide`).
@@ -352,6 +379,7 @@ impl FoundryUi {
     }
 
     fn handle_keys(&mut self, ctx: &egui::Context, model: &UiModel) {
+        let game_keys = std::mem::take(&mut self.keys);
         // A text field has the keyboard: it uses the keys (Esc leaves the field).
         if ctx.memory(|m| m.focused().is_some()) {
             return;
@@ -359,13 +387,34 @@ impl FoundryUi {
         use egui::Key;
         const DIGITS: [Key; 10] =
             [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9, Key::Num0];
-        let (esc, e, shift, digit) = ctx.input(|i| {
-            let digit = DIGITS.iter().position(|k| i.key_pressed(*k));
-            (i.key_pressed(Key::Escape), i.key_pressed(Key::E), i.modifiers.shift, digit)
-        });
+        // While the Controls list waits for a key, Esc belongs to the game (it stops waiting).
+        let esc = model.settings.key_waiting.is_none() && ctx.input(|i| i.key_pressed(Key::Escape));
         // Windows of the normal game. The sandbox has no statistics, research or guide.
-        let normal_keys = [(Key::P, WindowKind::Production), (Key::T, WindowKind::Research), (Key::G, WindowKind::Guide)];
-        let normal: Vec<WindowKind> = ctx.input(|i| normal_keys.iter().filter(|(k, _)| i.key_pressed(*k)).map(|(_, w)| *w).collect());
+        let (e, digit, normal) = if self.game_keys {
+            let e = game_keys.contains(&UiKey::Character);
+            let digit = game_keys.iter().find_map(|k| match k {
+                UiKey::Quickbar(i) => Some(*i),
+                _ => None,
+            });
+            let normal: Vec<WindowKind> = game_keys
+                .iter()
+                .filter_map(|k| match k {
+                    UiKey::Production => Some(WindowKind::Production),
+                    UiKey::Research => Some(WindowKind::Research),
+                    UiKey::Guide => Some(WindowKind::Guide),
+                    _ => None,
+                })
+                .collect();
+            (e, digit, normal)
+        } else {
+            let (e, shift, digit) = ctx.input(|i| {
+                let digit = DIGITS.iter().position(|k| i.key_pressed(*k));
+                (i.key_pressed(Key::E), i.modifiers.shift, digit)
+            });
+            let normal_keys = [(Key::P, WindowKind::Production), (Key::T, WindowKind::Research), (Key::G, WindowKind::Guide)];
+            let normal: Vec<WindowKind> = ctx.input(|i| normal_keys.iter().filter(|(k, _)| i.key_pressed(*k)).map(|(_, w)| *w).collect());
+            (e, digit.map(|d| d + if shift { 10 } else { 0 }), normal)
+        };
         match model.state {
             GameState::MainMenu | GameState::Paused => {
                 if esc {
@@ -410,7 +459,7 @@ impl FoundryUi {
                     }
                 }
                 if let Some(d) = digit {
-                    self.actions.push(UiAction::SelectHotbar(d + if shift { 10 } else { 0 }));
+                    self.actions.push(UiAction::SelectHotbar(d));
                 }
             }
         }

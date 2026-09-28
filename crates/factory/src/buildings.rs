@@ -723,6 +723,36 @@ impl Buildings {
         taken
     }
 
+    /// Take up to `n` of an item back out of the input buffers of a machine (or the kits of a
+    /// lab). Returns the count taken.
+    pub fn take_input(&mut self, content: &Content, id: BuildingId, item: ItemRef, n: u32) -> u32 {
+        let Some(b) = self.get_mut(id) else { return 0 };
+        let taken = match &mut b.logic {
+            Logic::Machine(m) => {
+                let Some(r) = m.recipe else { return 0 };
+                let recipe = content.factory.recipe_def(r);
+                let mut taken = 0;
+                for (k, s) in recipe.inputs.iter().enumerate() {
+                    if s.item == item && taken < n {
+                        let t = m.inputs[k].min(n - taken);
+                        m.inputs[k] -= t;
+                        taken += t;
+                    }
+                }
+                taken
+            }
+            Logic::Lab(lab) => match item {
+                ItemRef::Part(p) => lab.kits.take(p, n),
+                ItemRef::Material(_) => 0,
+            },
+            _ => 0,
+        };
+        if taken > 0 {
+            self.wake(id);
+        }
+        taken
+    }
+
     /// Take all finished products out of a machine.
     pub fn take_outputs(&mut self, content: &Content, id: BuildingId) -> Vec<Stack> {
         let Some(b) = self.get_mut(id) else { return vec![] };

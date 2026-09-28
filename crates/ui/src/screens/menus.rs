@@ -384,7 +384,7 @@ fn sim_rows(cx: &Cx) -> usize {
 fn settings(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
     let id = Id::new("settings-dialog");
     let sim_h = 34.0 + sim_rows(cx) as f32 * 34.0 + 6.0;
-    let height = 150.0 + 12.0 + sim_h + 14.0 + 26.0 + 180.0;
+    let height = 150.0 + 12.0 + sim_h + 14.0 + CONTROLS_H;
     let (back, _) = dialog(ui, cx, id, "Settings", vec2(640.0, height), None, |ui, cx, r| {
         let p = ui.painter().clone();
         let s = &cx.model.settings;
@@ -409,7 +409,7 @@ fn settings(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
         let checks = [
             ("vsync", "Vertical sync", s.vsync, SettingChange::Vsync(!s.vsync)),
             ("show-fps", "Show FPS", s.show_fps, SettingChange::ShowFps(!s.show_fps)),
-            ("show-debug", "Debug panel (F3)", s.show_debug, SettingChange::ShowDebug(!s.show_debug)),
+            ("show-debug", &*format!("Debug panel ({})", s.key("debug")), s.show_debug, SettingChange::ShowDebug(!s.show_debug)),
         ];
         for (i, (key, label, on, change)) in checks.into_iter().enumerate() {
             let cb = Rect::from_min_size(pos2(x + i as f32 * 200.0, y), vec2(190.0, 26.0));
@@ -457,33 +457,80 @@ fn settings(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {
             }
         }
 
-        // Key bindings (read only).
-        let ky = sim.bottom() + 14.0;
-        widgets::heading(&p, pos2(r.left(), ky), "Controls");
-        p.text(pos2(r.right(), ky + 10.0), Align2::RIGHT_CENTER, "Changing keys comes later.", font_regular(text::SMALL), color::TEXT_FAINT);
-        let list = Rect::from_min_max(pos2(r.left(), ky + 26.0), r.right_bottom());
-        widgets::deep(&p, list);
-        let inner = list.shrink(2.0);
-        let row_h = 26.0;
-        let binds = &s.key_bindings;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-            egui::ScrollArea::vertical().id_salt("keys").auto_shrink([false, false]).show(ui, |ui| {
-                let (area, _) = ui.allocate_exact_size(vec2(inner.width(), binds.len() as f32 * row_h), egui::Sense::hover());
-                let p = ui.painter();
-                for (i, (action, key)) in binds.iter().enumerate() {
-                    let row = Rect::from_min_size(pos2(area.left(), area.top() + i as f32 * row_h), vec2(area.width(), row_h));
-                    if i % 2 == 1 {
-                        p.rect_filled(row, CornerRadius::ZERO, Color32::from_white_alpha(5));
-                    }
-                    p.text(pos2(row.left() + 10.0, row.center().y), Align2::LEFT_CENTER, action, font(text::BODY), color::TEXT);
-                    p.text(pos2(row.right() - 12.0, row.center().y), Align2::RIGHT_CENTER, key, font_bold(text::BODY), color::HEADING);
-                }
-            });
-        });
+        controls(ui, cx, &p, r, sim.bottom() + 14.0);
     });
     if back {
         st.menu.page = MenuPage::Root;
     }
+}
+
+/// Height of the Controls section of the settings: the title row and the list.
+const CONTROLS_H: f32 = 34.0 + 330.0;
+
+/// The Controls section of the settings: match keys by position or by letter, the list of keys
+/// (click a row, then press a key), and a button for the default keys.
+fn controls(ui: &mut Ui, cx: &mut Cx, p: &Painter, r: Rect, top: f32) {
+    let s = &cx.model.settings;
+    widgets::heading(p, pos2(r.left(), top), "Controls");
+    // "Match keys by position / by letter".
+    let mut x = r.left() + 110.0;
+    p.text(pos2(x, top + 13.0), Align2::LEFT_CENTER, "Match keys by", font_regular(text::BODY), color::TEXT_DIM);
+    x += 102.0;
+    for (i, (label, letter)) in [("position", false), ("letter", true)].into_iter().enumerate() {
+        let br = Rect::from_min_size(pos2(x + i as f32 * 90.0, top), vec2(84.0, 26.0));
+        let sel = s.keys_by_letter == letter;
+        let resp = widgets::toggle(ui, Id::new(("keys-by", i)), br, label, sel);
+        if resp.hovered() {
+            let body = if letter {
+                "A key works by the letter it types on your keyboard layout."
+            } else {
+                "A key works by its place on the keyboard. On other layouts the keys stay where W A S D are on QWERTY."
+            };
+            cx.tip(crate::tooltip::Tip::Text { title: format!("Match keys by {label}"), body: body.into() });
+        }
+        if resp.clicked() && !sel {
+            cx.act(UiAction::ChangeSetting(SettingChange::KeysByLetter(letter)));
+        }
+    }
+    let reset = Rect::from_min_size(pos2(r.right() - 150.0, top), vec2(150.0, 26.0));
+    if widgets::button(ui, Id::new("keys-reset"), reset, "Reset to defaults", ButtonKind::Normal, true).clicked() {
+        cx.act(UiAction::ChangeSetting(SettingChange::ResetKeys));
+    }
+    let list = Rect::from_min_max(pos2(r.left(), top + 34.0), r.right_bottom());
+    widgets::deep(p, list);
+    let inner = list.shrink(2.0);
+    let row_h = 26.0;
+    let rows = s.key_bindings.clone();
+    let waiting = s.key_waiting.clone();
+    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+        egui::ScrollArea::vertical().id_salt("keys").auto_shrink([false, false]).show(ui, |ui| {
+            let (area, _) = ui.allocate_exact_size(vec2(inner.width(), rows.len() as f32 * row_h), egui::Sense::hover());
+            for (i, row) in rows.iter().enumerate() {
+                let rr = Rect::from_min_size(pos2(area.left(), area.top() + i as f32 * row_h), vec2(area.width(), row_h));
+                let can_change = !row.fixed && !row.id.is_empty();
+                let resp = ui.interact(rr, Id::new(("key-row", i)), if can_change { egui::Sense::click() } else { egui::Sense::hover() });
+                let wait = can_change && waiting.as_deref() == Some(row.id.as_str());
+                let p = ui.painter();
+                if wait {
+                    p.rect_filled(rr, CornerRadius::ZERO, color::ORANGE.gamma_multiply(0.25));
+                } else if can_change && resp.hovered() {
+                    p.rect_filled(rr, CornerRadius::ZERO, Color32::from_white_alpha(14));
+                } else if i % 2 == 1 {
+                    p.rect_filled(rr, CornerRadius::ZERO, Color32::from_white_alpha(5));
+                }
+                let tc = if can_change { color::TEXT } else { color::TEXT_DIM };
+                p.text(pos2(rr.left() + 10.0, rr.center().y), Align2::LEFT_CENTER, &row.action, font(text::BODY), tc);
+                let (key, kc) = if wait { ("Press a key (Esc: stop)", color::ORANGE) } else { (row.key.as_str(), if can_change { color::HEADING } else { color::TEXT_DIM }) };
+                p.text(pos2(rr.right() - 12.0, rr.center().y), Align2::RIGHT_CENTER, key, font_bold(text::BODY), kc);
+                if resp.clicked() {
+                    cx.act(UiAction::ChangeSetting(SettingChange::RebindKey(row.id.clone())));
+                }
+                if can_change && resp.hovered() && !wait {
+                    cx.tip(crate::tooltip::Tip::Text { title: row.action.clone(), body: "Click, then press the new key.".into() });
+                }
+            }
+        });
+    });
 }
 
 fn confirm_dialog(ui: &mut Ui, cx: &mut Cx, st: &mut UiState) {

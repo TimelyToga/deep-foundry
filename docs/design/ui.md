@@ -66,7 +66,9 @@ When the game reloads the data, it puts a new `Arc<Content>` into the model. The
 | `power` | The open power network window, or `None`. |
 | `stats` | Production statistics: amount made and used per minute over time, per item. |
 | `saves` | Saved games, newest first. |
-| `settings` | UI scale, vertical sync, show FPS, key bindings (read only). |
+| `settings` | UI scale, vertical sync, show FPS, the key list of the Controls section (section 3.2). |
+| `hover` | The cell or the building under the mouse, for the hover box at the top center. |
+| `hover_detail` | More about it (normal mode): for a cell `dig` (`CanDig`, `TooHard { needs }`, `Never`) and `undiscovered`; for a building `reason` and `hit_points`. |
 | `fps` | Frames per second (shown when `settings.show_fps` is on). |
 | `message` | A short line at the top of the screen, for example "Game saved". |
 | `sandbox` | `Some` in the sandbox mode (section 3.1). |
@@ -102,7 +104,15 @@ Over the world, the stack in the hand is drawn at the lower right of the mouse, 
 
 ### 3.2 Settings
 
-`Settings` has `ui_scale`, `vsync`, `show_fps`, `show_debug` (the debug panel, F3), `key_bindings` (read only) and `simulation`: a list of number settings of the simulation (`SimSetting`: key, label, help, value, min, max, step). The settings screen shows one slider for each in the "Simulation" section. When the list is empty, it says that the liquid settings will be there. A slider move sends `ChangeSetting(SettingChange::Simulation { key, value })`.
+`Settings` has `ui_scale`, `vsync`, `show_fps`, `show_debug` (the debug panel, F3), the keys, and `simulation`: a list of number settings of the simulation (`SimSetting`: key, label, help, value, min, max, step). The settings screen shows one slider for each in the "Simulation" section. When the list is empty, it says that the liquid settings will be there. A slider move sends `ChangeSetting(SettingChange::Simulation { key, value })`.
+
+The keys (the game owns the key table; see `crates/game/README.md`, "Keys and settings"):
+
+- `key_bindings: Vec<KeyRow>`: the rows of the Controls section. A row has an action `id` (for example "rotate"), the `action` text, the `key` as the player's keyboard shows it (for example "R" or "Ctrl + Z"), and `fixed` (mouse buttons and Esc, which cannot change).
+- `keys_by_letter`: keys match by the letter they type, not by their place on the keyboard.
+- `key_waiting`: the id of the row that waits for a key press.
+- The Controls section has "Match keys by position / letter" (sends `SettingChange::KeysByLetter`), "Reset to defaults" (`SettingChange::ResetKeys`) and the list. A click on a row sends `SettingChange::RebindKey(id)`; the game then takes the next key press as the new key (Esc stops the wait).
+- `Settings::key(id)` gives the key name of an action, and `Settings::with_keys(text)` replaces each `{key:ID}` in a text with it. The HUD, the guide and the tooltips use them, so they show the player's keys. Guide texts in the data write keys as `{key:scan}`.
 
 ### 3.3 Research
 
@@ -113,6 +123,7 @@ Over the world, the stack in the hand is drawn at the lower right of the mouse, 
 - `progress`: 0 to 1. It can be above 0 for a technology that started and then stopped.
 - `reasons`: why a locked technology cannot start, as sentences for the player (for example "Research Glass first."). Empty unless `Locked`.
 - `queue_position`: the place in the research queue (0 = next), or `None`.
+- `can_queue`: locked only because earlier technologies are not done. The card shows a Queue button, which sends `StartResearch`; the game queues the earlier technologies first, then this one.
 
 ### 3.4 Guide
 
@@ -173,7 +184,7 @@ Recipes that the player cannot make now have a red slot. The tooltip shows missi
 
 ## 7. Keys
 
-The UI reads these keys itself. The game must not use them for other things.
+These keys act on the UI. The game reads them with its key bindings and gives them to the UI with `FoundryUi::press_key(UiKey)` (after `use_game_keys()`, the UI no longer reads them itself; the preview and the tests without a game still use the default keys below). Esc stays with the UI. While the Controls list waits for a key, the UI ignores Esc (the game uses it to stop the wait).
 
 | Key | Action |
 |---|---|
@@ -199,11 +210,11 @@ The UI ignores keys while a text field has the keyboard.
 
 | Screen | Contents |
 |---|---|
-| HUD | Quickbar (2 rows of 10) with hull and heat bars at the bottom center. Tank summary on its right. Crafting queue at the bottom left. Research box at the top left (a click opens the research window). Guide tracker under the research box, or at the top left when there is no research: the first 2 goals that are not done, with the title, the count and the text (a click opens the guide; not in the sandbox mode; nothing when no goal is open). Entity info panel at the top right. Alerts at the bottom right. FPS at the top right corner. |
+| HUD | Hover box at the top center (as in the Minecraft mod WAILA): the icon and name of the cell or building under the mouse, then for a cell its state, temperature, "Can dig" or what is needed, what it breaks into and "Not discovered: scan with F"; for a building its status and reason, recipe with progress, hit points and temperature. Nothing for air. It stays right of the boxes on the left; the message line moves under it. Quickbar (2 rows of 10) with hull and heat bars at the bottom center. Tank summary on its right. Crafting queue at the bottom left. Research box at the top left (a click opens the research window). Guide tracker under the research box, or at the top left when there is no research: the first 2 goals that are not done, with the title, the count and the text (a click opens the guide; not in the sandbox mode; nothing when no goal is open). Alerts at the bottom right. FPS at the top right corner. |
 | Character screen (E) | Inventory grid and tank on the left. Crafting on the right: 5 tabs (Logistics, Production, Intermediate products, Power, Research), a search field, and the recipe grid. |
 | Building window | Status line with a colored dot, tier, picture, Hub repair stage (only the Hub), recipe selector (a click opens a grid of recipes), input slots, progress arrow, output slots, fuel slots, material buffers, power bar (a click opens the power network), temperature bar. |
 | Hub repair stage | In the Hub window: "Repair stage N: name", the description, one row for each item (icon, name, a bar with "delivered / need"), and a hint: shift + click moves a stack from the inventory into the Hub. |
-| Research (T) | Discovery points at the top. A list with a scroll bar, grouped by tier. Each technology: icon, name, a state badge (Done, Researching, Available, Locked), the queue place, the cost (kits per unit × units, discovery points, discoveries to scan), a progress bar when progress is above 0, the lock reasons in red, the icons of the recipes it unlocks (with recipe tooltips), and a Research button for available technologies. An empty list shows "No technologies yet." |
+| Research (T) | Discovery points at the top. A list with a scroll bar, grouped by tier. Each technology: icon, name, a state badge (Done, Researching, Available, Locked), the queue place, the cost (kits per unit × units, discovery points, discoveries to scan), a progress bar when progress is above 0, the lock reasons in red, the icons of the recipes it unlocks (with recipe tooltips), and a Research button for available technologies (a Queue button for technologies that wait only for earlier technologies). An empty list shows "No technologies yet." |
 | Guide (G) | Goals done and discovery points at the top. The goals grouped by tier. A done goal is one dim line with a check mark. An open goal shows the title, the reward, the text, and a bar with "have / need" when it counts something. |
 | Power network | Voltage tier, satisfaction, production, storage and current bars, warnings, consumers and producers by building type, graphs of consumption and production with time ranges 5s / 1m / 10m / 1h / 10h. |
 | Production statistics (P) | Time range tabs, graphs of made and used per minute, and lists of items with bars and rates. |
@@ -212,7 +223,7 @@ The UI ignores keys while a text field has the keyboard.
 | Pause menu (Esc) | Resume, Save game, Load game, Settings, Quit to main menu, Quit game. The world is dimmed. |
 | Save game | List of saves (name, date, play time), name field, Save. A save with the same name asks "Overwrite save?". |
 | Load game | List of saves, Delete (asks first), Load. A double click loads. |
-| Settings | UI scale (75 % to 200 %), vertical sync, show FPS, debug panel, simulation settings (sliders), the list of keys (read only). |
+| Settings | UI scale (75 % to 200 %), vertical sync, show FPS, debug panel, simulation settings (sliders), Controls: match keys by position or letter, Reset to defaults, and the list of keys (click a row, then press the new key). |
 
 Tooltips appear at once, next to the mouse, and follow the Factorio layout: a title bar with the name and the kind, the description, facts, the recipe (ingredients with icons, red when the player has too few), crafting time, "Made in", and "Used in".
 
