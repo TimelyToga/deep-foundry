@@ -24,6 +24,11 @@ pub trait ProgressLink {
     fn hub_stage(&self) -> u8 {
         0
     }
+    /// What the Hub repair stages still need (see `HubRule::need`). `None`: no limit beyond
+    /// `hub_stage`.
+    fn hub_need(&self, _content: &Content) -> Option<Vec<Stack>> {
+        None
+    }
 }
 
 impl ProgressLink for Progress {
@@ -37,6 +42,10 @@ impl ProgressLink for Progress {
 
     fn hub_stage(&self) -> u8 {
         self.stage()
+    }
+
+    fn hub_need(&self, content: &Content) -> Option<Vec<Stack>> {
+        Some(Progress::hub_need(self, content))
     }
 }
 

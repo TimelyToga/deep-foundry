@@ -770,6 +770,7 @@ impl Game {
             | UiAction::SelectHotbar(_)
             | UiAction::SetHotbar { .. }
             | UiAction::ClearHand
+            | UiAction::EmptyTank(_)
             | UiAction::Craft { .. }
             | UiAction::CancelCraft { .. }
             | UiAction::SetRecipe { .. }

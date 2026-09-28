@@ -5,12 +5,13 @@ pub(crate) mod building;
 pub(crate) mod character;
 pub(crate) mod guide;
 pub(crate) mod hand;
-pub(crate) mod hud;
+pub mod hud;
 pub(crate) mod inventory;
 pub(crate) mod menus;
 pub(crate) mod power;
 pub(crate) mod production;
 pub(crate) mod research;
+pub mod tank;
 
 use crate::action::{UiAction, WindowKind};
 use crate::crafting::Stock;
@@ -75,6 +76,8 @@ pub(crate) fn show_all(cx: &mut Cx, st: &mut UiState) {
             }
             if cx.model.state == GameState::Paused {
                 menus::pause_menu(cx, st);
+            } else {
+                tank::confirm_empty(cx, st);
             }
         }
     }

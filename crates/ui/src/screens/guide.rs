@@ -51,7 +51,8 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
 /// The height of an open goal.
 fn open_height(ctx: &egui::Context, g: &GuideGoal, text_w: f32) -> f32 {
     let text_h = if g.text.is_empty() { 0.0 } else { widgets::text_height(ctx, &g.text, font_regular(text::BODY), text_w) };
-    PAD + TITLE_H + text_h + if g.count.is_some() { COUNT_H } else { 0.0 } + PAD
+    let waits_h = if g.waits_for.is_some() { COUNT_H } else { 0.0 };
+    PAD + TITLE_H + text_h + if g.count.is_some() { COUNT_H } else { 0.0 } + waits_h + PAD
 }
 
 fn points_text(n: u32) -> String {
@@ -115,13 +116,21 @@ fn open_goal(p: &Painter, r: Rect, g: &GuideGoal, text_w: f32) {
     widgets::raised(p, r, color::SHALLOW, color::SHALLOW_LIGHT, theme::shade(color::SHALLOW, 0.7));
     let x = r.left() + PAD;
     let title_y = r.top() + PAD + TITLE_H * 0.5 - 2.0;
-    p.text(pos2(x, title_y), Align2::LEFT_CENTER, &g.title, font_bold(text::BODY + 1.0), color::HEADING);
+    // A goal that the game cannot do yet is gray.
+    let waiting = g.waits_for.is_some();
+    let title_color = if waiting { color::TEXT_FAINT } else { color::HEADING };
+    p.text(pos2(x, title_y), Align2::LEFT_CENTER, &g.title, font_bold(text::BODY + 1.0), title_color);
     if g.reward_points > 0 {
         p.text(pos2(r.right() - PAD, title_y), Align2::RIGHT_CENTER, points_text(g.reward_points), font_regular(text::SMALL), color::TEXT_DIM);
     }
     let mut y = r.top() + PAD + TITLE_H;
     if !g.text.is_empty() {
-        y = widgets::wrapped(p, pos2(x, y), &g.text, font_regular(text::BODY), color::TEXT, text_w).bottom();
+        let text_color = if waiting { color::TEXT_DIM } else { color::TEXT };
+        y = widgets::wrapped(p, pos2(x, y), &g.text, font_regular(text::BODY), text_color, text_w).bottom();
+    }
+    if let Some(w) = &g.waits_for {
+        p.text(pos2(x, y + 11.0), Align2::LEFT_CENTER, format!("Not in the game yet: this needs {w}."), font_bold(text::SMALL), color::YELLOW);
+        y += COUNT_H;
     }
     if let Some((have, need)) = g.count {
         let bar = Rect::from_min_size(pos2(x, y + 6.0), vec2(180.0, 14.0));

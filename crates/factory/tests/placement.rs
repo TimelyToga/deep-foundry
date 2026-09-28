@@ -143,7 +143,7 @@ fn remove_to_player_drops_bulk_that_does_not_fit() {
     // The player's tanks are full of clay, so the sand cannot go in.
     let clay = item(&c, "clay");
     let tanks = f.player.tanks.len() as u32;
-    f.player.insert(&c, clay, tanks * 2000);
+    f.player.insert(&c, clay, tanks * foundry_factory::inventory::PLAYER_TANK_UNITS);
     let sand0 = count_all(&sim, sand);
     let report = f.remove_to_player(id, &mut sim).unwrap();
     assert_eq!(report.taken, vec![Stack { item: ItemRef::Part(c.factory.part("test_press").unwrap()), count: 1 }]);
