@@ -195,7 +195,10 @@ fn burning(h: &mut Hood, t: &ReactTable, x: i32, y: i32, b: &Burn) -> Outcome {
         return Outcome::None;
     }
     // A burning liquid or powder moved here: its flag stayed behind.
-    set_flag(h, x, y);
+    if h.flags(x, y) & FLAG_BURNING == 0 {
+        set_flag(h, x, y);
+        h.mark_changed(x, y);
+    }
     let temp = h.temp(x, y).max(b.fire_temp);
     if temp != h.temp(x, y) {
         h.set_temp(x, y, temp);
