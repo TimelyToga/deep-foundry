@@ -1,6 +1,6 @@
 //! The update of one cell and of one chunk (technical design section 6.2).
 
-use crate::chunk::LocalRect;
+use crate::chunk::{LocalRect, MOTION_SPEED};
 use crate::hood::Hood;
 use crate::{movement, react};
 use foundry_content::Phase;
@@ -18,6 +18,38 @@ pub fn update_chunk(h: &mut Hood, work: LocalRect, left_to_right: bool) {
             }
         }
     }
+}
+
+/// The fall pass for one chunk: liquid cells in `work` that are already falling (fall speed
+/// above 0) move straight down. Rows from bottom to top. All other cells (also falling powder,
+/// to keep the cost low) wait for the normal passes.
+/// Returns true if a cell moved.
+pub fn fall_chunk(h: &mut Hood, work: LocalRect, left_to_right: bool) -> bool {
+    let mut moved = false;
+    // Only rows that may hold a falling cell (see `Chunk::falling_rows`), from the bottom up.
+    let rows_in_work = (u64::MAX >> (64 - (work.y1 - work.y0))) << work.y0;
+    let mut rows = h.center_falling_rows() & rows_in_work;
+    while rows != 0 {
+        let y = 63 - rows.leading_zeros() as i32;
+        rows &= !(1u64 << y);
+        let mut bits = h.center_row_falling(y, work.x0, work.x1);
+        if bits == 0 && work.x0 == 0 && work.x1 == 64 {
+            h.clear_center_falling_row(y);
+        }
+        while bits != 0 {
+            let x = if left_to_right { bits.trailing_zeros() } else { 63 - bits.leading_zeros() } as i32;
+            bits &= !(1u64 << x);
+            // A cell that moved into this row in this pass is already updated.
+            if h.is_updated(x, y) || h.motion(x, y) & MOTION_SPEED == 0 {
+                continue;
+            }
+            let m = h.mat(x, y);
+            if h.mats.phase[m.index()] == Phase::Liquid {
+                moved |= movement::fall_only(h, x, y, Phase::Liquid);
+            }
+        }
+    }
+    moved
 }
 
 #[inline]
