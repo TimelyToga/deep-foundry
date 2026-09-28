@@ -366,7 +366,7 @@ pub fn guide_goals() -> Vec<GuideGoal> {
         g("t0_workbench", 0, "Build a workbench", "Open the crafting menu and make a workbench from 20 wood. Place it. Hand crafting is 2 times faster near a workbench.", true, Some((1, 1)), 1),
         g("t0_research_bronze", 0, "Research Bronze", "Open the tech tree and research Bronze. It needs scans of copper ore and tin ore.", true, None, 1),
         GuideGoal {
-            waits_for: Some("heat: fire and kilns do not work yet".into()),
+            waits_for: Some("the kiln".into()),
             ..g("t0_kiln", 0, "Build a kiln", "Build a closed room from clay brick walls. Put a kiln controller in the wall.", false, Some((0, 1)), 2)
         },
         g("t0_kits", 0, "Make research kits", "A bronze research kit needs a bronze gear, a clay brick and a tin plate. Put the kits in your labs.", false, Some((6, 10)), 1),

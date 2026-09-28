@@ -7,7 +7,7 @@ use crate::crafting::cancel_count;
 use crate::format;
 use crate::item;
 use foundry_content::ItemRef;
-use crate::model::{AlertKind, DigState, GuideGoal, HoverView, UiModel};
+use crate::model::{AlertKind, DigState, HoverView, NextGoal, UiModel, next_goal};
 use crate::theme::{self, color, font, font_bold, font_regular, size, text};
 use crate::tooltip::Tip;
 use crate::widgets::{self, SlotContent, SlotLook};
@@ -442,32 +442,61 @@ const GUIDE_PAD: f32 = 10.0;
 /// Goals that the guide tracker shows.
 const GUIDE_GOALS: usize = 2;
 
-/// The height of the guide tracker: the heading, and a title line and the text for each goal.
-fn tracker_height(ctx: &egui::Context, settings: &crate::model::Settings, goals: &[&GuideGoal]) -> f32 {
+/// One entry of the guide tracker.
+struct TrackerRow {
+    title: String,
+    count: Option<(u32, u32)>,
+    /// The hint, with the player's keys.
+    text: String,
+    /// The title color: white for a goal, yellow for "what comes next".
+    color: Color32,
+}
+
+/// The rows of the guide tracker: the first open goals that the game can do. When the game can
+/// do no more goals, one row says what comes next ("Next: the kiln. It comes in a later
+/// update."), so the tracker is never empty while goals are open.
+fn tracker_rows(model: &UiModel) -> Vec<TrackerRow> {
+    let open = model.guide.iter().filter(|g| !g.done && g.waits_for.is_none()).take(GUIDE_GOALS);
+    let mut rows: Vec<TrackerRow> = open
+        .map(|g| TrackerRow { title: g.title.clone(), count: g.count, text: model.settings.with_keys(&g.text), color: color::TEXT })
+        .collect();
+    if let (true, NextGoal::Waiting(g)) = (rows.is_empty(), next_goal(&model.guide)) {
+        rows.push(TrackerRow {
+            title: "You did every goal for now".into(),
+            count: None,
+            text: g.next_text().unwrap_or_default(),
+            color: color::YELLOW,
+        });
+    }
+    rows
+}
+
+/// The height of the guide tracker: the heading, and a title line and the text for each row.
+fn tracker_height(ctx: &egui::Context, rows: &[TrackerRow]) -> f32 {
     let text_w = GUIDE_W - 2.0 * GUIDE_PAD;
     let mut h = GUIDE_PAD + 20.0;
-    for g in goals {
+    for r in rows {
         h += 22.0;
-        if !g.text.is_empty() {
-            h += widgets::text_height(ctx, &settings.with_keys(&g.text), font_regular(text::SMALL), text_w);
+        if !r.text.is_empty() {
+            h += widgets::text_height(ctx, &r.text, font_regular(text::SMALL), text_w);
         }
         h += 6.0;
     }
     h + GUIDE_PAD - 4.0
 }
 
-/// The guide tracker on the left side: the first goals that are not done. A click opens the guide.
+/// The guide tracker on the left side: the next goals, or what comes next. A click opens the
+/// guide.
 fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
     let model = cx.model;
     if model.sandbox.is_some() {
         return;
     }
-    // Goals that the game cannot do yet are only in the guide window.
-    let goals: Vec<&GuideGoal> = model.guide.iter().filter(|g| !g.done && g.waits_for.is_none()).take(GUIDE_GOALS).collect();
-    if goals.is_empty() {
+    let rows = tracker_rows(model);
+    if rows.is_empty() {
         return;
     }
-    let h = tracker_height(cx.ctx, &model.settings, &goals);
+    let h = tracker_height(cx.ctx, &rows);
     let rect = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(GUIDE_W, h));
     panel_area(cx.ctx, "guide", rect, |ui| {
         let p = ui.painter().clone();
@@ -484,18 +513,17 @@ fn guide_tracker(cx: &mut Cx, st: &mut UiState, screen: Rect, top: f32) {
         let all = format!("{}: all goals", model.settings.key("guide"));
         p.text(pos2(right, y + 8.0), Align2::RIGHT_CENTER, &all, font_regular(text::SMALL), color::TEXT_FAINT);
         y += 20.0;
-        for g in &goals {
+        for r in &rows {
             let cy = y + 10.0;
-            let count = g.count.map(|(have, need)| format!("{have} / {need}"));
+            let count = r.count.map(|(have, need)| format!("{have} / {need}"));
             let count_rect = count.as_ref().map(|c| p.text(pos2(right, cy), Align2::RIGHT_CENTER, c, font_bold(text::BODY), color::TEXT));
             let title_right = count_rect.map(|r| r.left() - 8.0).unwrap_or(right);
-            let title = p.layout_no_wrap(g.title.clone(), font_bold(text::BODY), color::TEXT);
+            let title = p.layout_no_wrap(r.title.clone(), font_bold(text::BODY), r.color);
             let clip = Rect::from_min_max(pos2(x, y), pos2(title_right, y + 22.0));
-            p.with_clip_rect(clip).galley(pos2(x, cy - title.size().y * 0.5), title, color::TEXT);
+            p.with_clip_rect(clip).galley(pos2(x, cy - title.size().y * 0.5), title, r.color);
             y += 22.0;
-            if !g.text.is_empty() {
-                let text = model.settings.with_keys(&g.text);
-                y = widgets::wrapped(&p, pos2(x, y), &text, font_regular(text::SMALL), color::TEXT_DIM, text_w).bottom();
+            if !r.text.is_empty() {
+                y = widgets::wrapped(&p, pos2(x, y), &r.text, font_regular(text::SMALL), color::TEXT_DIM, text_w).bottom();
             }
             y += 6.0;
         }

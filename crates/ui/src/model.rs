@@ -119,6 +119,37 @@ pub struct GuideGoal {
     pub waits_for: Option<String>,
 }
 
+impl GuideGoal {
+    /// For a goal that waits: "Next: the kiln. It comes in a later update."
+    pub fn next_text(&self) -> Option<String> {
+        self.waits_for.as_ref().map(|w| format!("Next: {w}. It comes in a later update."))
+    }
+}
+
+/// What the guide points to now. The HUD tracker and the guide window use it, so the player
+/// always sees the next step.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NextGoal<'a> {
+    /// The first open goal that the game can do.
+    Goal(&'a GuideGoal),
+    /// Every goal that the game can do now is done. This goal is next, but it waits for a part
+    /// of the game that is not there yet (`GuideGoal::waits_for`).
+    Waiting(&'a GuideGoal),
+    /// Every goal is done (or there are no goals).
+    AllDone,
+}
+
+/// The next step of the guide (see `NextGoal`). `goals` is in guide order.
+pub fn next_goal(goals: &[GuideGoal]) -> NextGoal<'_> {
+    if let Some(g) = goals.iter().find(|g| !g.done && g.waits_for.is_none()) {
+        return NextGoal::Goal(g);
+    }
+    match goals.iter().find(|g| !g.done) {
+        Some(g) => NextGoal::Waiting(g),
+        None => NextGoal::AllDone,
+    }
+}
+
 /// The next repair stage of the Hub, for the Hub window.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MilestoneView {
@@ -673,20 +704,31 @@ impl Settings {
         self.key(id).split(" / ").next().unwrap_or("?")
     }
 
-    /// The text with each `{key:ID}` replaced by the key of that action.
+    /// The text with each `{key:ID}` replaced by the keys of that action ("A / Left"), and each
+    /// `{key1:ID}` by its first key ("A").
     pub fn with_keys(&self, text: &str) -> String {
         let mut out = String::with_capacity(text.len());
         let mut rest = text;
-        while let Some(i) = rest.find("{key:") {
+        while let Some(i) = rest.find("{key") {
             out.push_str(&rest[..i]);
-            let after = &rest[i + 5..];
+            let tail = &rest[i..];
+            let (first, after) = if let Some(a) = tail.strip_prefix("{key:") {
+                (false, a)
+            } else if let Some(a) = tail.strip_prefix("{key1:") {
+                (true, a)
+            } else {
+                out.push_str("{key");
+                rest = &tail[4..];
+                continue;
+            };
             match after.find('}') {
                 Some(j) => {
-                    out.push_str(self.key(&after[..j]));
+                    let id = &after[..j];
+                    out.push_str(if first { self.first_key(id) } else { self.key(id) });
                     rest = &after[j + 1..];
                 }
                 None => {
-                    out.push_str(&rest[i..]);
+                    out.push_str(tail);
                     rest = "";
                 }
             }
@@ -802,4 +844,34 @@ pub fn default_key_bindings() -> Vec<KeyRow> {
 /// Make a stack.
 pub fn stack(item: ItemRef, count: u32) -> Stack {
     Stack { item, count }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_names_go_into_texts() {
+        let s = Settings { key_bindings: vec![KeyRow::new("move_left", "Walk left", "A / Left", false)], ..Default::default() };
+        assert_eq!(s.with_keys("Walk with {key:move_left} or {key1:move_left}."), "Walk with A / Left or A.");
+        assert_eq!(s.with_keys("No {keys} here, {key1:nothing}."), "No {keys} here, ?.");
+    }
+
+    #[test]
+    fn the_next_goal_is_the_first_open_goal_that_can_be_done() {
+        let goal = |id: &str, done: bool, waits: Option<&str>| GuideGoal {
+            id: id.into(),
+            title: id.into(),
+            done,
+            waits_for: waits.map(str::to_string),
+            ..Default::default()
+        };
+        let mut goals = vec![goal("a", true, None), goal("kiln", false, Some("the kiln")), goal("b", false, None)];
+        assert!(matches!(next_goal(&goals), NextGoal::Goal(g) if g.id == "b"));
+        goals[2].done = true;
+        let NextGoal::Waiting(g) = next_goal(&goals) else { panic!("the kiln waits") };
+        assert_eq!(g.next_text().unwrap(), "Next: the kiln. It comes in a later update.");
+        goals[1].done = true;
+        assert_eq!(next_goal(&goals), NextGoal::AllDone);
+    }
 }
