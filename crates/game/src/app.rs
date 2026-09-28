@@ -441,7 +441,8 @@ impl Game {
             | UiState::Alt
             | UiState::Remove
             | UiState::Tanks
-            | UiState::Campfire => {}
+            | UiState::Campfire
+            | UiState::OreLine => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {
@@ -1761,4 +1762,3 @@ fn present_mode(available: &[wgpu::PresentMode], vsync: bool) -> wgpu::PresentMo
 fn save_name(path: &Path) -> String {
     path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
 }
-
