@@ -29,6 +29,7 @@ pub mod machines;
 pub mod placement;
 pub mod progress;
 pub mod progress_link;
+pub mod steam;
 pub mod transfer;
 pub mod views;
 
