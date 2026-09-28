@@ -515,7 +515,7 @@ impl Renderer {
         let (fw, fh) = (used.x as f32, used.y as f32);
         self.particle_instances.clear();
         self.particle_instances.extend(self.particles.iter().filter_map(|p| {
-            let pos = rel(p.x as f64, p.y as f64);
+            let pos = rel(p.x, p.y);
             let inside = pos[0] >= -8.0 && pos[1] >= -8.0 && pos[0] < fw + 8.0 && pos[1] < fh + 8.0;
             inside.then_some(ParticleInstance {
                 pos,

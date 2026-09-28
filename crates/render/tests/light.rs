@@ -446,8 +446,8 @@ fn look_image() {
     for i in 0..40 {
         let f = i as f32;
         snap.particles.push(ParticleView {
-            x: 50.0 + (f * 7.3) % 40.0,
-            y: 110.0 - (f * 3.7) % 30.0,
+            x: 50.0 + ((f * 7.3) % 40.0) as f64,
+            y: 110.0 - ((f * 3.7) % 30.0) as f64,
             vx: ((f * 1.7) % 3.0) - 1.5,
             vy: -1.0 - (f % 4.0) * 0.5,
             material: stone,
@@ -455,8 +455,8 @@ fn look_image() {
             shade: (i % 8) as u8,
         });
         snap.particles.push(ParticleView {
-            x: 195.0 + (f * 5.1) % 20.0,
-            y: 140.0 - (f * 2.3) % 25.0,
+            x: 195.0 + ((f * 5.1) % 20.0) as f64,
+            y: 140.0 - ((f * 2.3) % 25.0) as f64,
             vx: ((f * 1.3) % 2.0) - 1.0,
             vy: 1.2,
             material: water,

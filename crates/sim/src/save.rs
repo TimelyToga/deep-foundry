@@ -28,7 +28,8 @@ use std::io::{self, Read, Write};
 use std::sync::Arc;
 
 const MAGIC: &[u8; 5] = b"DFSIM";
-const VERSION: u32 = 2;
+/// Version 3: particles store their cell (i32) and the place inside it (f32).
+const VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SaveError {

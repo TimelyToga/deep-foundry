@@ -28,11 +28,11 @@ pub fn throw_out(sim: &mut Simulation, robot: &Robot, aim: CellPos, at: CellPos,
     let behind = CellPos::new(if back < 0 { r.x0 - 2 } else { r.x0 + ROBOT_W + 1 }, r.y0 + 3);
     let above = CellPos::new(r.x0 + ROBOT_W / 2, r.y0 - 3);
     let (x, y, vx, vy) = if free(behind) {
-        (behind.x as f32 + 0.5, behind.y as f32 + 0.5, back as f32 * (0.8 + 0.7 * j1), -(0.8 + 0.6 * j2))
+        (behind.x as f64 + 0.5, behind.y as f64 + 0.5, back as f32 * (0.8 + 0.7 * j1), -(0.8 + 0.6 * j2))
     } else if free(above) {
-        (above.x as f32 + 0.5, above.y as f32 + 0.5, back as f32 * (0.5 + 0.5 * j1), -(1.0 + 0.5 * j2))
+        (above.x as f64 + 0.5, above.y as f64 + 0.5, back as f32 * (0.5 + 0.5 * j1), -(1.0 + 0.5 * j2))
     } else {
-        (at.x as f32 + 0.5, at.y as f32 + 0.5, 0.0, 0.0)
+        (at.x as f64 + 0.5, at.y as f64 + 0.5, 0.0, 0.0)
     };
     let spawn = Spawn { x, y, vx, vy, material, temperature, shade: (h >> 16) as u8, life: 0, flags: 0 };
     let max = sim.settings().max_particles;

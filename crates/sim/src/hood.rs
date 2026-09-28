@@ -116,8 +116,8 @@ impl<'a> Hood<'a> {
         let p = self.world_pos(sx, sy);
         let (temp, shade, life) = (self.temp(x, y), self.read_u8(x, y, |p| unsafe { addr_of!((*p).shade).cast::<u8>() }), self.life(x, y));
         self.spawns.push(Spawn {
-            x: p.x as f32 + 0.5,
-            y: p.y as f32 + 0.5,
+            x: p.x as f64 + 0.5,
+            y: p.y as f64 + 0.5,
             vx,
             vy,
             material: m,
