@@ -103,7 +103,7 @@ fn soft_limit(c: vec3<f32>) -> vec3<f32> {
     }
     let same_hue = c * (limit1(m) / m);
     let per_channel = vec3<f32>(limit1(c.r), limit1(c.g), limit1(c.b));
-    return mix(same_hue, per_channel, 0.3);
+    return mix(same_hue, per_channel, 0.15);
 }
 
 // Premultiplied sRGB color to straight linear color.
@@ -155,7 +155,8 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
         color = color * (1.0 - gas.a) + unpremultiply(gas) * lit * gas.a;
         if has_flag(FLAG_BLOOM) {
             let b = textureSampleLevel(bloom, smooth_sampler, t / (LIGHT_CELLS * 2.0) / vec2<f32>(textureDimensions(bloom)), 0.0).rgb;
-            color += b * frame.params.y;
+            // Only bright light makes a glow.
+            color += max(b - vec3<f32>(0.12), vec3<f32>(0.0)) * frame.params.y;
         }
         color = soft_limit(color);
     } else {

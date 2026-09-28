@@ -77,9 +77,9 @@ impl Default for RenderSettings {
             light_only: false,
             ambient: 0.025,
             sky_light: 1.0,
-            light_keep: 0.9,
+            light_keep: 0.87,
             light_steps: 24,
-            bloom_strength: 0.22,
+            bloom_strength: 0.3,
             shimmer_strength: 0.45,
         }
     }
