@@ -14,16 +14,18 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 - liquids: fall pass, level pass on world positions (fast settling), droplets from impact rims, viscosity, liquid settings sliders (SetSimSetting, README "Tuning liquids"), scene tests (waterfall, bowl, channel, stairs, oil, lava, mud). All 317 tests pass, water_level too.
   - Open: the liquids agent stopped before its final report. No speed numbers and no list of open items yet. A follow-up task must measure speed (flood stress case) and read commits 8969bbe..06883bd for loose ends.
 
+- play-test fixes round 1: save-menu layer bug, tanks 8 x 6,000 + "Tanks full" box, crates (8 slots, no liquids) and barrels (liquids), click/right/ctrl/shift transfers (crates/factory/src/transfer.rs), tank trash, Hub takes only needed items and gives back, first dig discovers, guide `waits_for` (11 of 22 T0 goals wait for machines), menu click tests (crates/ui/tests/menus.rs). 346 tests pass.
+  - Open: clay-brick loop (clay bricks come only from the kiln; the kiln needs 8). Lead decision: a campfire fires raw clay bricks slowly (pit firing). Goal texts describe the demo world; redo them after worldgen.
+
 ## Running (branch or worktree)
 | Work | Where | Merge notes |
 |---|---|---|
-| Play-test fixes (Opus): save-menu bug, bigger tanks, crates take bulk, Factorio transfers, tank trash, Hub take-back, dig discovers, guide goal checks | agent worktree (ac372d6) | crates/factory, crates/ui, small factory_host/app edits. Told to merge main (liquids) before its report. |
 | Character (Opus): new robot sprites (user's image skill), animations, sprite pass in crates/render, smoother movement | agent worktree | crates/game player.rs + drawing, new crates/render sprite file, assets/sprites, tools/sprites. |
 | Stutter when mining (Opus): measure sim vs main thread while digging; pointer/dig target must follow the mouse every frame | agent worktree | Small changes in crates/game; may touch app.rs, sim_thread.rs, factory_host.rs. |
 | Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
 
 ## Next
-1. Merge play-test fixes when it finishes. Then tell the user: good test point.
+1. Play-test fixes merged (tell the user: test point).
    Then launch play-test round 2 (Opus, new agent), from the user's second play-test:
    - Digging fills the tank with dirt and stone. Make digging useful: common materials (dirt, stone, sand...) are knocked loose or dropped instead of stored, ores and wanted materials are kept; the player can set keep/drop per material in the tank UI.
    - Move resources between the HUD quickbar and the tanks (both ways) without opening the inventory: drag, click and shift-click like Factorio.
