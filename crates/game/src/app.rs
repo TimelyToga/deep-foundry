@@ -421,7 +421,14 @@ impl Game {
             UiState::Research => self.ui.ui.open_window(WindowKind::Research),
             UiState::Guide => self.ui.ui.open_window(WindowKind::Guide),
             // Screens for `--screenshot`. In the window they start the normal game.
-            UiState::Building | UiState::Ghost | UiState::Hub | UiState::GhostRed | UiState::Drag | UiState::Alt | UiState::Remove => {}
+            UiState::Building
+            | UiState::Ghost
+            | UiState::Hub
+            | UiState::GhostRed
+            | UiState::Drag
+            | UiState::Alt
+            | UiState::Remove
+            | UiState::Tanks => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {
@@ -909,6 +916,7 @@ impl Game {
             | UiAction::SelectHotbar(_)
             | UiAction::SetHotbar { .. }
             | UiAction::ClearHand
+            | UiAction::EmptyTank(_)
             | UiAction::Craft { .. }
             | UiAction::CancelCraft { .. }
             | UiAction::SetRecipe { .. }
@@ -1112,7 +1120,10 @@ impl Game {
 
         // 2. The UI.
         self.update_model(frame_start);
-        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let mut raw_input = self.egui_state.take_egui_input(&self.window);
+        if let Some(s) = self.smoke.as_mut() {
+            raw_input.events.append(&mut s.events);
+        }
         let ppp = self.egui_ctx.pixels_per_point();
         let brush_pos = egui::pos2((self.mouse.x as f32) / ppp, (self.mouse.y as f32) / ppp);
         let brush_radius = (self.ui.brush_radius() as f32 + 0.5) * self.controls.camera.zoom / ppp;
@@ -1380,6 +1391,26 @@ impl Game {
 
     /// One normal-mode step of the smoke test.
     fn smoke_normal(&mut self, step: &Step) -> Result<Option<Step>, String> {
+        // Steps that use the UI as the player does: keys and button clicks.
+        let input = match *step {
+            Step::Key(key) => Some(crate::smoke::key_events(key)),
+            Step::Click(label) | Step::ClickIfShown(label) => match foundry_ui::FoundryUi::button_rect(&self.egui_ctx, label) {
+                Some(r) => Some(crate::smoke::click_events(r.center())),
+                // Not shown yet: try again in the next frame (or go on).
+                None => return Ok((!matches!(step, Step::ClickIfShown(_))).then(|| step.clone())),
+            },
+            Step::SaveName(name) => {
+                self.ui.ui.set_save_name(name);
+                return Ok(None);
+            }
+            _ => None,
+        };
+        if let Some(events) = input {
+            if let Some(s) = self.smoke.as_mut() {
+                s.events.extend(events);
+            }
+            return Ok(None);
+        }
         let content = self.content.clone();
         let near_clay = self.nearest_cell(content.material("clay"));
         let open_kind = self.ui.model.building.as_ref().map(|b| b.kind);
@@ -1515,6 +1546,23 @@ impl Game {
             Step::WindowOf(id) => {
                 let kind = content.factory.building(id).ok_or(format!("unknown building {id}"))?;
                 open_kind == Some(kind)
+            }
+            Step::FillTanks(id, room) => {
+                let material = content.material(id).ok_or(format!("unknown material {id}"))?;
+                cmds.push(FactoryCommand::FillTanks { material, room }.into());
+                true
+            }
+            Step::ClickTankOf(id) => {
+                let item = content.item(id).ok_or(format!("unknown item {id}"))?;
+                let tank = n.frame.inventory.tanks.iter().position(|t| t.item == Some(item)).ok_or(format!("no {id} in the tanks"))?;
+                let click = UiAction::ClickSlot { slot: foundry_ui::SlotRef::Tank(tank), click: foundry_ui::SlotClick::LEFT };
+                n.action(&click, &mut cmds);
+                true
+            }
+            Step::InBuilding(id) => {
+                let item = content.item(id).ok_or(format!("unknown item {id}"))?;
+                let inv = n.frame.building.as_ref().and_then(|b| b.inventory.as_ref());
+                inv.is_some_and(|inv| inv.places().iter().any(|p| p.item == Some(item) && p.count > 0))
             }
             _ => true,
         };

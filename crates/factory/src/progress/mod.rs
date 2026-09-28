@@ -523,6 +523,42 @@ impl Progress {
         content.factory.milestones.iter().find(|m| m.stage > self.stage)
     }
 
+    /// What the Hub repair stages still need: the rest of the next stage and all of each later
+    /// stage, one stack per item. The Hub takes no more than this.
+    pub fn hub_need(&self, content: &Content) -> Vec<Stack> {
+        let next = self.next_milestone(content).map(|m| m.stage);
+        let mut out: Vec<Stack> = vec![];
+        for m in content.factory.milestones.iter().filter(|m| m.stage > self.stage) {
+            for (i, s) in m.deliver.iter().enumerate() {
+                let delivered = if Some(m.stage) == next { self.delivered.get(i).copied().unwrap_or(0) } else { 0 };
+                let n = s.count.saturating_sub(delivered);
+                match out.iter_mut().find(|x| x.item == s.item) {
+                    Some(x) => x.count += n,
+                    None => out.push(Stack { item: s.item, count: n }),
+                }
+            }
+        }
+        out
+    }
+
+    /// The Hub repair stages after the next one, with nothing delivered yet (for the Hub window).
+    pub fn later_milestone_views(&self, content: &Content) -> Vec<MilestoneView> {
+        let next = self.next_milestone(content).map_or(u8::MAX, |m| m.stage);
+        content
+            .factory
+            .milestones
+            .iter()
+            .filter(|m| m.stage > next)
+            .map(|m| MilestoneView {
+                stage: m.stage,
+                name: m.name.clone(),
+                description: m.description.clone(),
+                unlocks_tier: m.unlocks_tier,
+                items: m.deliver.iter().map(|s| DeliveryView { item: s.item, need: s.count, delivered: 0 }).collect(),
+            })
+            .collect()
+    }
+
     /// How many more of this item the next Hub stage takes.
     pub fn hub_wants(&self, content: &Content, item: ItemRef) -> u32 {
         let Some(m) = self.next_milestone(content) else { return 0 };

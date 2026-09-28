@@ -30,6 +30,8 @@ pub use action::{ClickButton, GameMode, SettingChange, SlotClick, SlotRef, UiAct
 pub use foundry_content::{ItemRef, Stack};
 pub use item::{CraftGroup, ItemKind, Maker};
 pub use model::*;
+pub use screens::hud::TANKS_FULL;
+pub use screens::tank::EMPTY_CONFIRM_UNITS;
 
 use crafting::Stock;
 use foundry_core::BuildingId;
@@ -91,6 +93,8 @@ pub(crate) struct UiState {
     pub last_power: Option<u32>,
     /// The main menu background, built once for each screen size.
     pub menu_background: Option<(egui::Rect, std::sync::Arc<egui::Mesh>)>,
+    /// The yes/no question to empty this robot tank is open.
+    pub confirm_empty: Option<usize>,
 }
 
 impl Default for UiState {
@@ -108,6 +112,7 @@ impl Default for UiState {
             last_building: None,
             last_power: None,
             menu_background: None,
+            confirm_empty: None,
         }
     }
 }
@@ -264,6 +269,9 @@ impl FoundryUi {
     pub fn open_menu(&mut self, page: MenuPage) {
         self.state.menu.page = page;
         self.state.menu.confirm = None;
+        if page == MenuPage::Save && self.state.menu.save_name.is_empty() {
+            self.state.menu.save_name = "My factory".into();
+        }
     }
 
     /// Open the recipe selector of the building window (for tests and previews).
@@ -288,11 +296,26 @@ impl FoundryUi {
         self.state.menu.confirm = Some(Confirm::Delete(save_id.to_string()));
     }
 
+    /// Ask the yes/no question to empty robot tank `i` (for tests and previews).
+    pub fn confirm_empty_tank(&mut self, i: usize) {
+        self.state.confirm_empty = Some(i);
+    }
+
+    /// Set the name in the save dialog (for tests and the smoke test).
+    pub fn set_save_name(&mut self, name: &str) {
+        self.state.menu.save_name = name.to_string();
+    }
+
     /// Ask for a yes/no confirmation to overwrite a save (for tests and previews).
     pub fn confirm_overwrite(&mut self, name: &str) {
         self.state.menu.page = MenuPage::Save;
         self.state.menu.save_name = name.to_string();
         self.state.menu.confirm = Some(Confirm::Overwrite(name.to_string()));
+    }
+
+    /// Where the button with this label was drawn in the last frame (for the smoke test).
+    pub fn button_rect(ctx: &egui::Context, label: &str) -> Option<egui::Rect> {
+        widgets::button_rect(ctx, label)
     }
 
     /// True if the mouse is over the UI, so the game should not use the click for the world.
@@ -410,7 +433,9 @@ impl FoundryUi {
             }
             GameState::Playing => {
                 if esc {
-                    if self.state.picker_open {
+                    if self.state.confirm_empty.is_some() {
+                        self.state.confirm_empty = None;
+                    } else if self.state.picker_open {
                         self.state.picker_open = false;
                     } else if let Some(top) = self.state.stack.last().copied() {
                         self.close(top);

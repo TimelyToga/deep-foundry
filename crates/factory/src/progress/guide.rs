@@ -46,11 +46,16 @@ pub struct GoalDef {
     /// Discovery points the player gets when the goal is done.
     #[serde(default)]
     pub reward_points: u32,
+    /// The game cannot do this goal yet: what it still needs, for example "heat (the kiln does
+    /// not work yet)". The guide shows the goal gray with this text, and the HUD skips it.
+    /// Remove it when the game can do the goal (a test checks that such goals can be done).
+    #[serde(default)]
+    pub waits_for: Option<String>,
 }
 
 /// What the guide needs to know from the game. The game implements it.
 pub trait GuideState {
-    /// How many of this item the player has (inventory and material tank).
+    /// How many of this item the player has (inventory, material tanks, and storage).
     fn item_count(&self, item: ItemRef) -> u32;
     /// How many buildings of this type are placed in the world.
     fn building_count(&self, kind: BuildingKindId) -> u32;
@@ -67,6 +72,8 @@ pub struct GoalView {
     /// (have, need) for a goal that counts items or buildings.
     pub count: Option<(u32, u32)>,
     pub reward_points: u32,
+    /// See [`GoalDef::waits_for`].
+    pub waits_for: Option<String>,
 }
 
 /// All guide goals.
@@ -224,6 +231,7 @@ impl Progress {
                     done,
                     count,
                     reward_points: g.reward_points,
+                    waits_for: g.waits_for.clone(),
                 }
             })
             .collect()
