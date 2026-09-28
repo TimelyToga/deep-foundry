@@ -997,7 +997,6 @@ impl Game {
         let evicted = self.renderer.apply_snapshot(&snapshot, &self.controls.camera);
         if let Some(p) = self.perf.as_mut() {
             p.uploads += self.renderer.stats().uploaded_chunks;
-            p.ticks_per_frame[(snapshot.tick.saturating_sub(self.tick) as usize).min(2)] += 1;
         }
         for image in snapshot.chunks.drain(..) {
             self.cells.insert(image.pos, image.texels);
@@ -1111,6 +1110,7 @@ impl Game {
 
         // 1. The newest snapshot.
         self.perf_mark(true);
+        let tick_before = self.tick;
         self.take_snapshot(frame_start);
         // In the normal mode the camera follows the robot. It moves before the UI, so the shapes
         // over the world (robot, ghost) use the same camera as the world.
@@ -1118,6 +1118,11 @@ impl Game {
             self.follow_robot(dt, frame_start);
         }
         self.dig_script_step(frame_start);
+        if let Some(p) = self.perf.as_mut() {
+            let n = self.world.as_ref().and_then(|w| w.normal.as_ref());
+            let robot = n.and_then(|n| Some((n.robot_pos(frame_start)?.0, n.frame.robot?.vel.0)));
+            p.frame_data(self.tick.saturating_sub(tick_before), robot, dt_raw);
+        }
         self.perf_mark(false);
 
         // 2. The UI.

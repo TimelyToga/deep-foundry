@@ -11,7 +11,7 @@ use crate::player::{ROBOT_H, ROBOT_W, Robot};
 use crate::tools;
 use egui::{Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, StrokeKind, pos2, vec2};
 use foundry_content::Content;
-use foundry_core::CellRect;
+use foundry_core::{CellPos, CellRect};
 use foundry_factory::Status;
 use foundry_render::Camera;
 use foundry_ui::icons::IconAtlas;
@@ -66,28 +66,35 @@ pub fn draw(painter: &Painter, frame: &FactoryFrame, s: &Scene) {
     for (r, text) in &frame.labels {
         label(painter, &v, *r, text);
     }
+    let b = s.build;
+    let aim = aim_point(frame, b.mouse);
     if let Some(r) = &frame.robot {
         let at = s.robot_at.unwrap_or((r.left as f32 + r.rem.0, r.top as f32 + r.rem.1));
-        robot(painter, &v, r, at, frame);
+        robot(painter, &v, r, at, frame, aim);
     }
     construct_draw::draw_over(painter, &v, frame, s.build, s.content, s.atlas);
-    let b = s.build;
     // The dig circle, but not on a building (a click there opens it).
     let on_building = |m: foundry_core::CellPos| frame.hover.as_ref().is_some_and(|h| h.rect.contains(m));
-    if !b.grid
-        && !b.removing
-        && let (Some(mouse), Some(r)) = (b.mouse, &frame.robot)
-        && !on_building(mouse)
-    {
+    if !b.grid && !b.removing && frame.robot.is_some() && b.mouse.is_some_and(|m| !on_building(m)) {
         // The dig circle at the aim point (moved into reach).
-        let aim = tools::clamp_aim(r, mouse);
         let c = v.pos(aim.x as f64 + 0.5, aim.y as f64 + 0.5);
         let radius = (tools::DIG_RADIUS as f32 + 0.5) * v.scale();
         painter.circle_stroke(c, radius, Stroke::new(1.0, Color32::from_white_alpha(110)));
     }
 }
 
-fn robot(p: &Painter, v: &View, r: &Robot, at: (f32, f32), frame: &FactoryFrame) {
+/// The aim point of the tools to draw: the mouse cell of this frame, moved into reach of the
+/// robot. So the dig circle and the end of the tool beam follow the mouse in every frame, also
+/// when the next tick is late. With no mouse over the world (`mouse` is `None`): the aim point
+/// that the last tick used.
+pub fn aim_point(frame: &FactoryFrame, mouse: Option<CellPos>) -> CellPos {
+    match (mouse, &frame.robot) {
+        (Some(m), Some(r)) => tools::clamp_aim(r, m),
+        _ => frame.aim,
+    }
+}
+
+fn robot(p: &Painter, v: &View, r: &Robot, at: (f32, f32), frame: &FactoryFrame, aim: CellPos) {
     let (x, y) = (at.0 as f64, at.1 as f64);
     let (w, h) = (ROBOT_W as f64, ROBOT_H as f64);
     let outline = Stroke::new(1.0, Color32::from_rgb(30, 26, 22));
@@ -110,7 +117,7 @@ fn robot(p: &Painter, v: &View, r: &Robot, at: (f32, f32), frame: &FactoryFrame)
     // The tool beam while digging or spraying.
     if frame.digging || frame.spraying {
         let from = v.pos(x + w * 0.5 + r.facing as f64 * 3.0, y + 7.0);
-        let to = v.pos(frame.aim.x as f64 + 0.5, frame.aim.y as f64 + 0.5);
+        let to = v.pos(aim.x as f64 + 0.5, aim.y as f64 + 0.5);
         let c = if frame.digging { Color32::from_rgba_unmultiplied(255, 220, 120, 190) } else { Color32::from_rgba_unmultiplied(140, 200, 255, 190) };
         p.line_segment([from, to], Stroke::new((s * 0.6).clamp(1.0, 3.0), c));
         p.circle_filled(to, (s * 1.5).clamp(2.0, 6.0), c);
@@ -139,3 +146,7 @@ fn status_mark(p: &Painter, v: &View, r: foundry_core::CellRect, status: Status)
     p.circle(c, radius, color, Stroke::new(1.5, Color32::from_black_alpha(200)));
     p.text(c, Align2::CENTER_CENTER, "!", FontId::proportional(radius * 1.5), Color32::from_rgb(30, 20, 10));
 }
+
+#[cfg(test)]
+#[path = "overlay_tests.rs"]
+mod tests;
