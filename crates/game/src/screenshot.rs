@@ -202,7 +202,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             | UiState::Remove
             | UiState::Tanks
             | UiState::Campfire
-            | UiState::Kiln => {
+            | UiState::Kiln
+            | UiState::KilnHole => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
@@ -547,7 +548,7 @@ fn setup_normal_screen(
             }
             give(h, mat("wood"), 40);
         }
-        UiState::Kiln => {
+        UiState::Kiln | UiState::KilnHole => {
             // A kiln right of the robot: a room of 3 x 2 tiles with clay brick walls, the
             // controller in the left wall and a hatch in the roof. Charcoal burns in it and it
             // fires raw clay bricks.
@@ -565,7 +566,8 @@ fn setup_normal_screen(
                 for y in 0..4 {
                     for x in 0..5 {
                         let ring = x == 0 || x == 4 || y == 0 || y == 3;
-                        if ring {
+                        let hole = state == UiState::KilnHole && (x, y) == (4, 1);
+                        if ring && !hole {
                             let _ = h.factory.place(kind("clay_brick_wall"), t(x, y), 0, false, sim);
                         }
                     }
