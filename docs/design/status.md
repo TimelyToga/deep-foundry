@@ -32,7 +32,7 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 | Room machines (Claude Opus): kiln, coke oven, blast furnace; started from 8acbcf2 | `.claude/worktrees/agent-ab9bfa3218318ff88` | new files under crates/factory rooms + ui screen. |
 | Codex agents (started by the user): automation/hot-metal, automation/ore-processing, automation/steam, automation/integration | `../sand-game-*` worktrees | The user runs these. automation/integration already merged lead/wave-b at be09994. |
 
-- A second stutter fix is running in another Claude session started by the user (not the lead's). It may be the uncommitted robot_sprite.rs change in the main checkout; do not touch that file.
+- The user's second stutter session is merged (fix/walk-stutter, see "walk stutter fix" above). It changed only player.rs, player_tests.rs and this file.
 
 Rule from the user: the lead does not start agents or workflows. Write task text for the user instead.
 
