@@ -323,7 +323,8 @@ impl Game {
         config.alpha_mode = caps.alpha_modes[0];
         surface.configure(&device, &config);
 
-        let renderer = Renderer::new(&device, &queue, format, &content);
+        let mut renderer = Renderer::new(&device, &queue, format, &content);
+        render_setup::load_robot_sheet(&mut renderer);
 
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -1257,14 +1258,10 @@ impl Game {
 
         let has_world = self.world.is_some();
         if has_world {
-            // The robot's lamp (normal mode), where the robot is drawn.
+            // The robot's sprite and lamp (normal mode), where the robot is drawn between ticks.
             let normal = self.world.as_ref().and_then(|w| w.normal.as_ref());
-            let lamp = normal.and_then(|n| {
-                let (x, y) = n.robot_pos(frame_start)?;
-                let facing = n.frame.robot.as_ref()?.facing;
-                Some(render_setup::robot_lamp((x + crate::player::ROBOT_W as f32 * 0.5, y + crate::player::ROBOT_H as f32 * 0.5), facing))
-            });
-            self.renderer.set_lights(lamp.as_slice());
+            let robot = normal.and_then(|n| Some((n.frame.robot.as_ref()?, n.robot_pos(frame_start)?)));
+            render_setup::show_robot(&mut self.renderer, robot, self.tick);
             self.renderer.set_time(frame_start.duration_since(self.timing.start).as_secs_f64());
             self.renderer.render(&mut encoder, &target, &self.controls.camera);
         }

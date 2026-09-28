@@ -80,6 +80,22 @@ pub(crate) struct LightInstance {
     pub color: [f32; 4],
 }
 
+/// Instance data for one sprite. Keep it the same as `SpriteInstance` in sprite.wgsl.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
+pub(crate) struct SpriteInstance {
+    /// World texture position of the pivot (cells from the texture origin).
+    pub pos: [f32; 2],
+    /// Source rectangle in the sheet: x, y, width, height in texels.
+    pub src: [u32; 4],
+    /// The pivot in sheet texels from the top-left corner of the source rectangle.
+    pub pivot: [f32; 2],
+    /// Cells per sheet texel, and the angle in radians.
+    pub scale_angle: [f32; 2],
+    /// 1: mirrored.
+    pub flip: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +107,6 @@ mod tests {
         assert_eq!(std::mem::size_of::<ChunkInstance>(), 16);
         assert_eq!(std::mem::size_of::<ParticleInstance>(), 24);
         assert_eq!(std::mem::size_of::<LightInstance>(), 32);
+        assert_eq!(std::mem::size_of::<SpriteInstance>(), 44);
     }
 }

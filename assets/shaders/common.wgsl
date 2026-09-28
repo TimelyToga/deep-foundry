@@ -112,3 +112,37 @@ fn hash21(p: vec2<f32>) -> f32 {
     let r = q + dot(q, q.yx + 33.33);
     return fract((r.x + r.y) * r.x);
 }
+
+// Texture position in the light textures for world texel position `t`.
+fn light_uv(t: vec2<f32>) -> vec2<f32> {
+    return t / LIGHT_CELLS / frame.light_tex_size;
+}
+
+// The ambient light at world row `world_y`. A little more near the surface, so that the ground
+// there still shows its shape.
+fn ambient_at(world_y: f32) -> vec3<f32> {
+    let near_surface = 1.0 - smoothstep(frame.surface_y, frame.surface_y + 500.0, world_y);
+    return frame.ambient.rgb * (1.0 + 2.0 * near_surface);
+}
+
+// One value that goes smoothly toward 1 above `knee` instead of being cut off.
+fn limit1(x: f32) -> f32 {
+    let knee = 0.7;
+    if x <= knee {
+        return x;
+    }
+    return knee + (1.0 - knee) * (1.0 - exp(-(x - knee) / (1.0 - knee)));
+}
+
+// Bright colors go smoothly toward 1 instead of being cut off. Mostly the color keeps its hue
+// (all channels get the same scale); a small part goes toward white, as in very bright light.
+fn soft_limit(c: vec3<f32>) -> vec3<f32> {
+    let m = max(max(c.r, c.g), c.b);
+    if m <= 0.7 {
+        return c;
+    }
+    let same_hue = c * (limit1(m) / m);
+    let per_channel = vec3<f32>(limit1(c.r), limit1(c.g), limit1(c.b));
+    return mix(same_hue, per_channel, 0.15);
+}
+

@@ -1,8 +1,9 @@
 //! Render settings of the game: where the surface is (for the sky light), the robot's lamp, and
 //! the debug views (keys F4 to F6, the Debug window, and `--view` for screenshots).
 
+use crate::player::{ROBOT_H, ROBOT_W, Robot};
 use foundry_core::CHUNK_SIZE;
-use foundry_render::{PointLight, RenderSettings};
+use foundry_render::{PointLight, RenderSettings, Renderer};
 use glam::DVec2;
 
 /// The row of the ground surface (about), for the sky light and the sky color.
@@ -10,6 +11,39 @@ use glam::DVec2;
 /// The demo box world (`--world`) has its ground at 55% of its height.
 pub fn surface_level(world_cells: (i32, i32)) -> i32 {
     if world_cells.0 == 0 { foundry_sim::DEFAULT_SKY_CHUNKS * CHUNK_SIZE } else { world_cells.1 * 55 / 100 }
+}
+
+/// Give the renderer the robot's sprite sheet (`assets/sprites/robot.txt`).
+pub fn load_robot_sheet(renderer: &mut Renderer) {
+    let sheet = crate::robot_sprite::RobotSheet::load();
+    renderer.set_sprite_sheet(&sheet.color, &sheet.emission, sheet.width, sheet.height);
+}
+
+/// Draw the robot this frame: its sprite and its lamp. `at` is the drawn top-left corner of its
+/// body (between two ticks). `None`: no robot (the sandbox).
+pub fn show_robot(renderer: &mut Renderer, robot: Option<(&Robot, (f32, f32))>, tick: u64) {
+    match robot {
+        Some((r, at)) => {
+            let center = (at.0 + ROBOT_W as f32 * 0.5, at.1 + ROBOT_H as f32 * 0.5);
+            let lamp = robot_lamp(center, r.facing);
+            if r.jetting {
+                // The jetpack flame lights the ground below the robot.
+                let flame = PointLight {
+                    pos: DVec2::new(center.0 as f64 - r.facing as f64 * 5.0, at.1 as f64 + ROBOT_H as f64),
+                    radius: 5.0,
+                    color: [0.9, 0.45, 0.12],
+                };
+                renderer.set_lights(&[lamp, flame]);
+            } else {
+                renderer.set_lights(&[lamp]);
+            }
+            renderer.set_sprites(&[crate::robot_sprite::robot_sprite(r, at, tick)]);
+        }
+        None => {
+            renderer.set_lights(&[]);
+            renderer.set_sprites(&[]);
+        }
+    }
 }
 
 /// The robot's lamp: a warm light a little in front of its head.

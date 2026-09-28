@@ -1,11 +1,12 @@
 //! The `Renderer`: GPU resources for the world and the order of the passes.
 
 use crate::camera::Camera;
-use crate::frame::{ChunkInstance, FrameUniforms, LightInstance, ParticleInstance, flags};
+use crate::frame::{ChunkInstance, FrameUniforms, LightInstance, ParticleInstance, SpriteInstance, flags};
 use crate::layers::LayerMap;
 use crate::palette::{self, GLOW_LUT_SIZE, SHADES};
 use crate::passes::composite::CompositePass;
 use crate::passes::light::LightPass;
+use crate::passes::sprite::SpritePass;
 use crate::passes::world::{WorldInputs, WorldPass};
 use crate::shaders;
 use crate::sky::SkyColumns;
@@ -96,6 +97,25 @@ pub struct PointLight {
     pub color: [f32; 3],
 }
 
+/// A picture from the sprite sheet (see `Renderer::set_sprite_sheet`), drawn over the world and
+/// lit like the cells around it. For example the robot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sprite {
+    /// World position of the pivot, in cells.
+    pub pos: DVec2,
+    /// Source rectangle in the sheet: x, y, width, height in sheet pixels.
+    pub src: [u32; 4],
+    /// The pivot in sheet pixels from the top-left corner of `src`. The sprite turns and mirrors
+    /// around it.
+    pub pivot: [f32; 2],
+    /// Cells for each sheet pixel.
+    pub scale: f32,
+    /// Angle in radians, clockwise on the screen.
+    pub angle: f32,
+    /// Mirror left and right.
+    pub flip_x: bool,
+}
+
 /// Numbers about the renderer, for the stats panel.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderStats {
@@ -134,6 +154,7 @@ pub struct Renderer {
     world_pass: WorldPass,
     light_pass: LightPass,
     composite_pass: CompositePass,
+    sprite_pass: SpritePass,
 
     /// Reused staging memory for chunk uploads.
     belt: wgpu::util::StagingBelt,
@@ -145,6 +166,8 @@ pub struct Renderer {
     /// The particles of the last snapshot.
     particles: Vec<ParticleView>,
     lights: Vec<PointLight>,
+    sprites: Vec<Sprite>,
+    sprite_instances: Vec<SpriteInstance>,
     settings: RenderSettings,
     surface_y: i32,
     world_cells: (i32, i32),
@@ -276,6 +299,7 @@ impl Renderer {
         );
         let light_pass = LightPass::new(device, &frame_layout, dir);
         let composite_pass = CompositePass::new(device, &frame_layout, target_format, dir);
+        let sprite_pass = SpritePass::new(device, queue, &frame_layout, target_format, dir);
 
         Self {
             device: device.clone(),
@@ -292,6 +316,7 @@ impl Renderer {
             world_pass,
             light_pass,
             composite_pass,
+            sprite_pass,
             // 4 MiB holds 128 chunks.
             belt: wgpu::util::StagingBelt::new(device.clone(), 4 << 20),
             instances: Vec::with_capacity(capacity as usize),
@@ -300,6 +325,8 @@ impl Renderer {
             sky_entry: Vec::new(),
             particles: Vec::new(),
             lights: Vec::new(),
+            sprites: Vec::new(),
+            sprite_instances: Vec::new(),
             settings: RenderSettings::default(),
             surface_y: 0,
             world_cells: (0, 0),
@@ -335,6 +362,22 @@ impl Renderer {
     pub fn set_lights(&mut self, lights: &[PointLight]) {
         self.lights.clear();
         self.lights.extend_from_slice(lights);
+    }
+
+    /// The sprite sheet: `color` and `emission` are RGBA8 pixels (sRGB, straight alpha), row by
+    /// row, `width` x `height` each, with the same layout. `emission` has the parts that give
+    /// light (they show also in the dark); the rest of it is transparent.
+    pub fn set_sprite_sheet(&mut self, color: &[u8], emission: &[u8], width: u32, height: u32) {
+        self.sprite_pass.set_sheet(&self.device, &self.queue, color, emission, width, height);
+        if let Some(t) = &self.targets {
+            self.sprite_pass.set_targets(&self.device, t);
+        }
+    }
+
+    /// The sprites of the next frames, drawn in this order.
+    pub fn set_sprites(&mut self, sprites: &[Sprite]) {
+        self.sprites.clear();
+        self.sprites.extend_from_slice(sprites);
     }
 
     /// The most chunks the GPU can keep.
@@ -504,6 +547,16 @@ impl Renderer {
         }));
         let particle_count = self.world_pass.write_particles(&self.device, &self.queue, &self.particle_instances);
 
+        self.sprite_instances.clear();
+        self.sprite_instances.extend(self.sprites.iter().map(|s| SpriteInstance {
+            pos: rel(s.pos.x, s.pos.y),
+            src: s.src,
+            pivot: s.pivot,
+            scale_angle: [s.scale, s.angle],
+            flip: s.flip_x as u32,
+        }));
+        let sprite_count = self.sprite_pass.write(&self.device, &self.queue, &self.sprite_instances);
+
         let mut light_count = 0;
         if lighting {
             self.light_instances.clear();
@@ -573,6 +626,8 @@ impl Renderer {
         }
         // 3. Composite pass into the target.
         self.composite_pass.draw(encoder, target, &self.frame_bind_group);
+        // 4. Sprites over the world.
+        self.sprite_pass.draw(encoder, target, &self.frame_bind_group, sprite_count);
 
         self.stats.drawn_chunks = chunk_count;
         self.stats.drawn_particles = particle_count;
@@ -589,6 +644,7 @@ impl Renderer {
         let targets = Targets::new(&self.device, needed.max(old), self.max_texture_side);
         self.light_pass.set_targets(&self.device, &targets);
         self.composite_pass.set_targets(&self.device, &targets);
+        self.sprite_pass.set_targets(&self.device, &targets);
         self.targets = Some(targets);
     }
 }

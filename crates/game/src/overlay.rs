@@ -1,15 +1,16 @@
 //! Shapes drawn over the world in the normal mode, with the egui painter of the background layer
-//! (under the UI windows): the robot, the dig circle, a status icon over each building that does
-//! not work, and the construction shapes (`construct_draw.rs`).
+//! (under the UI windows): the robot's tool beam, the dig circle, a status icon over each building
+//! that does not work, and the construction shapes (`construct_draw.rs`).
 //!
-//! The world renderer does not change. Buildings are body cells, so the renderer draws them.
+//! The renderer draws the robot itself (a sprite, see `robot_sprite.rs`). Buildings are body
+//! cells, so the renderer draws them too.
 
 use crate::construct::BuildView;
 use crate::construct_draw;
 use crate::factory_host::FactoryFrame;
-use crate::player::{ROBOT_H, ROBOT_W, Robot};
+use crate::player::Robot;
 use crate::tools;
-use egui::{Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, StrokeKind, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, pos2, vec2};
 use foundry_content::Content;
 use foundry_core::CellRect;
 use foundry_factory::Status;
@@ -87,29 +88,13 @@ pub fn draw(painter: &Painter, frame: &FactoryFrame, s: &Scene) {
     }
 }
 
+/// The robot's tool beam while digging or spraying, from the tip of the drill to the aim point.
+/// The renderer draws the robot itself.
 fn robot(p: &Painter, v: &View, r: &Robot, at: (f32, f32), frame: &FactoryFrame) {
-    let (x, y) = (at.0 as f64, at.1 as f64);
-    let (w, h) = (ROBOT_W as f64, ROBOT_H as f64);
-    let outline = Stroke::new(1.0, Color32::from_rgb(30, 26, 22));
     let s = v.scale();
-    let round = CornerRadius::same((s * 1.2).min(6.0) as u8);
-    // Legs: a walking robot moves them.
-    let step = if r.on_ground && r.vel.0.abs() > 0.1 { ((frame.tick / 6) % 2) as f64 } else { 0.5 };
-    let leg = Color32::from_rgb(70, 70, 78);
-    p.rect(v.rect(x + 1.0, y + h - 4.0, x + 3.0, y + h - step), CornerRadius::ZERO, leg, outline, StrokeKind::Inside);
-    p.rect(v.rect(x + w - 3.0, y + h - 4.0, x + w - 1.0, y + h - (1.0 - step)), CornerRadius::ZERO, leg, outline, StrokeKind::Inside);
-    // Body and head.
-    let body = Color32::from_rgb(232, 160, 48);
-    p.rect(v.rect(x, y + 5.0, x + w, y + h - 3.5), round, body, outline, StrokeKind::Inside);
-    p.rect(v.rect(x + 1.0, y, x + w - 1.0, y + 5.5), round, Color32::from_rgb(210, 205, 196), outline, StrokeKind::Inside);
-    // The visor looks in the facing direction.
-    let (ex0, ex1) = if r.facing < 0 { (x + 1.5, x + 4.5) } else { (x + w - 4.5, x + w - 1.5) };
-    p.rect_filled(v.rect(ex0, y + 1.5, ex1, y + 3.5), CornerRadius::ZERO, Color32::from_rgb(90, 220, 255));
-    // A band on the body.
-    p.rect_filled(v.rect(x + 1.0, y + 8.0, x + w - 1.0, y + 9.0), CornerRadius::ZERO, Color32::from_rgb(120, 70, 20));
-    // The tool beam while digging or spraying.
     if frame.digging || frame.spraying {
-        let from = v.pos(x + w * 0.5 + r.facing as f64 * 3.0, y + 7.0);
+        let tip = crate::robot_sprite::drill_tip(at, r.facing);
+        let from = v.pos(tip.x, tip.y);
         let to = v.pos(frame.aim.x as f64 + 0.5, frame.aim.y as f64 + 0.5);
         let c = if frame.digging { Color32::from_rgba_unmultiplied(255, 220, 120, 190) } else { Color32::from_rgba_unmultiplied(140, 200, 255, 190) };
         p.line_segment([from, to], Stroke::new((s * 0.6).clamp(1.0, 3.0), c));
