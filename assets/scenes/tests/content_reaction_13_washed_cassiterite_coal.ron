@@ -1,0 +1,15 @@
+// Generated content scene: reaction #13 (washed_cassiterite + coal).
+// A touches B.
+Scene(
+    note: "Reaction: washed_cassiterite + coal.",
+    legend: {
+        "#352822": (material: "washed_cassiterite", temperature: 980),
+        "#181818": "coal",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_tin", min: 1),
+        Total(material: "carbon_dioxide", min: 1),
+    ],
+)

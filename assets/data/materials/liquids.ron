@@ -13,11 +13,11 @@
         viscosity: 0.0,
         heat_capacity: 0.95,
         conductivity: 0.32,
-        boil: Some((at: 105, into: "steam")),
+        boil: Some((at: 120, into: "steam")),
         freeze: Some((at: -20, into: "ice")),
         drag_limit: 1700,
         tags: ["conductive", "soluble"],
-        note: Some("Salt water. Some salt is left behind when it boils away; the schema can only pick one result, so we keep it simple and boil fully to steam."),
+        note: Some("Salt water. Boils from 105 C into steam, and sometimes the salt stays (reactions/water_heat.ron). The boil at 120 C only catches brine that did not boil by then."),
     ),
     Material(
         id: "dirty_water",
@@ -47,7 +47,7 @@
         heat_capacity: 0.8,
         conductivity: 0.15,
         melt: Some((at: 60, into: "dirt")),
-        note: Some("Dries slowly in open air even below 60 C. That needs a time-in-air rule the schema does not have yet."),
+        note: Some("Dries into dirt at 60 C. Drying slowly in open air would be `timer: Some((ticks: 3600, into: \"dirt\", needs_air: true))`; it is left out because the liquid tests (crates/sim/src/liquid_tests.rs) expect mud to stay mud. See docs/design/requests/reactions.md."),
     ),
     Material(
         id: "heavy_oil",
@@ -135,7 +135,8 @@
         viscosity: 0.8,
         heat_capacity: 0.7,
         conductivity: 0.2,
-        note: Some("Sets into concrete after about 30 seconds. `life` is a u8 (max about 4 seconds at 60 ticks/s), so this timing is a reaction in reactions/minerals.ron instead. See requests/content-data.md."),
+        timer: Some((ticks: 1800, into: "concrete")),
+        note: Some("Sets into concrete after about 30 seconds (the timer)."),
     ),
     Material(
         id: "molten_glass",
@@ -203,7 +204,7 @@
         conductivity: 0.1,
         temperature: Some(150),
         freeze: Some((at: 105, into: "sulfur_dust")),
-        burn: Some((ignite_at: 230, fire_temp: 900, chance: 0.05, into: Some("air"), smoke: Some("sulfur_dioxide"), smoke_chance: 1.0)),
+        burn: Some((ignite_at: 230, fire_temp: 900, chance: 0.05, into: Some("air"), smoke: Some("sulfur_dioxide"), smoke_chance: 0.3)),
         tags: ["flammable", "molten"],
     ),
 ]

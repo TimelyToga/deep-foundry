@@ -93,7 +93,7 @@
         density: 1.36,
         heat_capacity: 0.24,
         conductivity: 0.03,
-        burn: Some((ignite_at: 260, fire_temp: 900, chance: 0.05, into: Some("air"), smoke: Some("sulfur_dioxide"), smoke_chance: 1.0)),
+        burn: Some((ignite_at: 260, fire_temp: 900, chance: 0.05, into: Some("air"), smoke: Some("sulfur_dioxide"), smoke_chance: 0.3, gases: [("steam", 0.2)])),
         tags: ["toxic", "flammable"],
     ),
     Material(

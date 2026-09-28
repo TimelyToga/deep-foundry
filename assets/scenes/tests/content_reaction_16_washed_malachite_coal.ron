@@ -1,0 +1,16 @@
+// Generated content scene: reaction #16 (washed_malachite + coal).
+// A touches B. The check runs after 5 ticks: the product (fire, steam or molten metal) is
+// short-lived, because the box around it is cold.
+Scene(
+    note: "Reaction: washed_malachite + coal.",
+    legend: {
+        "#2a7754": (material: "washed_malachite", temperature: 1180),
+        "#181818": "coal",
+        "#6b6a70": "stone",
+    },
+    ticks: 5,
+    checks: [
+        Total(material: "molten_copper", min: 1),
+        Total(material: "carbon_dioxide", min: 1),
+    ],
+)

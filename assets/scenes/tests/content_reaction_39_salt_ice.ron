@@ -1,0 +1,15 @@
+// Generated content scene: reaction #39 (salt + ice).
+// A touches B.
+Scene(
+    note: "Reaction: salt + ice.",
+    legend: {
+        "#f2f1ee": "salt",
+        "#cfe9f5": "ice",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "air", min: 1),
+        Total(material: "brine", min: 1),
+    ],
+)

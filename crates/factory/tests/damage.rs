@@ -100,10 +100,11 @@ fn a_hot_body_stops_a_machine() {
     f.buildings.insert(&c, id, item(&c, "sand"), 16);
     fill(&mut sim, tile_cells(at, 2, 2), mat(&c, "wood_block"), Some(250));
     run(&mut f, &mut sim, 2 * DAMAGE_PERIOD as usize);
+    // The body cools a little (heat flows into the ground and the air), but it stays too hot.
     let v = f.building_view(id).unwrap();
     assert_eq!(v.status, Status::TooHot);
-    assert_eq!(v.reason, "Too hot: 250 °C, the limit is 200 °C");
-    assert_eq!(v.temperature, 250);
+    assert!(v.temperature > 220 && v.temperature <= 250, "temperature {}", v.temperature);
+    assert_eq!(v.reason, format!("Too hot: {} °C, the limit is 200 °C", v.temperature));
     assert!(v.hit_points < 100, "slightly too hot: slow damage");
     assert!(v.hit_points > 50);
 }

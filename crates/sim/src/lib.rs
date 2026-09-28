@@ -36,9 +36,15 @@ pub use world::MemoryStats;
 pub enum SimEvent {
     /// An explosion at a cell. Task 1C (explosions) handles the queue after movement.
     Explosion { at: CellPos, strength: f32, heat: i16 },
+    /// A reaction rule fired. `index` is the index into `Content::reactions`; `at` is the cell of
+    /// input A. At most one event for each reaction in each tick (the first in the update order).
+    Reaction { index: u16, at: CellPos },
+    /// An explosion ran in this tick (for damage, sound and screen shake). `radius` is in cells.
+    /// See `explode/mod.rs` for the strength scale.
+    Exploded { at: CellPos, radius: f32, strength: f32 },
 }
 
-use chunk::{Chunk, FLAG_PARITY};
+use chunk::{Chunk, FLAG_BUILDING, FLAG_BURNING, FLAG_PARITY};
 use foundry_content::Content;
 use foundry_core::{
     CHUNK_AREA, CHUNK_SIZE, CellPos, CellRect, ChunkImage, ChunkPos, Command, MaterialId, PaintMode, Rng, SimStats,
@@ -269,6 +275,7 @@ pub struct Simulation {
     events: Vec<SimEvent>,
     react: react::ReactTable,
     particles: particles::Particles,
+    explosions: explode::Explosions,
     debug: bool,
     /// Air temperature for each row of cells (°C). Heat moves air cells toward it.
     air_temperature: Vec<i16>,
@@ -305,11 +312,13 @@ impl Simulation {
             events: Vec::new(),
             react: react::ReactTable::default(),
             particles: particles::Particles::default(),
+            explosions: explode::Explosions::default(),
             debug: false,
             air_temperature: vec![],
             settings: SimSettings::default(),
         };
         sim.react = react::ReactTable::new(&sim.content);
+        sim.explosions = explode::Explosions::new(&sim.content.materials);
         sim.air_temperature = vec![foundry_core::DEFAULT_TEMPERATURE; sim.world.height_cells() as usize];
         if config.bedrock_border && !bedrock.is_air() && config.width_chunks.is_some() {
             let (w, h) = sim.size_cells();
@@ -383,6 +392,10 @@ impl Simulation {
             Command::SetDebug(on) => self.debug = on,
             Command::SetSimSetting { key, value } => {
                 self.settings.set(&key, value);
+            }
+            Command::Explode { center, strength, heat } => {
+                // A center outside the update area waits in the queue (see `explode`).
+                self.explode(center, strength, heat);
             }
             // Handled by the thread that owns the simulation.
             Command::SaveWorld { .. } | Command::LoadWorld { .. } => {}
@@ -476,10 +489,9 @@ impl Simulation {
         self.sync_anchors();
         let t_anchors = ms(start);
         let mats = &self.content.materials;
-        // Events of the last tick (explosions) are handled first, so chains spread over ticks.
+        // Events of the last tick (explosions) run after this tick's movement, so chains spread
+        // over ticks.
         let previous = std::mem::take(&mut self.events);
-        explode::process(&mut self.world, mats, &previous, &mut self.particles, self.tick, self.seed, self.stamp);
-        let t_explode = ms(start);
         let mut spawns = vec![];
         let splash_ok = self.particles.len() < self.settings.max_particles / 2;
         let awake = schedule::movement_tick(
@@ -492,13 +504,18 @@ impl Simulation {
             &mut self.events,
             &mut spawns,
         );
+        // Each job sends a reaction once; keep only the first of each reaction for the whole tick.
+        react::dedupe_reaction_events(&mut self.events);
         for sp in spawns {
             self.particles.spawn(sp, self.settings.max_particles);
         }
         let t_move = ms(start);
-        self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp);
+        let ctx = explode::Ctx { mats, settings: &self.settings, seed: self.seed, tick: self.tick, stamp: self.stamp, pool: self.pool.as_ref() };
+        self.explosions.process(&mut self.world, &ctx, &previous, &mut self.particles, &mut self.events);
+        let t_explode = ms(start);
+        self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp, self.pool.as_ref());
         let t_particles = ms(start);
-        heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
+        heat::step(&mut self.world, mats, &self.react, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
         let t_heat = ms(start);
         let every = self.settings.unload_every_ticks as u64;
         if every > 0 && self.tick.is_multiple_of(every) {
@@ -515,9 +532,9 @@ impl Simulation {
             generated_chunks: (self.world.generated_total() - generated_before) as u32,
             sections: vec![
                 ("anchors", t_anchors),
-                ("explosions", t_explode - t_anchors),
-                ("movement", t_move - t_explode),
-                ("particles", t_particles - t_move),
+                ("movement", t_move - t_anchors),
+                ("explosions", t_explode - t_move),
+                ("particles", t_particles - t_explode),
                 ("heat", t_heat - t_particles),
                 ("memory", total - t_heat),
             ],
@@ -550,6 +567,69 @@ impl Simulation {
     /// Mutable access to the particles, for tools that spawn them.
     pub fn particles_mut(&mut self) -> &mut particles::Particles {
         &mut self.particles
+    }
+
+    /// Run an explosion now (for tools, tests and the debug brush). See `explode/mod.rs` for the
+    /// strength scale; `heat` is in °C (0: no heat). The thrown cells fly from the next tick on.
+    /// If the center is in a chunk that does not update, the explosion waits in the queue until
+    /// an anchor comes near, and this returns false.
+    pub fn explode(&mut self, center: CellPos, strength: f32, heat: i16) -> bool {
+        self.sync_anchors();
+        self.stamp += 1;
+        let ctx = explode::Ctx {
+            mats: &self.content.materials,
+            settings: &self.settings,
+            seed: self.seed,
+            tick: self.tick,
+            stamp: self.stamp,
+            pool: self.pool.as_ref(),
+        };
+        let blast = explode::Blast { at: center, strength, heat };
+        self.explosions.run_now(&mut self.world, &ctx, blast, &mut self.particles, &mut self.events)
+    }
+
+    /// Number of explosions that wait in the queue.
+    pub fn queued_explosions(&self) -> usize {
+        self.explosions.queued()
+    }
+
+    /// Add a material particle: a cell that flies from `pos` with `velocity` (cells per tick) and
+    /// becomes a cell where it lands. `temperature: None` uses the material's default temperature.
+    pub fn spawn_particle(&mut self, pos: (f32, f32), velocity: (f32, f32), material: MaterialId, temperature: Option<i16>) {
+        let mats = &self.content.materials;
+        let life = match mats.life[material.index()] {
+            Some((lo, hi)) => lo + self.paint_rng.below((hi - lo) as u32 + 1) as u8,
+            None => 0,
+        };
+        let spawn = particles::Spawn {
+            x: pos.0,
+            y: pos.1,
+            vx: velocity.0,
+            vy: velocity.1,
+            material,
+            temperature: temperature.unwrap_or(mats.temperature[material.index()]),
+            shade: self.paint_rng.next_u32() as u8,
+            life,
+            flags: 0,
+        };
+        self.particles.spawn(spawn, usize::MAX);
+    }
+
+    /// Add a visual particle (only drawn, never a cell) that lives `life` ticks. `rise`: it rises
+    /// slowly like smoke; else it falls like a spark. Returns false if there are too many.
+    pub fn spawn_visual(&mut self, pos: (f32, f32), velocity: (f32, f32), material: MaterialId, life: u8, rise: bool) -> bool {
+        let spawn = particles::Spawn {
+            x: pos.0,
+            y: pos.1,
+            vx: velocity.0,
+            vy: velocity.1,
+            material,
+            temperature: self.content.materials.temperature[material.index()],
+            shade: self.paint_rng.next_u32() as u8,
+            life,
+            flags: particles::VISUAL | if rise { particles::RISE } else { 0 },
+        };
+        self.particles.spawn(spawn, self.settings.max_particles)
     }
 
     /// The events of the last tick (explosions, ...), in a fixed order.
@@ -592,9 +672,30 @@ impl Simulation {
         c.shade[i] = shade;
         c.life[i] = life;
         c.motion[i] = 0;
-        c.flags[i] = (c.flags[i] & !FLAG_PARITY) | parity;
+        // A new cell does not burn (its life is new, and the burning state is in the life byte),
+        // and it is not part of a building (see `set_building_flag`).
+        c.flags[i] = (c.flags[i] & !(FLAG_PARITY | FLAG_BURNING | FLAG_BUILDING)) | parity;
         c.version = stamp;
         self.world.mark_dirty_around(p);
+    }
+
+    /// Mark a cell as part of a building body, or not (`FLAG_BUILDING`). Call it after
+    /// `set_cell`, which clears the mark. Does nothing outside the world.
+    pub fn set_building_flag(&mut self, p: CellPos, on: bool) {
+        let stamp = self.stamp;
+        let Some(c) = self.world.chunk_mut(p.chunk()) else { return };
+        let i = p.local_index();
+        let flags = if on { c.flags[i] | FLAG_BUILDING } else { c.flags[i] & !FLAG_BUILDING };
+        if flags != c.flags[i] {
+            c.flags[i] = flags;
+            // The renderer shows the flag: send the chunk again.
+            c.version = stamp;
+        }
+    }
+
+    /// True if the cell is marked as part of a building body (`set_building_flag`).
+    pub fn is_building_cell(&self, p: CellPos) -> bool {
+        self.world.chunk(p.chunk()).is_some_and(|c| c.flags[p.local_index()] & FLAG_BUILDING != 0)
     }
 
     /// Write a whole chunk at once (for world generation and loading). `materials` and
@@ -803,6 +904,24 @@ mod tests {
     fn sim() -> Simulation {
         let content = Arc::new(Content::load_default().unwrap());
         Simulation::new(content, SimConfig::finite(4, 4, 3))
+    }
+
+    #[test]
+    fn building_flag_is_set_and_a_new_cell_clears_it() {
+        let mut s = sim();
+        let stone = s.content().expect_material("stone");
+        let p = CellPos::new(50, 50);
+        s.set_cell(p, stone, None);
+        assert!(!s.is_building_cell(p));
+        s.set_building_flag(p, true);
+        assert!(s.is_building_cell(p));
+        let v = s.world().chunk(p.chunk()).unwrap().version;
+        s.tick();
+        assert!(s.is_building_cell(p), "a tick keeps the flag");
+        s.set_building_flag(p, true);
+        assert_eq!(s.world().chunk(p.chunk()).unwrap().version, v, "no change: no new version");
+        s.set_cell(p, MaterialId::AIR, None);
+        assert!(!s.is_building_cell(p), "a new cell is not a building cell");
     }
 
     #[test]

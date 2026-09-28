@@ -1,0 +1,22 @@
+// A hot metal bar warms along its length; a firebrick bar next to it stays cooler.
+// Picture (160 x 64): a hot stone block at 1100 °C (x 2..12, y 4..60). A copper bar (x 12..152,
+// y 14..20) and a firebrick bar (x 12..152, y 40..46) go right from the block. Air around.
+Scene(
+    note: "Heat moves far along a copper bar, but only a few cells into a firebrick bar.",
+    legend: {
+        "#ff7a3d": (material: "stone", temperature: 1100),
+        "#c87533": "copper_block",
+        "#8b3a2a": "firebrick_block",
+    },
+    ticks: 600,
+    checks: [
+        // Copper: hot near the block, and still warm 20 cells away.
+        Temperature(material: "copper_block", rect: (x: 12, y: 14, w: 4, h: 6), min: 300),
+        Temperature(material: "copper_block", rect: (x: 22, y: 14, w: 4, h: 6), min: 100),
+        Temperature(material: "copper_block", rect: (x: 32, y: 14, w: 4, h: 6), min: 35),
+        // Firebrick: warm next to the block, cool 10 cells away.
+        Temperature(material: "firebrick_block", rect: (x: 12, y: 40, w: 4, h: 6), min: 100),
+        Temperature(material: "firebrick_block", rect: (x: 22, y: 40, w: 4, h: 6), max: 30),
+        Deterministic(every: 200),
+    ],
+)

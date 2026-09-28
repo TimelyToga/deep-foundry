@@ -1,0 +1,14 @@
+// Generated content scene: melt of obsidian into lava at 1200C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "obsidian melts into lava.",
+    legend: {
+        "#141018": (material: "obsidian", temperature: 1280),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "lava", min: 1),
+    ],
+)

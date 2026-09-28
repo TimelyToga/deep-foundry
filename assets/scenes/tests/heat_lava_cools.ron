@@ -1,0 +1,15 @@
+// Lava cools into stone.
+// Picture (100 x 60): a stone floor (x 0..100, y 50..60: 1000 cells) and a block of lava on it
+// (x 30..70, y 30..50: 800 cells). Air around.
+Scene(
+    note: "Lava loses its heat to the floor and the air, and freezes into stone.",
+    legend: {
+        "#ff5a1a": "lava",
+        "#6b6a70": "stone",
+    },
+    ticks: 3000,
+    checks: [
+        Total(material: "lava", max: 100),
+        Total(material: "stone", min: 1700),
+    ],
+)

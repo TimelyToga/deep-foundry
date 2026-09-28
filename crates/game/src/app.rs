@@ -17,7 +17,7 @@
 
 use crate::args::{Args, UiState};
 use crate::controls::{CameraControl, MAX_ZOOM, Stroke};
-use crate::debug_panel::{self, DebugAction, StatsView};
+use crate::debug_panel::{self, DebugAction, PanelState, StatsView};
 use crate::demo;
 use crate::factory_host::{FactoryCommand, FactoryHost, GameCommand};
 use crate::construct::Mods;
@@ -26,6 +26,7 @@ use crate::settings::{self, SavedSettings};
 use crate::normal::NormalMode;
 use crate::overlay;
 use crate::robot_sprite::RobotLook;
+use crate::render_setup;
 use crate::saves::{self, SaveMeta};
 use crate::sim_thread::SimThread;
 use crate::smoke::{Smoke, Step};
@@ -52,6 +53,8 @@ use winit::window::{Window, WindowId};
 
 /// Extra cells around the screen that the simulation sends, so panning shows no empty chunks.
 const VIEW_MARGIN: i32 = 64;
+/// Strength (hardness scale) and heat (°C) of the debug explosion (key `DebugExplode`, sandbox).
+const DEBUG_EXPLOSION: (f32, i16) = (60.0, 1200);
 
 pub fn run(args: Args, content: Arc<Content>) -> Result<()> {
     let event_loop = EventLoop::new()?;
@@ -206,7 +209,7 @@ struct World {
     chunks: (i32, i32),
     /// Paused with the pause key (Space), not with the pause menu.
     user_paused: bool,
-    /// The chunk overlay of the debug panel is on.
+    /// The awake chunks view (F4) is on. The simulation sends debug data only then.
     overlay: bool,
     /// The normal mode (robot and factory). `None` in the sandbox mode.
     normal: Option<NormalMode>,
@@ -330,8 +333,7 @@ impl Game {
         surface.configure(&device, &config);
 
         let mut renderer = Renderer::new(&device, &queue, format, &content);
-        let robot_look = RobotLook::load();
-        renderer.set_sprite_sheet(robot_look.size.0, robot_look.size.1, &robot_look.rgba);
+        let robot_look = render_setup::load_robot_look(&mut renderer);
 
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -567,6 +569,20 @@ impl Game {
                         self.save_settings();
                         continue;
                     }
+                    Action::DebugChunks if self.playing() => {
+                        self.debug_action(DebugAction::ToggleAwakeChunks);
+                        continue;
+                    }
+                    Action::DebugHeat | Action::DebugGrid if self.playing() => {
+                        let mut r = *self.renderer.settings();
+                        if *a == Action::DebugHeat {
+                            r.heat_map = !r.heat_map;
+                        } else {
+                            r.chunk_grid = !r.chunk_grid;
+                        }
+                        self.debug_action(DebugAction::Render(r));
+                        continue;
+                    }
                     _ => continue,
                 };
                 self.ui.ui.press_key(key);
@@ -596,6 +612,13 @@ impl Game {
                 Action::BrushLarger => self.ui.set_brush_radius(self.ui.brush_radius() + 1),
                 Action::Pipette if !repeat => {
                     self.ui.sandbox_action(&UiAction::ClearHand);
+                }
+                Action::DebugExplode if !repeat => {
+                    let center = self.mouse_cell();
+                    if let Some(w) = self.world.as_ref() {
+                        let (strength, heat) = DEBUG_EXPLOSION;
+                        w.sim.send(Command::Explode { center, strength, heat });
+                    }
                 }
                 _ => {}
             }
@@ -696,6 +719,8 @@ impl Game {
     /// `normal`: the normal mode starts closer (the robot is small).
     fn reset_view(&mut self, center: DVec2, world_cells: DVec2, normal: bool) {
         self.renderer.clear_chunks();
+        self.renderer.set_surface_level(render_setup::surface_level((world_cells.x as i32, world_cells.y as i32)));
+        self.renderer.set_lights(&[]);
         self.cells.clear();
         self.debug_chunks.clear();
         self.last_view = None;
@@ -708,19 +733,14 @@ impl Game {
         self.controls.min_zoom = self.renderer.min_zoom(viewport, VIEW_MARGIN).max(1.0);
     }
 
-    /// The world for a new game of this size: a box from `--world`, else an endless world whose
-    /// depth depends on the size.
+    /// The world for a new game of this size: a box from `--world WxH`, else an endless world (the
+    /// demo world, or a generated world with `--world gen`) whose depth depends on the size.
     fn shape_for(&self, size: WorldSize) -> demo::Shape {
-        match self.start_shape {
-            demo::Shape::Box { .. } => self.start_shape,
-            demo::Shape::Infinite { .. } => demo::Shape::Infinite {
-                depth_chunks: match size {
-                    WorldSize::Small => 64,
-                    WorldSize::Normal => 128,
-                    WorldSize::Large => 256,
-                },
-            },
-        }
+        self.start_shape.with_depth(match size {
+            WorldSize::Small => 64,
+            WorldSize::Normal => 128,
+            WorldSize::Large => 256,
+        })
     }
 
     fn start_new_world(&mut self, seed: u64, shape: demo::Shape, mode: GameMode) {
@@ -987,13 +1007,14 @@ impl Game {
                     w.sim.send(Command::Step);
                 }
             }
-            DebugAction::ToggleOverlay => {
+            DebugAction::ToggleAwakeChunks => {
                 w.overlay = !w.overlay;
                 w.sim.send(Command::SetDebug(w.overlay));
                 if !w.overlay {
                     self.debug_chunks.clear();
                 }
             }
+            DebugAction::Render(settings) => *self.renderer.settings_mut() = settings,
         }
     }
 
@@ -1036,6 +1057,7 @@ impl Game {
         self.stats.awake_chunks = snapshot.stats.awake_chunks;
         self.stats.loaded_chunks = snapshot.stats.loaded_chunks;
         self.stats.packed_chunks = snapshot.stats.packed_chunks;
+        self.stats.sections.clone_from(&snapshot.stats.sections);
         let (w, h) = snapshot.world_cells;
         self.controls.world = DVec2::new(w as f64, h as f64);
         if world.overlay {
@@ -1105,6 +1127,8 @@ impl Game {
         s.gpu_chunks = r.resident_chunks;
         s.gpu_capacity = r.chunk_capacity;
         s.drawn_chunks = r.drawn_chunks;
+        s.particles = r.drawn_particles;
+        s.light_size = r.light_size;
         s.zoom = self.controls.camera.zoom;
         let c = self.controls.camera.screen_to_cell(self.mouse);
         s.cursor = Some((c.x.floor() as i32, c.y.floor() as i32));
@@ -1157,6 +1181,13 @@ impl Game {
         let show_brush = self.playing() && self.mouse_inside;
         let show_debug = self.ui.model.settings.show_debug && self.world.is_some();
         let (paused, overlay) = self.world.as_ref().map_or((false, false), |w| (w.user_paused, w.overlay));
+        let panel = PanelState {
+            paused,
+            awake_chunks: overlay,
+            render: *self.renderer.settings(),
+            view_keys: [Action::DebugChunks, Action::DebugHeat, Action::DebugGrid]
+                .map(|a| self.key_names.action_name(&self.bindings, a)),
+        };
         let mouse_cell = self.mouse_cell();
         let mut actions = Vec::new();
         let mut debug_actions = Vec::new();
@@ -1169,7 +1200,7 @@ impl Game {
             let content = &*self.content;
             self.egui_ctx.run_ui(raw_input, |root| {
                 if show_debug {
-                    debug_panel::draw(root, stats, paused, overlay, &mut debug_actions);
+                    debug_panel::draw(root, stats, &panel, &mut debug_actions);
                 }
                 actions = ui.ui.show(root.ctx(), &ui.model);
                 let painter = root.ctx().layer_painter(egui::LayerId::background());
@@ -1270,16 +1301,17 @@ impl Game {
 
         let has_world = self.world.is_some();
         if has_world {
-            // The robot and its effects, on the cell grid (normal mode).
+            // The robot and its effects, on the cell grid (normal mode), and its lights.
             self.sprites.clear();
             let mouse = self.mouse_cell();
-            if let Some(n) = self.world.as_ref().and_then(|w| w.normal.as_ref())
-                && let (Some(r), Some(at)) = (n.frame.robot.as_ref(), n.robot_pos(frame_start))
-            {
+            let normal = self.world.as_ref().and_then(|w| w.normal.as_ref());
+            let robot = normal.and_then(|n| Some((n, n.frame.robot.as_ref()?, n.robot_pos(frame_start)?)));
+            if let Some((n, r, at)) = robot {
                 let tool = n.tool_use(&self.content, mouse);
                 self.robot_look.sprites(r, at, tool, n.frame.tick, None, &mut self.sprites);
             }
             self.renderer.set_sprites(&self.sprites);
+            render_setup::robot_lights(&mut self.renderer, robot.map(|(_, r, at)| (r, at)));
             self.renderer.set_time(frame_start.duration_since(self.timing.start).as_secs_f64());
             self.renderer.render(&mut encoder, &target, &self.controls.camera);
         }

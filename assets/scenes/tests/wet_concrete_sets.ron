@@ -1,0 +1,17 @@
+// Wet concrete sets into concrete after about 30 seconds (1800 ticks; the `timer` of wet
+// concrete). Picture (100 x 40): open stone box, inside x 4..96, walls from y 10, floor at y 36.
+// Wet concrete y 30..36 (92 x 6 = 552 cells).
+Scene(
+    note: "Wet concrete sets into concrete after about 30 seconds.",
+    legend: {
+        "#8f8d88": "wet_concrete",
+        "#6b6a70": "stone",
+    },
+    ticks: 2400,
+    checks: [
+        Total(material: "wet_concrete", max: 10),
+        Total(material: "concrete", min: 540),
+        // The concrete stays where the wet concrete was.
+        Count(material: "concrete", rect: (x: 4, y: 26, w: 92, h: 10), min: 540),
+    ],
+)

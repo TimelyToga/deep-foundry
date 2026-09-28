@@ -1,0 +1,14 @@
+// Generated content scene: melt of zinc_dust into molten_zinc at 420C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "zinc_dust melts into molten_zinc.",
+    legend: {
+        "#a9b2b6": (material: "zinc_dust", temperature: 500),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "molten_zinc", min: 1),
+    ],
+)

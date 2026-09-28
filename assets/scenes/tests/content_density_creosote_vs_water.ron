@@ -1,0 +1,15 @@
+// Generated content scene: creosote (density 1080) is denser than water and sinks below it.
+Scene(
+    note: "creosote sinks through water.",
+    legend: {
+        "#241b12": "creosote",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 1500,
+    checks: [
+        TotalUnchanged(material: "creosote"),
+        TotalUnchanged(material: "water"),
+        Count(material: "creosote", rect: (x: 4, y: 48, w: 72, h: 18), min: 300),
+    ],
+)

@@ -1,0 +1,14 @@
+// Generated content scene: freeze of molten_copper into copper_block at 1075C.
+// The cell starts past its phase point, so it changes in the first tick. The check runs after
+// 3 ticks: later, the cold box can move the new material back past its own phase point.
+Scene(
+    note: "molten_copper freezes into copper_block.",
+    legend: {
+        "#ff8a3c": (material: "molten_copper", temperature: 995),
+        "#6b6a70": "stone",
+    },
+    ticks: 3,
+    checks: [
+        Total(material: "copper_block", min: 1),
+    ],
+)

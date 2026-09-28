@@ -12,6 +12,7 @@
 // - An animation has a speed: Fps(n) is frames per second; Cells(n) is one frame per n
 //   cells walked. Each frame has the arm direction (when no tool is used) and how many
 //   cells the shoulder moves down in that frame.
+// - `glow`: sheet colors (RGB) that give light in the game (the visor and the lights).
 (
     image: "robot.png",
     frame: (16, 20),
@@ -34,4 +35,5 @@
     arm_tips: [(13, 10), (13, 12), (12, 14), (10, 15), (8, 15), (6, 15), (4, 14), (3, 12), (3, 10), (3, 8), (4, 6), (6, 5), (8, 5), (10, 5), (12, 6), (13, 8)],
     flame: (row: 9, frames: 4),
     pixel: (row: 10, frames: 1),
+    glow: [(120, 246, 255)],
 )

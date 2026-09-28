@@ -14,6 +14,13 @@ The world has no limit to the left and right. The hills go on without end, and t
 lava pocket and posts repeat every 2048 cells. New chunks are made when the view comes near them.
 Only chunks near the view update; far chunks wait until the view comes back.
 
+`--world gen` makes new games with the world generator (`crates/worldgen`) in place of the demo
+world: a temperate start area at x = 0 (the Hub stands on flat ground there), a desert to the
+right, a tundra to the left, other biomes further out, and the surface layer and the upper stone
+layer below with caves, ores, water pockets and methane pockets. For example
+`cargo run -p deep_foundry --release -- --world gen --mode normal --ui-state playing`. Saved
+generated worlds load again with or without the option.
+
 The simulation runs on its own thread at 60 ticks per second. The window draws at the display
 refresh rate.
 
@@ -49,6 +56,7 @@ The keys are the defaults. Settings > Controls changes them (see "Keys and setti
 | Mouse wheel | Zoom |
 | Esc | Close the top window, or open the pause menu |
 | F3 | Debug panel |
+| F4 / F5 / F6 | Debug views: awake chunks, heat map, chunk grid |
 
 ### The robot and the jetpack
 
@@ -142,7 +150,11 @@ The keys are the defaults (see "Keys and settings").
 | Space | Pause or resume the simulation (no menu) |
 | `.` (period) | Run one tick while paused |
 | Esc | Close the top window, or open the pause menu (Resume, Save, Load, Settings, Quit) |
-| F3 | Debug panel: simulation controls, chunk overlay, numbers |
+| F3 | Debug panel: simulation controls, debug views, light settings, tick time bars, numbers |
+| F4 | Debug view: awake chunks (yellow) and the cells the last tick updated (green) |
+| F5 | Debug view: heat map (blue cold, dark green 20 °C, then yellow, orange, red, white) |
+| F6 | Debug view: chunk grid (and the tile grid when zoomed in) |
+| F7 | Debug: an explosion at the mouse (strength 60, 1200 °C) |
 
 The HUD shows the frame rate, the tick time and the awake chunks at the top right, and the cell
 under the mouse (material and temperature) below them.
@@ -212,6 +224,9 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
 - `--ui-state` picks the screen (default `playing`). The UI runs several frames first, so the fonts
   and the window sizes are ready.
 - `--no-ui` draws only the world.
+- `--view LIST` turns on render views, comma separated: `nolight`, `nobloom`, `noshimmer`,
+  `heat` (heat map), `grid` (chunk grid), `light` (only the light map), `chunks` (awake chunks;
+  needs the UI).
 - `--mode normal` (or a normal-mode screen) makes a normal game: the Hub, the robot and the factory
   tick with the cells. The screens `inventory`, `building` (a crate), `ghost` (a steam crusher in
   the hand, with its ports), `ghost-red` (the same ghost in the ground, with the reason), `drag`
@@ -244,7 +259,8 @@ cargo run -p deep_foundry -- --screenshot out/hub.png --size 2560x1440 --mode no
 - `assets/sprites/robot.png` is the sprite sheet: one pixel is one world cell, each frame is
   16 x 20 pixels. `assets/sprites/robot.ron` describes it: the animations (idle, walk, jump,
   fall, land, fly, wade), their frame counts and speed, the arm in 16 directions, the arm
-  outline, the jetpack flame and one white pixel for particles.
+  outline, the jetpack flame, one white pixel for particles, and the colors that glow (`glow`:
+  the visor and the antenna light).
 - `tools/sprites/make_robot.py` draws both files from parts and a small palette, and
   `tools/sprites/robot_preview.png` (all frames at 4x on a cave, sand and water background). Run
   it from the repository root:
@@ -257,7 +273,18 @@ cargo run -p deep_foundry -- --screenshot out/hub.png --size 2560x1440 --mode no
   into the program (a warning is logged).
 - `src/robot_sprite.rs` picks the animation frame from the robot state and makes the sprites. The
   renderer draws them into the world texture (`crates/render/src/sprite.rs`): the robot is behind
-  liquids and gases and shows through them at 60 %, the flame, beam and sparks are in front.
+  liquids and gases and shows through them at 60 %; the flame, beams and sparks are in front and
+  give light; dust and flying cells are in front and lit like the cells.
+
+## Light
+
+- The renderer has a light pass: caves are dark, lava, fire and hot cells give light, the sky
+  lights the surface from above, and the robot has a lamp (and a jetpack light while it flies:
+  `src/render_setup.rs`). The robot sprite is lit by the light map like the cells; its visor
+  glows. The Debug panel (F3) has switches and sliders for the light. `crates/render/src/lib.rs`
+  explains the passes.
+- The sky light needs to know where the surface is: `render_setup::surface_level` (the sky
+  chunks of the world with no side limit, or 55% of the height of a box world).
 
 ## Measure the frame rate
 

@@ -13,11 +13,11 @@ pub mod factory_defs;
 pub mod load;
 pub mod table;
 
-pub use defs::{BurnDef, Grain, MaterialDef, Phase, PhaseChange, ReactionDef};
+pub use defs::{AltDef, BurnDef, Grain, MaterialDef, Phase, PhaseChange, REACTION_EVENTS, ReactionDef, TimerDef};
 pub use factory::{Building, FactoryContent, ItemRef, Milestone, Part, Port, Recipe, Stack, Tech};
 pub use factory_defs::{Layer, PortKind, PowerDef, Side};
 pub use load::{ContentError, default_assets_dir};
-pub use table::{Burn, Change, Matcher, MaterialTable, Reaction, TagTable};
+pub use table::{Alt, Burn, Change, MAX_BURN_GASES, Matcher, MaterialTable, OwnChange, Reaction, TagTable, Timer};
 
 use foundry_core::MaterialId;
 

@@ -65,6 +65,31 @@ pub struct BurnDef {
     /// Chance per tick of smoke while it burns.
     #[serde(default)]
     pub smoke_chance: f32,
+    /// More gases it makes while it burns: (gas, chance per tick). Each gas goes into a free
+    /// neighbor cell. `smoke` counts as the first gas. At most 4 gases in all.
+    #[serde(default)]
+    pub gases: Vec<(String, f32)>,
+    /// Charring: a cell at or above `ignite_at` with no air next to it for `char_ticks` ticks in a
+    /// row becomes this material (for example wood becomes charcoal).
+    #[serde(default)]
+    pub char_into: Option<String>,
+    /// Ticks for charring. Default: 600 (10 seconds).
+    #[serde(default = "default_char_ticks")]
+    pub char_ticks: u32,
+}
+
+/// A slow change after a time. The RON form is `(ticks: 1800, into: "concrete")`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimerDef {
+    /// About how many ticks it takes (60 ticks = 1 second). The real time varies a little from
+    /// cell to cell.
+    pub ticks: u32,
+    /// The material it becomes.
+    pub into: String,
+    /// The time only counts while an air cell is next to it (for example mud that dries in air).
+    #[serde(default)]
+    pub needs_air: bool,
 }
 
 /// One material. The RON name is `Material(...)`.
@@ -136,6 +161,10 @@ pub struct MaterialDef {
     /// What it becomes when its life ends. Default: air.
     #[serde(default)]
     pub decay_into: Option<String>,
+    /// A change after a time, also longer than `life` can count (for example wet concrete sets
+    /// after 30 seconds). A material with a timer cannot have `life` or `burn.char_into`.
+    #[serde(default)]
+    pub timer: Option<TimerDef>,
     /// Liquids: powders with a lower density than this move with the liquid when it flows sideways.
     #[serde(default)]
     pub drag_limit: f32,
@@ -156,6 +185,12 @@ pub struct MaterialDef {
 /// A reaction between two touching cells. The RON name is `Reaction(...)`.
 ///
 /// `a` and `b` are a material id, `"tag:<name>"`, or `"any"`.
+///
+/// `into_a` and `into_b` are a material id or one of these words, which use the matched cell's
+/// own data: `"$freeze"`, `"$melt"`, `"$boil"`, `"$condense"` (the material of that phase
+/// change) and `"$broken"` (its broken form). A material without that data does not take part in
+/// the reaction. Example: `a: "tag:metal", into_a: Some("$freeze")` freezes each molten metal
+/// into its own block.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename = "Reaction", deny_unknown_fields)]
 pub struct ReactionDef {
@@ -182,12 +217,37 @@ pub struct ReactionDef {
     /// The reaction needs an air cell next to A.
     #[serde(default)]
     pub needs_air: bool,
-    /// An event name, for example "explosion_small".
+    /// An event name: "explosion_small", "explosion_medium" or "explosion_large".
     #[serde(default)]
     pub event: Option<String>,
+    /// Extra results: (material, chance). Each one that happens goes into a free neighbor cell
+    /// of A (air, or else a gas). Example: a slag cell from smelting.
+    #[serde(default)]
+    pub extra: Vec<(String, f32)>,
+    /// A second outcome: when the reaction happens, with this chance A and B become the `alt`
+    /// results instead of `into_a` and `into_b`.
+    #[serde(default)]
+    pub alt: Option<AltDef>,
     #[serde(default)]
     pub note: Option<String>,
 }
+
+/// The second outcome of a reaction. The RON form is `(chance: 0.3, into_a: Some("salt"))`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AltDef {
+    /// Chance (0 to 1) of this outcome when the reaction happens.
+    pub chance: f32,
+    /// What A becomes. Default: no change.
+    #[serde(default)]
+    pub into_a: Option<String>,
+    /// What B becomes. Default: no change.
+    #[serde(default)]
+    pub into_b: Option<String>,
+}
+
+/// The event names a reaction can send.
+pub const REACTION_EVENTS: [&str; 3] = ["explosion_small", "explosion_medium", "explosion_large"];
 
 fn one() -> f32 {
     1.0
@@ -199,4 +259,8 @@ fn yes() -> bool {
 
 fn default_burn_chance() -> f32 {
     0.02
+}
+
+fn default_char_ticks() -> u32 {
+    600
 }

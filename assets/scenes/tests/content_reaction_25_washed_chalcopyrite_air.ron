@@ -1,0 +1,15 @@
+// Generated content scene: reaction #25 (washed_chalcopyrite + air).
+// A touches B.
+Scene(
+    note: "Reaction: washed_chalcopyrite + air.",
+    legend: {
+        "#b08e32": (material: "washed_chalcopyrite", temperature: 680),
+        "#000000": "air",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "roasted_chalcopyrite", min: 1),
+        Total(material: "sulfur_dioxide", min: 1),
+    ],
+)

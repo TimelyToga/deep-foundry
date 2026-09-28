@@ -1,0 +1,14 @@
+// Generated content scene: reaction #3 (fire + carbon_dioxide).
+// A touches B.
+Scene(
+    note: "Reaction: fire + carbon_dioxide.",
+    legend: {
+        "#ffb02e": "fire",
+        "#c8c8ce": "carbon_dioxide",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "air", min: 1),
+    ],
+)

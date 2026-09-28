@@ -1,0 +1,15 @@
+// Generated content scene: sulfuric_acid (density 1830) is denser than water and sinks below it.
+Scene(
+    note: "sulfuric_acid sinks through water.",
+    legend: {
+        "#c7c22f": "sulfuric_acid",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 1500,
+    checks: [
+        TotalUnchanged(material: "sulfuric_acid"),
+        TotalUnchanged(material: "water"),
+        Count(material: "sulfuric_acid", rect: (x: 4, y: 48, w: 72, h: 18), min: 300),
+    ],
+)

@@ -1,0 +1,15 @@
+// Generated content scene: reaction #8 (wet_concrete + stone).
+// A touches B. The reaction is slow (a small chance each tick, or a timer), so the scene runs
+// 3000 ticks.
+Scene(
+    note: "Reaction: wet_concrete + stone.",
+    legend: {
+        "#8f8d88": "wet_concrete",
+        "#6b6a70": "stone",
+        "#6b6a70": "stone",
+    },
+    ticks: 3000,
+    checks: [
+        Total(material: "concrete", min: 1),
+    ],
+)

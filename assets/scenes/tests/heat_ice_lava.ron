@@ -1,0 +1,18 @@
+// Ice next to lava melts into water.
+// Picture (100 x 60): open stone box, inside x 4..96, walls from y 20, floor at y 56.
+// Lava x 4..60, y 44..56 (672 cells). An ice block at -10 °C, x 60..96, y 30..56 (936 cells),
+// stands next to the lava.
+Scene(
+    note: "Ice next to lava melts into water.",
+    legend: {
+        "#ff5a1a": "lava",
+        "#cfe9f5": (material: "ice", temperature: -10),
+        "#6b6a70": "stone",
+    },
+    ticks: 40,
+    checks: [
+        Total(material: "ice", max: 900),
+        Total(material: "water", min: 10),
+        Deterministic(every: 20),
+    ],
+)
