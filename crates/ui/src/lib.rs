@@ -223,6 +223,11 @@ impl FoundryUi {
             tooltip::show(ctx, t, model, &self.stock, atlas);
         }
         screens::hand::show(ctx, model, atlas);
+        // The Controls list waits for a key, but the settings page is closed: stop the wait.
+        let settings_open = matches!(model.state, GameState::MainMenu | GameState::Paused) && self.state.menu.page == MenuPage::Settings;
+        if let Some(id) = model.settings.key_waiting.as_ref().filter(|_| !settings_open) {
+            self.actions.push(UiAction::ChangeSetting(SettingChange::RebindKey(id.clone())));
+        }
         std::mem::take(&mut self.actions)
     }
 

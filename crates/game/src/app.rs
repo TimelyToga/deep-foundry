@@ -809,6 +809,8 @@ impl Game {
         self.stroke.end();
         if let Some(n) = self.normal_mut() {
             n.held = Default::default();
+            n.release(true);
+            n.release(false);
         }
     }
 
