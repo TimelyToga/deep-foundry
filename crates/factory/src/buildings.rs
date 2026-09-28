@@ -1123,6 +1123,26 @@ impl Buildings {
         None
     }
 
+    /// A bulk output can feed a neighboring storage port directly, so powder need not land in
+    /// one exact world cell before the crate can collect it.
+    fn push_bulk(&mut self, i: u32, port: PlacedPort, item: ItemRef, count: u32, content: &Content) -> Option<(u32, u32)> {
+        let ItemRef::Material(_) = item else { return None };
+        let n_tile = neighbor_tile(port.tile, port.side);
+        let &nid = self.front.get(&n_tile)?;
+        let (me, dst) = two_mut(&mut self.slots, i as usize, nid.index as usize)?;
+        let their_port = dst.ports.iter().find(|p| {
+            p.kind == PortKind::BulkIn && p.tile == n_tile && p.side == opposite(port.side)
+        }).copied()?;
+        let my_def = content.factory.building_def(me.kind);
+        let their_def = content.factory.building_def(dst.kind);
+        if !port_allows(my_def, &port, item) || !port_allows(their_def, &their_port, item) {
+            return None;
+        }
+        let Logic::Storage(inv) = &mut dst.logic else { return None };
+        let left = inv.insert(content, item, count);
+        Some((count - left, nid.index))
+    }
+
     /// Machines work, labs research, the Hub delivers.
     fn work<P: ProgressLink>(&mut self, i: u32, content: &Content, sim: &mut Simulation, progress: &mut P) {
         let seed = self.seed ^ ((i as u64) << 32) ^ self.slots[i as usize].generation as u64;
@@ -1214,6 +1234,8 @@ impl Buildings {
         let now = self.now;
         let Some(b) = self.at_index_mut(i) else { return };
         let def = content.factory.building_def(b.kind);
+        let next_push = b.next_push;
+        let mut bulk_outputs = Vec::new();
         match &mut b.logic {
             Logic::Machine(m) => {
                 let Some(r) = m.recipe else { return };
@@ -1237,6 +1259,10 @@ impl Buildings {
                             continue;
                         }
                         let want = m.outputs[j].min(PORT_CELLS_PER_TICK);
+                        if port.kind == PortKind::BulkOut && ph == Phase::Powder {
+                            bulk_outputs.push((j, *port, mat, want));
+                            break;
+                        }
                         let placed = cells::put_to_side(sim, port.tile, port.side, mat, want, None);
                         m.outputs[j] -= placed;
                         b.busy |= placed > 0;
@@ -1279,10 +1305,30 @@ impl Buildings {
             }
             _ => {}
         }
-        if now < b.next_push {
+        for (j, port, mat, want) in bulk_outputs {
+            let pushed = self.push_bulk(i, port, ItemRef::Material(mat), want, content);
+            let moved = pushed.map_or(0, |(n, _)| n);
+            let left = want - moved;
+            let placed = if left > 0 { cells::put_to_side(sim, port.tile, port.side, mat, left, None) } else { 0 };
+            if let Some(b) = self.at_index_mut(i) {
+                if let Logic::Machine(m) = &mut b.logic {
+                    m.outputs[j] -= moved + placed;
+                }
+                b.busy |= moved + placed > 0;
+                if pushed.is_none() && placed < left {
+                    b.blocked = true;
+                }
+            }
+            if let Some((_, dst)) = pushed {
+                self.wake_index(dst);
+            }
+        }
+        if now < next_push {
             return;
         }
-        let push_ports: Vec<PlacedPort> = b.ports.iter().filter(|p| p.kind == PortKind::PartOut).copied().collect();
+        let push_ports: Vec<PlacedPort> = self.at_index(i).into_iter().flat_map(|b| {
+            b.ports.iter().filter(|p| p.kind == PortKind::PartOut).copied()
+        }).collect();
         let mut woken = vec![];
         for port in push_ports {
             if let Some(j) = self.push_part(i, port, content) {
