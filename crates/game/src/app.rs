@@ -446,7 +446,8 @@ impl Game {
             | UiState::Campfire
             | UiState::OreLine
             | UiState::Kiln
-            | UiState::KilnHole => {}
+            | UiState::KilnHole
+            | UiState::SteamLine => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {

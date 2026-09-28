@@ -29,7 +29,8 @@ OPTIONS:
                              tanks (full tanks: the tank HUD says what to do),
                              guide-workbench (the guide after the workbench and the ores),
                              guide-done (the guide when the rest waits for new machines),
-                             campfire (a campfire window: raw bricks, wood fuel, clay bricks)
+                             campfire (a campfire window: raw bricks, wood fuel, clay bricks),
+                             steam-line (a functioning boiler, bronze pipes and steam crusher)
     --mode MODE              The mode of a world that --ui-state starts: sandbox (default) or
                              normal (the robot, the factory and the Hub)
     --ui-scale S             Size of the UI, 0.75 to 2 (default: the settings file, else 1)
@@ -146,6 +147,8 @@ pub enum UiState {
     Kiln,
     /// Normal mode: the same kiln with a hole in its right wall (red marks).
     KilnHole,
+    /// Normal mode: a boiler makes steam through bronze pipes and runs a crusher.
+    SteamLine,
 }
 
 impl UiState {
@@ -176,6 +179,7 @@ impl UiState {
             "ore-line" => UiState::OreLine,
             "kiln" => UiState::Kiln,
             "kiln-hole" => UiState::KilnHole,
+            "steam-line" => UiState::SteamLine,
             _ => return None,
         })
     }
@@ -205,6 +209,7 @@ impl UiState {
                 | UiState::OreLine
                 | UiState::Kiln
                 | UiState::KilnHole
+                | UiState::SteamLine
         )
     }
 }
@@ -443,6 +448,9 @@ mod tests {
         assert!(a.no_ui);
         assert_eq!(run(&[]).unwrap().start_state(), UiState::Menu);
         assert_eq!(run(&["--exit-after", "5"]).unwrap().start_state(), UiState::Playing);
+        let steam = run(&["--ui-state", "steam-line"]).unwrap();
+        assert_eq!(steam.ui_state, Some(UiState::SteamLine));
+        assert_eq!(steam.start_mode(), GameMode::Normal);
     }
 
     #[test]
