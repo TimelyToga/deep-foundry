@@ -415,11 +415,13 @@ mod tests {
         let v = f.building_view(fire).unwrap();
         assert_eq!(v.outputs[0].count, 3, "{v:?}");
         let fuel = v.fuel.unwrap();
-        assert_eq!((fuel.material, fuel.units), (Some(c.expect_material("wood")), 50 - 18));
+        // The fire keeps burning while idle after the third brick, so it has started a
+        // nineteenth unit by the time the output is ready.
+        assert_eq!((fuel.material, fuel.units), (Some(c.expect_material("wood")), 31));
         // The output goes to the robot; a click on the fuel slot gives the wood back.
         assert_eq!(f.take_outputs_to_player(fire), vec![Stack { item: brick, count: 3 }]);
-        assert_eq!(f.fuel_to_robot(fire, Click::Left), Ok(32));
-        assert_eq!(f.player.count(wood), 32);
+        assert_eq!(f.fuel_to_robot(fire, Click::Left), Ok(31));
+        assert_eq!(f.player.count(wood), 31);
     }
 
     #[test]
