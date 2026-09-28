@@ -211,12 +211,16 @@ pub(crate) struct Column {
     pub soil: i32,
     /// A steep slope: little soil, no grass or snow.
     pub steep: bool,
+    /// A column that is not tundra: its distance to the nearest tundra zone, from 0 (at the
+    /// border) to 1 (`BLEND` cells or more). Near the border its ground is as cold as the tundra
+    /// ground, so the snow at the border does not melt (see `chunk::Fill::write`). 1 in the tundra.
+    pub warm: f32,
 }
 
 impl Column {
     /// A column deep under the surface: rock everywhere.
     pub fn deep() -> Self {
-        Column { gr: Ground { g: i32::MIN / 2, water: i32::MIN / 2, ..Ground::default() }, ..Column::default() }
+        Column { gr: Ground { g: i32::MIN / 2, water: i32::MIN / 2, ..Ground::default() }, warm: 1.0, ..Column::default() }
     }
 }
 
@@ -309,8 +313,31 @@ impl<'a> Ctx<'a> {
     /// The biome of the ground and soil in column `x`. The border between two zones is not a
     /// straight line: it moves a little with noise.
     pub fn biome_at(&self, x: i32) -> Biome {
-        let xw = x + (40.0 * self.n(sd::BIOME_WARP, x, 90)) as i32;
-        self.zone_biome(self.zone(xw).0)
+        self.zone_biome(self.zone(self.warped(x)).0)
+    }
+
+    /// Column `x` moved by the noise that moves the zone borders (see `biome_at`).
+    fn warped(&self, x: i32) -> i32 {
+        x + (40.0 * self.n(sd::BIOME_WARP, x, 90)) as i32
+    }
+
+    /// See `Column::warm`.
+    fn warm_at(&self, x: i32) -> f32 {
+        let xw = self.warped(x);
+        let (i, l, r) = self.zone(xw);
+        let tundra = |i: i32| self.zone_biome(i) == Biome::Tundra;
+        if tundra(i) {
+            return 1.0;
+        }
+        let xf = xw as f64;
+        let mut d = f64::MAX;
+        if tundra(i - 1) {
+            d = d.min(xf - l);
+        }
+        if tundra(i + 1) {
+            d = d.min(r - xf);
+        }
+        (d / BLEND).clamp(0.0, 1.0) as f32
     }
 
     /// The biome of column `x`, the biome of the nearest other zone, and the weight of the other
@@ -520,7 +547,10 @@ impl<'a> Ctx<'a> {
                 let dir = if h & (1 << 20) != 0 { 1 } else { -1 };
                 Feature { kind, cx, hw, depth, margin, flat: self.natural(cx).0.round() as i32, extra: dir }
             }
-            FrozenLake => self.basin(kind, cx, hw, depth, margin, 4 + (h2 >> 16) as i32 % 3),
+            // 11 to 13 rows of ice: from -12 °C at the top to -2 °C at the water, 1 °C per row, so
+            // no heat flows through the ice and the water under it stays liquid (see
+            // `chunk::Fill::write`).
+            FrozenLake => self.basin(kind, cx, hw, depth, margin, 11 + (h2 >> 16) as i32 % 3),
             _ => self.basin(kind, cx, hw, depth, margin, 0),
         })
     }
@@ -615,7 +645,7 @@ impl<'a> Ctx<'a> {
         let biome = self.biome_at(x);
         let steep = (right2 - left2).abs() >= 7;
         let soil_noise = self.n(sd::SOIL, x, 170) as f32;
-        let mut c = Column { gr, biome, steep, ..Column::default() };
+        let mut c = Column { gr, biome, steep, warm: self.warm_at(x), ..Column::default() };
         match biome {
             Biome::Temperate => {
                 c.soil = 12 + (6.0 * (soil_noise + 1.0)) as i32;

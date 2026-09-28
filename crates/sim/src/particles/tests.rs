@@ -41,8 +41,8 @@ fn fast_particles_do_not_pass_a_wall_one_cell_thick() {
     let mut rng = Rng::new(5);
     let n = 2000;
     for _ in 0..n {
-        let y = 10.0 + rng.unit() * 200.0;
-        let x = 20.0 + rng.unit() * 100.0;
+        let y = 10.0 + rng.unit() as f64 * 200.0;
+        let x = 20.0 + rng.unit() as f64 * 100.0;
         // Top speed to the right, and a random up or down speed.
         s.spawn_particle((x, y), (12.0, (rng.unit() - 0.5) * 24.0), sand, None);
     }
@@ -65,7 +65,7 @@ fn fast_particles_do_not_pass_a_diagonal_wall() {
     for _ in 0..n {
         // Particles below-left of the wall, flying up and to the right at top speed.
         let t = 30.0 + rng.unit() * 130.0;
-        let (x, y) = (100.0 + t - 10.0 - rng.unit() * 20.0, 20.0 + t + 10.0);
+        let (x, y) = (100.0 + t as f64 - 10.0 - rng.unit() as f64 * 20.0, 20.0 + t as f64 + 10.0);
         s.spawn_particle((x, y), (11.0 + rng.unit(), -11.0 - rng.unit()), sand, None);
     }
     tick_until_landed(&mut s, 400);
@@ -82,8 +82,8 @@ fn visual_particles_fade_and_never_become_cells() {
     let mut s = world(2, 2);
     let (sand, smoke) = (s.content().expect_material("sand"), s.content().expect_material("smoke"));
     for i in 0..100 {
-        assert!(s.spawn_visual((20.0 + i as f32, 30.0), (0.5, -1.0), sand, 30, false));
-        assert!(s.spawn_visual((20.0 + i as f32, 90.0), (0.0, 0.0), smoke, 40, true));
+        assert!(s.spawn_visual((20.0 + i as f64, 30.0), (0.5, -1.0), sand, 30, false));
+        assert!(s.spawn_visual((20.0 + i as f64, 90.0), (0.0, 0.0), smoke, 40, true));
     }
     assert_eq!(s.particles().visual_count(), 200);
     for _ in 0..10 {
@@ -108,7 +108,7 @@ fn visual_particles_vanish_when_they_hit_something() {
     let (sand, stone) = (s.content().expect_material("sand"), s.content().expect_material("stone"));
     fill(&mut s, 60, 0, 61, 128, stone);
     for i in 0..50 {
-        s.spawn_visual((20.0, 20.0 + i as f32), (8.0, 0.0), sand, 200, false);
+        s.spawn_visual((20.0, 20.0 + i as f64), (8.0, 0.0), sand, 200, false);
     }
     for _ in 0..10 {
         s.tick();
@@ -122,13 +122,13 @@ fn visual_particles_have_a_hard_limit_and_material_particles_have_none() {
     let sand = s.content().expect_material("sand");
     let mut added = 0;
     for i in 0..MAX_VISUAL + 500 {
-        added += s.spawn_visual((10.0 + (i % 100) as f32, 10.0), (0.0, 0.0), sand, 100, true) as usize;
+        added += s.spawn_visual((10.0 + (i % 100) as f64, 10.0), (0.0, 0.0), sand, 100, true) as usize;
     }
     assert_eq!(added, MAX_VISUAL);
     assert_eq!(s.particles().visual_count(), MAX_VISUAL);
     let limit = s.settings().max_particles;
     for i in 0..limit {
-        s.spawn_particle((10.0 + (i % 100) as f32, 20.0 + (i / 100 % 80) as f32), (0.0, 0.0), sand, None);
+        s.spawn_particle((10.0 + (i % 100) as f64, 20.0 + (i / 100 % 80) as f64), (0.0, 0.0), sand, None);
     }
     assert_eq!(s.particles().len(), MAX_VISUAL + limit, "material particles are always added");
     assert!(!s.spawn_visual((10.0, 10.0), (0.0, 0.0), sand, 100, true));
@@ -194,7 +194,7 @@ fn particle_step_speed() {
             for round in 0..40 {
                 // Keep 50,000 particles in the air: add new ones for those that landed.
                 while s.particles().len() < n {
-                    let (x, y) = (50.0 + rng.unit() * 920.0, 100.0 + rng.unit() * 400.0);
+                    let (x, y) = (50.0 + rng.unit() as f64 * 920.0, 100.0 + rng.unit() as f64 * 400.0);
                     let v = ((rng.unit() - 0.5) * 12.0, -rng.unit() * 8.0);
                     if s.particles().visual_count() < visual {
                         s.spawn_visual((x, y), v, sand, 200, false);
@@ -252,7 +252,7 @@ fn the_parallel_move_gives_the_same_result_as_the_serial_move() {
     fill(&mut s, 300, 280, 400, 300, water);
     let mut rng = Rng::new(3);
     for i in 0..20_000 {
-        let (x, y) = (5.0 + rng.unit() * 500.0, -20.0 + rng.unit() * 300.0);
+        let (x, y) = (5.0 + rng.unit() as f64 * 500.0, -20.0 + rng.unit() as f64 * 300.0);
         let v = ((rng.unit() - 0.5) * 30.0, (rng.unit() - 0.7) * 30.0);
         if i % 3 == 0 {
             s.spawn_visual((x, y), v, sand, 100, i % 2 == 0);
@@ -289,7 +289,7 @@ fn many_particles_give_the_same_result_with_1_and_6_threads() {
         fill(&mut s, 2, 300, 510, 382, stone);
         let mut rng = Rng::new(4);
         for _ in 0..12_000 {
-            let (x, y) = (5.0 + rng.unit() * 500.0, 20.0 + rng.unit() * 250.0);
+            let (x, y) = (5.0 + rng.unit() as f64 * 500.0, 20.0 + rng.unit() as f64 * 250.0);
             s.spawn_particle((x, y), ((rng.unit() - 0.5) * 16.0, -rng.unit() * 10.0), sand, None);
         }
         s

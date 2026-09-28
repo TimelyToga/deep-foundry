@@ -3,6 +3,8 @@
 //! Each tick: apply all queued commands, call `advance`, then publish a snapshot to the mailbox.
 //! The loop runs on its own worker threads (`sim_pool.rs`): a tick with little work runs on one
 //! thread, so it does not wait for other threads.
+//! When the thread stops, it first applies the commands that are still queued, so a save sent
+//! just before the stop is written.
 //! The timing uses deadlines: tick N starts at `start + N × tick length`. If the thread falls behind,
 //! it runs at most `MAX_CATCH_UP` ticks at once and then forgets the rest of the lost time.
 
@@ -77,9 +79,11 @@ impl SimThread {
         f32::from_bits(self.tps.load(Ordering::Relaxed))
     }
 
-    /// Stop the thread and wait for it.
+    /// Stop the thread and wait for it. The commands sent before the stop are still applied (for
+    /// example a save).
     pub fn stop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        // Release: the thread that sees the stop also sees every command sent before it.
+        self.stop.store(true, Ordering::Release);
         if let Some(h) = self.handle.take()
             && h.join().is_err()
         {
@@ -113,7 +117,7 @@ fn run(
     let mut notices: Vec<String> = Vec::new();
     // Timing logs (`DEEP_FOUNDRY_PERF`).
     let mut perf = SimPerf::new();
-    while !stop.load(Ordering::Relaxed) {
+    while !stop.load(Ordering::Acquire) {
         let now = Instant::now();
         if now < next {
             spin_sleep::sleep_until(next);
@@ -122,27 +126,8 @@ fn run(
         let mut ran = 0;
         while ran < MAX_CATCH_UP && Instant::now() >= next {
             perf.begin(ran > 0);
-            loop {
-                match commands.try_recv() {
-                    Ok(GameCommand::Sim(Command::SaveWorld { path })) => {
-                        // `&mut`: a shared `Simulation` cannot go to another thread (it is not `Sync`).
-                        let (sim, at) = (&mut sim, &path);
-                        notices.push(workers.big(true, move || save_world(sim, at)));
-                        factory_host::save_side(host.as_ref(), &path, &mut notices);
-                    }
-                    Ok(GameCommand::Sim(Command::LoadWorld { path })) => notices.push(workers.big(true, || load_world(&mut sim, &path))),
-                    Ok(GameCommand::Sim(cmd)) => {
-                        workers.note(&cmd, sim.view());
-                        sim.apply(cmd);
-                    }
-                    Ok(GameCommand::Factory(cmd)) => {
-                        if let Some(h) = host.as_mut() {
-                            h.apply(cmd, &mut sim);
-                        }
-                    }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => return,
-                }
+            if !apply_commands(workers, &mut sim, &mut host, &commands, &mut notices) {
+                return;
             }
             perf.mark();
             let ticked = workers.tick(sim.stats().awake_chunks, || sim.advance());
@@ -180,6 +165,43 @@ fn run(
             tps.store((count as f32 / since.as_secs_f32()).to_bits(), Ordering::Relaxed);
             count = 0;
             count_start = now;
+        }
+    }
+    // Stopped: apply the commands that were sent before the stop, so that no save is lost.
+    apply_commands(workers, &mut sim, &mut host, &commands, &mut notices);
+    for n in &notices {
+        log::info!("{n}");
+    }
+}
+
+/// Apply all queued commands in order. Returns false if the game dropped its end of the channel.
+fn apply_commands(
+    workers: &mut Workers,
+    sim: &mut Simulation,
+    host: &mut Option<FactoryHost>,
+    commands: &Receiver<GameCommand>,
+    notices: &mut Vec<String>,
+) -> bool {
+    loop {
+        match commands.try_recv() {
+            Ok(GameCommand::Sim(Command::SaveWorld { path })) => {
+                // `&mut`: a shared `Simulation` cannot go to another thread (it is not `Sync`).
+                let (sim, at) = (&mut *sim, &path);
+                notices.push(workers.big(true, move || save_world(sim, at)));
+                factory_host::save_side(host.as_ref(), &path, notices);
+            }
+            Ok(GameCommand::Sim(Command::LoadWorld { path })) => notices.push(workers.big(true, || load_world(sim, &path))),
+            Ok(GameCommand::Sim(cmd)) => {
+                workers.note(&cmd, sim.view());
+                sim.apply(cmd);
+            }
+            Ok(GameCommand::Factory(cmd)) => {
+                if let Some(h) = host.as_mut() {
+                    h.apply(cmd, sim);
+                }
+            }
+            Err(TryRecvError::Empty) => return true,
+            Err(TryRecvError::Disconnected) => return false,
         }
     }
 }
@@ -286,6 +308,21 @@ mod tests {
         t.send(Command::LoadWorld { path: dir.join("missing.dfworld") });
         let s = wait_for(&t, |s| !s.notices.is_empty());
         assert!(s.notices[0].starts_with("Load failed"), "{:?}", s.notices);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A save sent just before the stop is still written.
+    #[test]
+    fn a_save_sent_just_before_the_stop_is_written() {
+        let dir = std::env::temp_dir().join(format!("deep-foundry-simthread-stop-{}", std::process::id()));
+        for k in 0..10 {
+            let path = dir.join(format!("stop{k}.dfworld"));
+            let mut t = SimThread::start(small_sim());
+            std::thread::sleep(Duration::from_millis(3 * k));
+            t.send(Command::SaveWorld { path: path.clone() });
+            t.stop();
+            assert!(path.exists(), "run {k}: the save file is written");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

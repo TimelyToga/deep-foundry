@@ -375,3 +375,65 @@ fn a_generated_world_saves_and_loads() {
     };
     assert!(Simulation::load_with_resolver(c, &other, &mut bytes.as_slice()).is_err());
 }
+/// A changed cell: old material, new material, x, y.
+type Change = (u16, u16, i32, i32);
+
+/// Run 200 ticks with every generated chunk awake in `view`. Returns the cells that changed, the
+/// cells of material, and up to 6 examples.
+fn stability_at(seed: u64, view: CellRect) -> (usize, usize, Vec<Change>) {
+    let c = content();
+    let config = SimConfig { depth_chunks: 40, ..SimConfig::infinite(seed, None) };
+    let wg = WorldGen::new(&c, WorldGenSettings::for_world(config.sky_chunks, config.depth_chunks));
+    let s = *wg.world_settings();
+    let fresh = WorldGen::new(&c, s);
+    // The air temperature as in `demo::build_generated`.
+    let air = wg.air_temperature_rows().to_vec();
+    let config = SimConfig { source: Some(Arc::new(Awake(wg))), ..config };
+    let mut sim = Simulation::new(c.clone(), config);
+    sim.set_air_temperature(&air);
+    sim.apply(Command::SetView { area: view });
+    for _ in 0..200 {
+        sim.tick();
+    }
+    let (mut moved, mut solid, mut ex) = (0, 0, vec![]);
+    for cp in view.chunks() {
+        let (m, _) = chunk(&fresh, seed, cp);
+        for ly in 0..CHUNK_SIZE {
+            for lx in 0..CHUNK_SIZE {
+                let p = CellPos::new(cp.x * CHUNK_SIZE + lx, cp.y * CHUNK_SIZE + ly);
+                let now = sim.cell(p).material.0;
+                let was = m[local_index(lx, ly)];
+                solid += (was != 0) as usize;
+                if now != was {
+                    moved += 1;
+                    if ex.len() < 6 {
+                        ex.push((was, now, p.x, p.y));
+                    }
+                }
+            }
+        }
+    }
+    (moved, solid, ex)
+}
+
+/// The tundra with frozen lakes, and a border between a temperate zone and a tundra zone, do not
+/// change when they wake: no snow melts at the border, and no lake water freezes.
+#[test]
+fn the_world_is_stable_in_the_tundra_and_at_its_borders() {
+    let c = content();
+    let surface_y = WorldGenSettings::for_world(16, 40).surface_y;
+    let name = |m: u16| c.materials.ids[m as usize].clone();
+    let mut bad = vec![];
+    // Seeds 1 and 5: frozen lakes near x = -4000. Seed 5: a temperate/tundra border near
+    // x = -10660.
+    for (seed, label, x0) in [(1u64, "tundra", -4600), (5, "tundra", -4600), (5, "border", -11000)] {
+        let view = CellRect::new(x0, surface_y - 300, x0 + 1024, surface_y + 340);
+        let (moved, solid, ex) = stability_at(seed, view);
+        let ex: Vec<_> = ex.iter().map(|&(a, b, x, y)| format!("{}->{} at {x},{y}", name(a), name(b))).collect();
+        println!("seed {seed} {label}: {moved} of {solid} cells changed; {ex:?}");
+        if moved * 2000 >= solid {
+            bad.push(format!("seed {seed} {label}: {moved} of {solid} cells changed; {ex:?}"));
+        }
+    }
+    assert!(bad.is_empty(), "{bad:?}");
+}

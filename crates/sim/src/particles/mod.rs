@@ -23,6 +23,11 @@
 //! that is packed or not in memory (the area moved away) waits there, with its velocity, until the
 //! chunk updates again.
 //!
+//! # Positions
+//! A particle stores its cell (`i32`) and its place inside the cell (`f32`, 0 to 1). So its
+//! position stays exact far from x = 0, where an `f32` cannot hold whole cells. All line math is
+//! done relative to the particle's cell, with small numbers. `Spawn` and `ParticleView` use `f64`.
+//!
 //! # The three parts of a step
 //! 1. Move all particles. This part only reads cells, and each particle changes only itself, so
 //!    many particles move in parallel (see `Table`). The result does not depend on the number of
@@ -74,9 +79,9 @@ const MAX_TABLE_CHUNKS: i64 = 4096;
 /// A new particle, or the state of one particle (see `Particles::get`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spawn {
-    /// Position in cells.
-    pub x: f32,
-    pub y: f32,
+    /// Position in cells (`f64`, so it is exact far from x = 0).
+    pub x: f64,
+    pub y: f64,
     /// Velocity in cells per tick.
     pub vx: f32,
     pub vy: f32,
@@ -88,11 +93,18 @@ pub struct Spawn {
     pub flags: u8,
 }
 
+/// The largest `f32` below 1.
+const BELOW_ONE: f32 = 1.0 - f32::EPSILON / 2.0;
+
 /// One particle in the list.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Particle {
-    x: f32,
-    y: f32,
+    /// The cell that the particle is in.
+    cx: i32,
+    cy: i32,
+    /// The place inside the cell, 0 to 1 (0.5 is the middle).
+    fx: f32,
+    fy: f32,
     vx: f32,
     vy: f32,
     mat: u16,
@@ -100,6 +112,35 @@ struct Particle {
     shade: u8,
     life: u8,
     flags: u8,
+}
+
+impl Particle {
+    #[inline(always)]
+    fn cell(&self) -> CellPos {
+        CellPos::new(self.cx, self.cy)
+    }
+
+    /// Set the position to (x, y), relative to the top-left corner of cell `c`.
+    #[inline]
+    fn set_near(&mut self, c: CellPos, x: f32, y: f32) {
+        let (dx, dy) = (x.floor(), y.floor());
+        self.cx = c.x.wrapping_add(dx as i32);
+        self.cy = c.y.wrapping_add(dy as i32);
+        self.fx = (x - dx).min(BELOW_ONE);
+        self.fy = (y - dy).min(BELOW_ONE);
+    }
+
+    /// Position in cells.
+    fn world_xy(&self) -> (f64, f64) {
+        (self.cx as f64 + self.fx as f64, self.cy as f64 + self.fy as f64)
+    }
+}
+
+/// Split a position in cells into the cell and the place inside the cell.
+fn split(v: f64) -> (i32, f32) {
+    let v = if v.is_finite() { v.clamp(i32::MIN as f64, i32::MAX as f64) } else { 0.0 };
+    let c = v.floor();
+    (c as i32, ((v - c) as f32).min(BELOW_ONE))
 }
 
 /// All particles.
@@ -130,9 +171,10 @@ impl Particles {
     /// The state of particle `i` (for tests and tools). `flags` has only `VISUAL` and `RISE`.
     pub fn get(&self, i: usize) -> Spawn {
         let p = &self.list[i];
+        let (x, y) = p.world_xy();
         Spawn {
-            x: p.x,
-            y: p.y,
+            x,
+            y,
             vx: p.vx,
             vy: p.vy,
             material: MaterialId(p.mat),
@@ -153,9 +195,12 @@ impl Particles {
             return false;
         }
         self.visual += visual as usize;
+        let ((cx, fx), (cy, fy)) = (split(s.x), split(s.y));
         self.list.push(Particle {
-            x: s.x,
-            y: s.y,
+            cx,
+            cy,
+            fx,
+            fy,
             vx: s.vx,
             vy: s.vy,
             mat: s.material.0,
@@ -223,7 +268,7 @@ impl Particles {
     /// Turn particle `i` (a material particle that hit something) into a grid cell.
     fn land(&mut self, i: usize, world: &mut World, mats: &MaterialTable, parity: u8, stamp: u64) {
         let p = &mut self.list[i];
-        let at = CellPos::new(p.x.floor() as i32, p.y.floor() as i32);
+        let at = p.cell();
         let mut grid = Grid::default();
         let liquid = mats.phase[p.mat as usize] == Phase::Liquid;
         let back = if liquid { None } else { Some((p.vx, p.vy)) };
@@ -246,7 +291,7 @@ impl Particles {
         if let Look::Cell(m) | Look::Paused(m) = grid.look(world, at.offset(0, -1))
             && mats.phase[m.index()] != Phase::Solid
         {
-            p.y -= 1.0;
+            p.cy -= 1;
         }
     }
 
@@ -259,11 +304,15 @@ impl Particles {
         self.visual = self.list.iter().filter(|p| p.flags & VISUAL != 0).count();
     }
 
-    /// Write all particles (for saves).
+    /// Write all particles (for saves): the count (u32), then for each particle: cell x and y
+    /// (i32), place in the cell x and y, velocity x and y (f32), material (u16), temperature (i16),
+    /// shade, life and flags (u8). 31 bytes for each particle.
     pub fn write(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         w.write_all(&(self.len() as u32).to_le_bytes())?;
         for p in &self.list {
-            for v in [p.x, p.y, p.vx, p.vy] {
+            w.write_all(&p.cx.to_le_bytes())?;
+            w.write_all(&p.cy.to_le_bytes())?;
+            for v in [p.fx, p.fy, p.vx, p.vy] {
                 w.write_all(&v.to_le_bytes())?;
             }
             w.write_all(&p.mat.to_le_bytes())?;
@@ -282,22 +331,23 @@ impl Particles {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "too many particles"));
         }
         let mut p = Particles::default();
-        let mut rec = [0u8; 23];
+        let mut rec = [0u8; 31];
         for _ in 0..n {
             r.read_exact(&mut rec)?;
-            let f = |i: usize| f32::from_le_bytes([rec[i], rec[i + 1], rec[i + 2], rec[i + 3]]);
-            let saved = u16::from_le_bytes([rec[16], rec[17]]) as usize;
+            let b4 = |i: usize| [rec[i], rec[i + 1], rec[i + 2], rec[i + 3]];
+            let f = |i: usize| f32::from_le_bytes(b4(i));
+            let saved = u16::from_le_bytes([rec[24], rec[25]]) as usize;
             p.spawn(
                 Spawn {
-                    x: f(0),
-                    y: f(4),
-                    vx: f(8),
-                    vy: f(12),
+                    x: i32::from_le_bytes(b4(0)) as f64 + f(8).clamp(0.0, BELOW_ONE) as f64,
+                    y: i32::from_le_bytes(b4(4)) as f64 + f(12).clamp(0.0, BELOW_ONE) as f64,
+                    vx: f(16),
+                    vy: f(20),
                     material: remap.get(saved).copied().unwrap_or(MaterialId::AIR),
-                    temperature: i16::from_le_bytes([rec[18], rec[19]]),
-                    shade: rec[20],
-                    life: rec[21],
-                    flags: rec[22],
+                    temperature: i16::from_le_bytes([rec[26], rec[27]]),
+                    shade: rec[28],
+                    life: rec[29],
+                    flags: rec[30],
                 },
                 usize::MAX,
             );
@@ -308,10 +358,11 @@ impl Particles {
     /// Particles inside an area, for the snapshot.
     pub fn views(&self, area: CellRect, out: &mut Vec<ParticleView>) {
         for p in &self.list {
-            if area.contains(CellPos::new(p.x as i32, p.y as i32)) {
+            if area.contains(p.cell()) {
+                let (x, y) = p.world_xy();
                 out.push(ParticleView {
-                    x: p.x,
-                    y: p.y,
+                    x,
+                    y,
                     vx: p.vx,
                     vy: p.vy,
                     material: p.mat,
@@ -351,8 +402,8 @@ fn move_one(p: &mut Particle, look: &mut impl FnMut(CellPos) -> Look, mats: &Mat
     let max_v = settings.particle_max_speed;
     vx = vx.clamp(-max_v, max_v);
     vy = vy.clamp(-max_v, max_v);
-    let (mut px, mut py) = (p.x, p.y);
-    let here = CellPos::new(px.floor() as i32, py.floor() as i32);
+    // The position relative to the top-left corner of the particle's cell.
+    let (mut here, mut px, mut py) = (p.cell(), p.fx, p.fy);
     match look(here) {
         Look::Cell(m) if passable(m, mats) => {}
         Look::Cell(_) | Look::Paused(_) if visual => {
@@ -375,6 +426,7 @@ fn move_one(p: &mut Particle, look: &mut impl FnMut(CellPos) -> Look, mats: &Mat
         Look::Wall => return,
         // Above the top of the world: come back down.
         Look::Outside if here.y < 0 => {
+            here = CellPos::new(here.x, 0);
             py = 0.5;
             vy = vy.max(0.0);
         }
@@ -384,7 +436,7 @@ fn move_one(p: &mut Particle, look: &mut impl FnMut(CellPos) -> Look, mats: &Mat
             return;
         }
     }
-    match fly(look, mats, px, py, vx, vy) {
+    match fly(look, mats, here, px, py, vx, vy) {
         Flight::Free => {
             px += vx;
             py += vy;
@@ -394,11 +446,11 @@ fn move_one(p: &mut Particle, look: &mut impl FnMut(CellPos) -> Look, mats: &Mat
                 p.flags |= GONE;
                 return;
             }
-            (px, py) = point_in_cell(px, py, vx, vy, t, last);
+            (px, py) = point_in_cell(here, px, py, vx, vy, t, last);
             p.flags |= LAND;
         }
         Flight::Ceiling { last, t } => {
-            (px, py) = point_in_cell(px, py, vx, vy, t, last);
+            (px, py) = point_in_cell(here, px, py, vx, vy, t, last);
             vy = vy.max(0.0);
         }
         Flight::Lost => {
@@ -406,7 +458,8 @@ fn move_one(p: &mut Particle, look: &mut impl FnMut(CellPos) -> Look, mats: &Mat
             return;
         }
     }
-    (p.x, p.y, p.vx, p.vy) = (px, py, vx, vy);
+    p.set_near(here, px, py);
+    (p.vx, p.vy) = (vx, vy);
 }
 
 /// What a particle finds at a cell.
@@ -526,23 +579,23 @@ impl Table {
     /// Fill the table for these particles. Returns false if it would have more than
     /// `MAX_TABLE_CHUNKS` chunks.
     fn build(&mut self, world: &mut World, list: &[Particle], max_speed: f32) -> bool {
-        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
         for p in list {
-            x0 = x0.min(p.x);
-            y0 = y0.min(p.y);
-            x1 = x1.max(p.x);
-            y1 = y1.max(p.y);
+            x0 = x0.min(p.cx);
+            y0 = y0.min(p.cy);
+            x1 = x1.max(p.cx);
+            y1 = y1.max(p.cy);
         }
         // A particle moves at most `max_speed` cells in x and in y in one tick. One above the top
         // of the world first moves to y = 0.5.
-        let m = max_speed.ceil() + 2.0;
-        let limit = (1i64 << 30) as f32;
-        let chunk = |v: f32| (v.clamp(-limit, limit).floor() as i32) >> CHUNK_SHIFT;
-        let (cx0, cy0, cx1, cy1) = (chunk(x0 - m), chunk(y0.min(0.0) - m), chunk(x1 + m), chunk(y1.max(0.0) + m));
-        let (w, h) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
-        if w as i64 * h as i64 > MAX_TABLE_CHUNKS {
+        let m = max_speed.clamp(0.0, 1e6).ceil() as i32 + 2;
+        let chunk = |v: i32| v >> CHUNK_SHIFT;
+        let (cx0, cy0) = (chunk(x0.saturating_sub(m)), chunk(y0.min(0).saturating_sub(m)));
+        let (cx1, cy1) = (chunk(x1.saturating_add(m)), chunk(y1.max(0).saturating_add(m)));
+        if (cx1 as i64 - cx0 as i64 + 1) * (cy1 as i64 - cy0 as i64 + 1) > MAX_TABLE_CHUNKS {
             return false;
         }
+        let (w, h) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
         (self.x0, self.y0, self.w, self.h) = (cx0, cy0, w, h);
         self.kinds.clear();
         for cy in cy0..=cy1 {
@@ -590,9 +643,10 @@ enum Flight {
 
 /// Follow the line from (x, y) to (x + vx, y + vy) through the grid, cell by cell, and stop at
 /// the first cell that is not air, gas or fire (or that is in a chunk that does not update).
+/// (x, y) is relative to the top-left corner of cell `origin`.
 #[inline]
-fn fly(look: &mut impl FnMut(CellPos) -> Look, mats: &MaterialTable, x: f32, y: f32, vx: f32, vy: f32) -> Flight {
-    for (last, c, t) in LineCells::new(x, y, vx, vy) {
+fn fly(look: &mut impl FnMut(CellPos) -> Look, mats: &MaterialTable, origin: CellPos, x: f32, y: f32, vx: f32, vy: f32) -> Flight {
+    for (last, c, t) in LineCells::new(origin, x, y, vx, vy) {
         match look(c) {
             Look::Cell(m) if passable(m, mats) => {}
             Look::Cell(_) | Look::Paused(_) | Look::Wall => return Flight::Hit { last, t },
@@ -606,7 +660,8 @@ fn fly(look: &mut impl FnMut(CellPos) -> Look, mats: &MaterialTable, x: f32, y: 
 /// The cells that the line from (x, y) to (x + vx, y + vy) crosses, in the order it crosses them,
 /// without the start cell. Each item is (the cell before, the cell, the line time 0 to 1 at which
 /// the line enters the cell). Two cells in a row always share a side, so the line never skips a
-/// cell, also not at a corner.
+/// cell, also not at a corner. (x, y) is relative to the top-left corner of cell `origin`, so the
+/// `f32` numbers stay small.
 struct LineCells {
     cx: i32,
     cy: i32,
@@ -624,7 +679,7 @@ struct LineCells {
 
 impl LineCells {
     #[inline]
-    fn new(x: f32, y: f32, vx: f32, vy: f32) -> Self {
+    fn new(origin: CellPos, x: f32, y: f32, vx: f32, vy: f32) -> Self {
         let (cx, cy) = (x.floor() as i32, y.floor() as i32);
         let (ex, ey) = ((x + vx).floor() as i32, (y + vy).floor() as i32);
         let (sx, sy) = ((ex - cx).signum(), (ey - cy).signum());
@@ -632,7 +687,9 @@ impl LineCells {
         let dty = if vy != 0.0 { 1.0 / vy.abs() } else { f32::INFINITY };
         let tx = if sx > 0 { (cx as f32 + 1.0 - x) * dtx } else { (x - cx as f32) * dtx };
         let ty = if sy > 0 { (cy as f32 + 1.0 - y) * dty } else { (y - cy as f32) * dty };
-        Self { cx, cy, sx, sy, nx: (ex - cx).abs(), ny: (ey - cy).abs(), dtx, dty, tx, ty }
+        let (nx, ny) = ((ex - cx).abs(), (ey - cy).abs());
+        let (cx, cy) = (origin.x.wrapping_add(cx), origin.y.wrapping_add(cy));
+        Self { cx, cy, sx, sy, nx, ny, dtx, dty, tx, ty }
     }
 }
 
@@ -661,10 +718,10 @@ impl Iterator for LineCells {
 }
 
 /// The point on the line at time `t`, moved inside cell `c` (so rounding cannot put it into the
-/// next cell).
-fn point_in_cell(x: f32, y: f32, vx: f32, vy: f32, t: f32, c: CellPos) -> (f32, f32) {
+/// next cell). The line and the result are relative to the top-left corner of cell `origin`.
+fn point_in_cell(origin: CellPos, x: f32, y: f32, vx: f32, vy: f32, t: f32, c: CellPos) -> (f32, f32) {
     let inside = |v: f32, lo: i32| v.clamp(lo as f32 + 0.01, lo as f32 + 0.99);
-    (inside(x + vx * t, c.x), inside(y + vy * t, c.y))
+    (inside(x + vx * t, c.x.wrapping_sub(origin.x)), inside(y + vy * t, c.y.wrapping_sub(origin.y)))
 }
 
 /// Air, gas and fire do not stop a particle.
@@ -721,7 +778,7 @@ fn free_spot(
         let len = (vx * vx + vy * vy).sqrt();
         if len > 0.01 {
             let k = (len + 2.0) / len;
-            for (_, c, _) in LineCells::new(at.x as f32 + 0.5, at.y as f32 + 0.5, -vx * k, -vy * k) {
+            for (_, c, _) in LineCells::new(at, 0.5, 0.5, -vx * k, -vy * k) {
                 match grid.look(world, c) {
                     Look::Cell(m) | Look::Paused(m) if m.is_air() => return Some(c),
                     Look::Cell(m) | Look::Paused(m) if mats.phase[m.index()] != Phase::Solid => {}
@@ -793,7 +850,7 @@ fn free_spot(
 /// and `b`). A landing particle can move through powder and liquid, but not through a wall.
 fn clear_path(grid: &mut Grid, world: &mut World, mats: &MaterialTable, a: CellPos, b: CellPos) -> bool {
     let (vx, vy) = ((b.x - a.x) as f32, (b.y - a.y) as f32);
-    for (_, c, _) in LineCells::new(a.x as f32 + 0.5, a.y as f32 + 0.5, vx, vy) {
+    for (_, c, _) in LineCells::new(a, 0.5, 0.5, vx, vy) {
         if c == b {
             break;
         }
