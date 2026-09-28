@@ -157,7 +157,9 @@ impl SpritePass {
 
 /// Premultiply the colors by alpha, so that filtering at the edges does not make dark fringes.
 fn premultiply(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| {
             let a = p[3] as u32;
             [(p[0] as u32 * a / 255) as u8, (p[1] as u32 * a / 255) as u8, (p[2] as u32 * a / 255) as u8, p[3]]

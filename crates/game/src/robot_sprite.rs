@@ -170,6 +170,62 @@ mod tests {
         assert!(lit > 50 && solid > 2000, "{lit} glowing and {solid} colored pixels");
     }
 
+    /// Writes out/robot_look.png: every frame of the robot on the lit surface (top row) and in a
+    /// dark cave with its lamp (bottom row). To check the art by eye.
+    /// Run with `cargo test -p deep_foundry -- --ignored robot_look_image`.
+    #[test]
+    #[ignore]
+    fn robot_look_image() {
+        use foundry_core::{CHUNK_SIZE, ChunkImage, ChunkPos, Snapshot, local_index, pack_texel};
+        use foundry_render::headless::{CAPTURE_FORMAT, capture, create_device};
+        use foundry_render::{Camera, Renderer};
+        let Some((device, queue)) = create_device() else { return };
+        let content = foundry_content::Content::load_default().unwrap();
+        let mut renderer = Renderer::new(&device, &queue, CAPTURE_FORMAT, &content);
+        crate::render_setup::load_robot_sheet(&mut renderer);
+        let (stone, dirt) = (content.expect_material("stone").0, content.expect_material("dirt").0);
+        // Sky above y = 60, dirt ground from y = 60, a closed cave from y = 110 to 150.
+        let mut snap = Snapshot { world_cells: (0, 256), ..Default::default() };
+        for cx in 0..4 {
+            for cy in 0..4 {
+                let pos = ChunkPos::new(cx, cy);
+                let mut c = ChunkImage::new_air(pos);
+                for y in 0..CHUNK_SIZE {
+                    for x in 0..CHUNK_SIZE {
+                        let (wx, wy) = (cx * CHUNK_SIZE + x, cy * CHUNK_SIZE + y);
+                        let cave = (8..248).contains(&wx) && (110..150).contains(&wy);
+                        let m = if wy < 60 || cave { 0 } else if wy < 76 { dirt } else { stone };
+                        c.texels[local_index(x, y)] = pack_texel(m, 20, ((wx * 7 + wy * 3) % 8) as u8, 0, 0);
+                    }
+                }
+                snap.chunks.push(c);
+            }
+        }
+        renderer.set_surface_level(60);
+        let camera = Camera::new(DVec2::new(128.0, 105.0), 6.0, glam::UVec2::new(1536, 700));
+        renderer.apply_snapshot(&snap, &camera);
+        let mut sprites = vec![];
+        let mut lights = vec![];
+        for (i, _) in FRAMES.iter().enumerate() {
+            for (row, feet_y) in [(0, 60.0), (1, 150.0)] {
+                let at = (10.0 + i as f32 * 24.0, feet_y - ROBOT_H as f32);
+                let mut s = robot_sprite(&Robot::standing_at(CellPos::new(0, 0)), at, 0);
+                s.src[0] = i as u32 * FRAME_W;
+                s.flip_x = i % 2 == 1 && row == 1;
+                sprites.push(s);
+                if row == 1 {
+                    lights.push(crate::render_setup::robot_lamp((at.0 + 4.0, at.1 + 8.0), 1));
+                }
+            }
+        }
+        renderer.set_sprites(&sprites);
+        renderer.set_lights(&lights[..2]);
+        let img = capture(&device, &queue, &mut renderer, &camera);
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../out/robot_look.png");
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        image::RgbaImage::from_raw(1536, 700, img).unwrap().save(&out).unwrap();
+    }
+
     #[test]
     fn bad_files_give_errors() {
         assert!(parse("frame idle0\n...\n").is_err());
