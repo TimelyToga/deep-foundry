@@ -22,6 +22,9 @@ pub enum Command {
     Step,
     /// Turn debug data in snapshots on or off (see `Snapshot::debug_chunks`).
     SetDebug(bool),
+    /// Change a number setting of the simulation, by its key (see `SimSettings::sliders` in
+    /// `foundry_sim`). Unknown keys are ignored.
+    SetSimSetting { key: String, value: f32 },
     /// Save the world to a file. The thread that owns the `Simulation` handles this command
     /// (with `Simulation::save_file`), not `Simulation::apply`. It reports the result in
     /// `Snapshot::notices`.

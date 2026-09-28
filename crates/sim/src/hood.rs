@@ -9,9 +9,11 @@
 //! All cell reads and writes go through raw element pointers (never `&mut Chunk`), because two
 //! jobs can hold pointers to the same neighbor chunk at the same time.
 
-use crate::SimEvent;
+use crate::particles::Spawn;
 use crate::react::ReactTable;
-use crate::chunk::{Chunk, FLAG_PARITY, LocalRect};
+use crate::schedule::PassInput;
+use crate::{SimEvent, SimSettings};
+use crate::chunk::{Chunk, FLAG_PARITY, LocalRect, MOTION_SPEED};
 use foundry_content::{MaterialTable, Phase};
 use foundry_core::{CHUNK_MASK, CHUNK_SHIFT, CellPos, MAX_CELL_MOVE, MaterialId, Rng};
 use std::ptr::{addr_of, addr_of_mut};
@@ -24,6 +26,9 @@ pub struct Hood<'a> {
     ptrs: [*mut Chunk; 9],
     pub mats: &'a MaterialTable,
     pub react: &'a ReactTable,
+    pub settings: &'a SimSettings,
+    /// False when there are too many particles: liquids do not splash.
+    pub splash_ok: bool,
     pub rng: Rng,
     /// `tick & 1`.
     pub parity: u8,
@@ -40,29 +45,84 @@ pub struct Hood<'a> {
     pub origin: CellPos,
     /// Events for the simulation to handle after the pass (explosions, ...).
     pub events: Vec<SimEvent>,
+    /// New particles (cells that left the grid), added after the pass.
+    pub spawns: Vec<Spawn>,
+    /// Rows (bit y) of each of the 9 chunks that got a cell with a fall speed (see
+    /// `Chunk::falling_rows`). Added to the chunks after the pass.
+    pub falling: [u64; 9],
+    /// For rows 0..64 of the center chunk: which cells from x = -64 to 127 are free (air, gas or
+    /// fire), as 3 words of bits, filled when first needed (see `row_has_free`).
+    free_rows: [[u64; 3]; 64],
+    /// Bit y: `free_rows[y]` is filled.
+    free_rows_known: u64,
+    /// World positions of liquid cells for the level pass (see `movement::level`).
+    pub levels: Vec<CellPos>,
+    /// World positions of top liquid cells that moved away (see `movement::wake_row_ends`).
+    pub opened: Vec<CellPos>,
 }
 
 impl<'a> Hood<'a> {
     /// # Safety
     /// The pointers must be valid for the whole life of the hood, and the caller must follow the
     /// safety rule in the module documentation.
-    #[allow(clippy::too_many_arguments)]
-    pub unsafe fn new(
-        ptrs: [*mut Chunk; 9],
-        mats: &'a MaterialTable,
-        react: &'a ReactTable,
-        rng: Rng,
-        parity: u8,
-        outside: MaterialId,
-        origin: CellPos,
-    ) -> Self {
-        Self { ptrs, mats, react, rng, parity, marks: [LocalRect::EMPTY; 9], changed: 0, touched: 0, outside, origin, events: Vec::new() }
+    pub unsafe fn new(ptrs: [*mut Chunk; 9], input: PassInput<'a>, rng: Rng, parity: u8, outside: MaterialId, origin: CellPos) -> Self {
+        Self {
+            ptrs,
+            mats: input.mats,
+            react: input.react,
+            settings: input.settings,
+            splash_ok: input.splash_ok,
+            rng,
+            parity,
+            marks: [LocalRect::EMPTY; 9],
+            changed: 0,
+            touched: 0,
+            outside,
+            origin,
+            events: Vec::new(),
+            spawns: Vec::new(),
+            falling: [0; 9],
+            free_rows: [[0; 3]; 64],
+            free_rows_known: 0,
+            levels: Vec::new(),
+            opened: Vec::new(),
+        }
     }
 
     /// World position of a hood cell.
     #[inline(always)]
     pub fn world_pos(&self, x: i32, y: i32) -> CellPos {
         self.origin.offset(x, y)
+    }
+
+    /// Take the cell out of the grid and make it a flying particle with this velocity
+    /// (cells per tick). The cell becomes air. The particle is added after the pass.
+    pub fn launch(&mut self, x: i32, y: i32, vx: f32, vy: f32) {
+        self.launch_from(x, y, x, y, vx, vy);
+    }
+
+    /// Like `launch`, but the particle starts in the middle of cell (sx, sy) (for example the
+    /// air cell above, so that a cell that moves into (x, y) later in the pass does not stop it).
+    pub fn launch_from(&mut self, x: i32, y: i32, sx: i32, sy: i32, vx: f32, vy: f32) {
+        let m = self.mat(x, y);
+        if m.is_air() {
+            return;
+        }
+        let p = self.world_pos(sx, sy);
+        let (temp, shade, life) = (self.temp(x, y), self.read_u8(x, y, |p| unsafe { addr_of!((*p).shade).cast::<u8>() }), self.life(x, y));
+        self.spawns.push(Spawn {
+            x: p.x as f32 + 0.5,
+            y: p.y as f32 + 0.5,
+            vx,
+            vy,
+            material: m,
+            temperature: temp,
+            shade,
+            life,
+            flags: 0,
+        });
+        self.replace(x, y, MaterialId::AIR, None);
+        self.set_motion(x, y, 0);
     }
 
     /// Send an event to the simulation. It is handled after the movement passes.
@@ -94,6 +154,109 @@ impl<'a> Hood<'a> {
         }
         // SAFETY: valid pointer (see `new`); element access only.
         MaterialId(unsafe { *addr_of!((*p).mat).cast::<u16>().add(i) })
+    }
+
+    /// The cells in row `y` of the center chunk, with x in `x0..x1`, that are not air and have a
+    /// fall speed, as bits (bit x). A fast check for the fall pass: it reads the motion bytes 8 at
+    /// a time and looks at single cells only where a fall speed is set.
+    #[inline]
+    pub fn center_row_falling(&self, y: i32, x0: i32, x1: i32) -> u64 {
+        debug_assert!((0..64).contains(&y) && 0 <= x0 && x1 <= 64);
+        let p = self.ptrs[4];
+        let start = (y << CHUNK_SHIFT) as usize;
+        // SAFETY: the center chunk exists (see `new`); the row is in the job's own chunk.
+        let (mat, motion) = unsafe {
+            (
+                std::slice::from_raw_parts(addr_of!((*p).mat).cast::<u16>().add(start), 64),
+                std::slice::from_raw_parts(addr_of!((*p).motion).cast::<u8>().add(start), 64),
+            )
+        };
+        const SPEED8: u64 = 0x1f1f_1f1f_1f1f_1f1f;
+        let mut bits = 0u64;
+        for (w, bytes) in motion.chunks_exact(8).enumerate() {
+            let word = u64::from_le_bytes(bytes.try_into().unwrap());
+            if word & SPEED8 == 0 {
+                continue;
+            }
+            for k in 0..8 {
+                let x = w * 8 + k;
+                if bytes[k] & MOTION_SPEED != 0 && mat[x] != 0 {
+                    bits |= 1 << x;
+                }
+            }
+        }
+        let range = if x1 - x0 >= 64 { u64::MAX } else { ((1u64 << (x1 - x0)) - 1) << x0 };
+        bits & range
+    }
+
+    /// True if a free cell (air, gas or fire) may be in row `y` (0..64) with x in `x0..x1`
+    /// (`-64 <= x0`, `x1 <= 128`). The rows are read once per job, so a cell that became free
+    /// later in this job may be missed (the move that made it free wakes the row for the next tick);
+    /// a false true only costs a scan.
+    #[inline]
+    pub fn row_has_free(&mut self, y: i32, x0: i32, x1: i32) -> bool {
+        debug_assert!((0..64).contains(&y));
+        if self.free_rows_known & (1 << y) == 0 {
+            let mut words = [0u64; 3];
+            for (k, word) in words.iter_mut().enumerate() {
+                let p = self.ptrs[3 + k];
+                if p.is_null() {
+                    continue;
+                }
+                // SAFETY: as in `mat`; one row of one chunk of the hood.
+                let row = unsafe { std::slice::from_raw_parts(addr_of!((*p).mat).cast::<u16>().add((y << CHUNK_SHIFT) as usize), 64) };
+                for (x, &m) in row.iter().enumerate() {
+                    let free = m == 0 || matches!(self.mats.phase[m as usize], Phase::Gas | Phase::Fire);
+                    *word |= (free as u64) << x;
+                }
+            }
+            self.free_rows[y as usize] = words;
+            self.free_rows_known |= 1 << y;
+        }
+        let words = &self.free_rows[y as usize];
+        let (a, b) = ((x0.max(-64) + 64) as u32, (x1.min(128) + 64) as u32);
+        // Bits a..b of the 192-bit row.
+        (0..3u32).any(|k| {
+            let (lo, hi) = (a.max(k * 64), b.min(k * 64 + 64));
+            if lo >= hi {
+                return false;
+            }
+            let n = hi - lo;
+            let mask = if n == 64 { u64::MAX } else { ((1u64 << n) - 1) << (lo - k * 64) };
+            words[k as usize] & mask != 0
+        })
+    }
+
+    /// How many cells next to (x, y) in direction `dir` (1 or -1), one after another, have
+    /// material `m`, at most `max`. Reads the rows of the chunks directly (faster than `mat`
+    /// for each cell). The cells read must stay within the reach rule.
+    #[inline]
+    pub fn run_of(&self, x: i32, y: i32, dir: i32, m: MaterialId, max: i32) -> i32 {
+        let mut n = 0;
+        let mut cx = x + dir;
+        while n < max {
+            let (s, i) = Self::slot(cx, y);
+            let p = self.ptrs[s];
+            if p.is_null() {
+                return n;
+            }
+            // Cells of this chunk on the row, in direction `dir`.
+            let lx = cx & CHUNK_MASK;
+            let left = if dir > 0 { CHUNK_MASK - lx } else { lx } + 1;
+            let count = left.min(max - n);
+            // SAFETY: as in `mat`; the cells are in one row of one chunk.
+            let row = unsafe { addr_of!((*p).mat).cast::<u16>().add(i) };
+            for k in 0..count {
+                // SAFETY: `k` steps stay inside the chunk row (see `left`).
+                let v = unsafe { *row.offset((k * dir) as isize) };
+                if v != m.0 {
+                    return n + k;
+                }
+            }
+            n += count;
+            cx += dir * count;
+        }
+        n
     }
 
     #[inline(always)]
@@ -141,7 +304,32 @@ impl<'a> Hood<'a> {
 
     #[inline(always)]
     pub fn set_motion(&mut self, x: i32, y: i32, v: u8) {
-        self.write_u8(x, y, v, |p| unsafe { addr_of_mut!((*p).motion).cast::<u8>() })
+        self.write_u8(x, y, v, |p| unsafe { addr_of_mut!((*p).motion).cast::<u8>() });
+        if v & MOTION_SPEED != 0 {
+            self.note_falling(x, y);
+        }
+    }
+
+    /// The cell has a fall speed: the fall pass must look at its row.
+    #[inline(always)]
+    fn note_falling(&mut self, x: i32, y: i32) {
+        let (s, _) = Self::slot(x, y);
+        self.falling[s] |= 1 << (y & CHUNK_MASK);
+    }
+
+    /// `Chunk::falling_rows` of the center chunk.
+    #[inline]
+    pub fn center_falling_rows(&self) -> u64 {
+        // SAFETY: the center chunk exists (see `new`); only the job of the center chunk writes this
+        // field during a pass.
+        unsafe { *addr_of!((*self.ptrs[4]).falling_rows) }
+    }
+
+    /// Clear row `y` in `Chunk::falling_rows` of the center chunk (no falling cell is left there).
+    #[inline]
+    pub fn clear_center_falling_row(&mut self, y: i32) {
+        // SAFETY: as in `center_falling_rows`.
+        unsafe { *addr_of_mut!((*self.ptrs[4]).falling_rows) &= !(1u64 << y) }
     }
 
     #[inline(always)]
@@ -205,6 +393,12 @@ impl<'a> Hood<'a> {
             std::ptr::swap(addr_of_mut!((*pa).shade).cast::<u8>().add(ia), addr_of_mut!((*pb).shade).cast::<u8>().add(ib));
             std::ptr::swap(addr_of_mut!((*pa).life).cast::<u8>().add(ia), addr_of_mut!((*pb).life).cast::<u8>().add(ib));
             std::ptr::swap(addr_of_mut!((*pa).motion).cast::<u8>().add(ia), addr_of_mut!((*pb).motion).cast::<u8>().add(ib));
+            if *addr_of!((*pa).motion).cast::<u8>().add(ia) & MOTION_SPEED != 0 {
+                self.falling[sa] |= 1 << (ay & CHUNK_MASK);
+            }
+            if *addr_of!((*pb).motion).cast::<u8>().add(ib) & MOTION_SPEED != 0 {
+                self.falling[sb] |= 1 << (by & CHUNK_MASK);
+            }
         }
         self.set_updated(ax, ay);
         self.set_updated(bx, by);
