@@ -37,8 +37,10 @@ pub struct UiModel {
     pub player: PlayerView,
     /// Finished technologies. A recipe that a technology unlocks shows only when it is here.
     pub finished_techs: Vec<TechId>,
-    /// The cell or building under the mouse, for the entity info panel.
+    /// The cell or building under the mouse, for the hover box.
     pub hover: Option<HoverView>,
+    /// More about the thing under the mouse (normal mode).
+    pub hover_detail: HoverDetail,
     /// The research that runs now.
     pub research: Option<ResearchView>,
     pub alerts: Vec<AlertView>,
@@ -94,6 +96,9 @@ pub struct TechEntry {
     pub reasons: Vec<String>,
     /// Place in the research queue (0 = next). `None` if it is not queued.
     pub queue_position: Option<usize>,
+    /// Locked only because technologies before it are not done: the Queue button queues them
+    /// first, then this one (`UiAction::StartResearch`).
+    pub can_queue: bool,
 }
 
 /// One goal of the guide (like a quest in the GTNH quest book).
@@ -158,6 +163,7 @@ impl UiModel {
             player: PlayerView::default(),
             finished_techs: vec![],
             hover: None,
+            hover_detail: HoverDetail::default(),
             research: None,
             alerts: vec![],
             building: None,
@@ -604,8 +610,13 @@ pub struct Settings {
     /// Number settings of the simulation (for example the liquid rules). The settings screen
     /// shows one slider for each, in the "Simulation" section. Empty: the section says so.
     pub simulation: Vec<SimSetting>,
-    /// (action, key) pairs. Read only for now.
-    pub key_bindings: Vec<(String, String)>,
+    /// The rows of the Controls list. The player clicks a row that is not `fixed` and presses a
+    /// key to change it (`SettingChange::RebindKey`).
+    pub key_bindings: Vec<KeyRow>,
+    /// Keys match by the character that they type (the keyboard layout), not by their position.
+    pub keys_by_letter: bool,
+    /// The id of the row that waits for a key press.
+    pub key_waiting: Option<String>,
 }
 
 impl Default for Settings {
@@ -617,8 +628,89 @@ impl Default for Settings {
             show_debug: false,
             simulation: vec![],
             key_bindings: default_key_bindings(),
+            keys_by_letter: false,
+            key_waiting: None,
         }
     }
+}
+
+impl Settings {
+    /// The key of an action id on the player's keyboard, for example `key("guide")` is "G".
+    pub fn key(&self, id: &str) -> &str {
+        self.key_bindings.iter().find(|r| r.id == id).map_or("?", |r| r.key.as_str())
+    }
+
+    /// The first key of an action id, for example `first_key("camera_up")` is "W" when the
+    /// action has "W / Up".
+    pub fn first_key(&self, id: &str) -> &str {
+        self.key(id).split(" / ").next().unwrap_or("?")
+    }
+
+    /// The text with each `{key:ID}` replaced by the key of that action.
+    pub fn with_keys(&self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(i) = rest.find("{key:") {
+            out.push_str(&rest[..i]);
+            let after = &rest[i + 5..];
+            match after.find('}') {
+                Some(j) => {
+                    out.push_str(self.key(&after[..j]));
+                    rest = &after[j + 1..];
+                }
+                None => {
+                    out.push_str(&rest[i..]);
+                    rest = "";
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+}
+
+/// One row of the Controls list in the settings screen.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct KeyRow {
+    /// The action id, for `SettingChange::RebindKey` and for `{key:ID}` in texts. Empty for
+    /// rows that only explain (mouse buttons).
+    pub id: String,
+    /// What the key does.
+    pub action: String,
+    /// The key as the player's keyboard shows it, for example "R" or "Ctrl + Z".
+    pub key: String,
+    /// Mouse buttons and Esc: the player cannot change them.
+    pub fixed: bool,
+}
+
+impl KeyRow {
+    pub fn new(id: &str, action: &str, key: &str, fixed: bool) -> Self {
+        Self { id: id.into(), action: action.into(), key: key.into(), fixed }
+    }
+}
+
+/// More about the thing under the mouse, for the hover box (normal mode). The game fills it
+/// together with `UiModel::hover`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HoverDetail {
+    /// A cell: can the robot dig it now. `None`: no dig rules (sandbox mode).
+    pub dig: Option<DigState>,
+    /// A cell: the player has not discovered (scanned) this material yet.
+    pub undiscovered: bool,
+    /// A building: why it does not work, for example "Needs 3 more Bronze plate".
+    pub reason: String,
+    /// A building: hit points now and at most.
+    pub hit_points: Option<(u32, u32)>,
+}
+
+/// Can the robot dig a cell.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DigState {
+    CanDig,
+    /// Too hard for the drill head now; `needs` says what helps, for example "Bronze drill head".
+    TooHard { needs: String },
+    /// Nothing digs it (bedrock), or it is not a solid or powder.
+    Never,
 }
 
 /// One number setting of the simulation. The UI sends
@@ -638,34 +730,45 @@ pub struct SimSetting {
     pub step: f32,
 }
 
-/// The keys of the game, for the settings screen.
-pub fn default_key_bindings() -> Vec<(String, String)> {
+/// The keys of the game, for the settings screen (the game gives its own list).
+pub fn default_key_bindings() -> Vec<KeyRow> {
     [
-        ("Move left / right", "A / D"),
-        ("Jump, jetpack", "Space"),
-        ("Dig", "Left mouse"),
-        ("Spray material", "Right mouse"),
-        ("Character screen", "E"),
-        ("Production statistics", "P"),
-        ("Research", "T"),
-        ("Guide", "G"),
-        ("Close window / menu", "Esc"),
-        ("Quickbar slot 1-10", "1 - 0"),
-        ("Quickbar slot 11-20", "Shift + 1 - 0"),
-        ("Rotate", "R"),
-        ("Flip", "F"),
-        ("Pick building under cursor", "Q"),
-        ("Remove", "X"),
-        ("Back layer view", "Tab"),
-        ("Info view", "Alt"),
-        ("Undo / redo", "Ctrl + Z / Ctrl + Y"),
-        ("Pick up / put down stack", "Left click"),
-        ("Take half / put one", "Right click"),
-        ("Move stack to other inventory", "Shift + left click"),
-        ("Move all of this item", "Ctrl + left click"),
+        ("move_left", "Move left", "A"),
+        ("move_right", "Move right", "D"),
+        ("jump", "Jump, jetpack", "Space"),
+        ("", "Dig", "Left mouse"),
+        ("", "Spray material", "Right mouse"),
+        ("character", "Character screen", "E"),
+        ("production", "Production statistics", "P"),
+        ("research", "Research", "T"),
+        ("guide", "Guide", "G"),
+        ("", "Close window / menu", "Esc"),
+        ("quickbar", "Quickbar slot 1-10", "1 - 0"),
+        ("", "Quickbar slot 11-20", "Shift + 1 - 0"),
+        ("rotate", "Rotate", "R"),
+        ("flip", "Flip", "F"),
+        ("scan", "Scan", "F"),
+        ("pipette", "Pick building under cursor", "Q"),
+        ("alt_mode", "Info view", "Alt"),
+        ("undo", "Undo", "Ctrl + Z"),
+        ("redo", "Redo", "Ctrl + Y"),
+        ("debug", "Debug panel", "F3"),
+        ("camera_up", "Move the view up", "W"),
+        ("camera_left", "Move the view left", "A"),
+        ("camera_down", "Move the view down", "S"),
+        ("camera_right", "Move the view right", "D"),
+        ("brush_smaller", "Smaller brush", "["),
+        ("brush_larger", "Larger brush", "]"),
+        ("pause", "Pause the simulation", "Space"),
+        ("quickbar1", "Quickbar slot 1", "1"),
+        ("quickbar10", "Quickbar slot 10", "0"),
+        ("", "Pick up / put down stack", "Left click"),
+        ("", "Take half / put one", "Right click"),
+        ("", "Move stack to other inventory", "Shift + left click"),
+        ("", "Move all of this item", "Ctrl + left click"),
     ]
     .iter()
-    .map(|(a, k)| (a.to_string(), k.to_string()))
+    .map(|(id, a, k)| KeyRow::new(id, a, k, id.is_empty()))
     .collect()
 }
 

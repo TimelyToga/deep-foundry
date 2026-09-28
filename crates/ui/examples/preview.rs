@@ -57,6 +57,8 @@ impl Preview {
             };
         }
         if pressed(Key::F7) {
+            let building = matches!(self.game.model.hover, Some(HoverView::Cell { .. }));
+            self.game.model.hover_detail = if building { mock::hover_building_detail() } else { mock::hover_cell_detail() };
             let hover = &mut self.game.model.hover;
             *hover = match hover {
                 Some(HoverView::Cell { .. }) => Some(mock::hover_building(&c)),

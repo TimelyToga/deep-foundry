@@ -63,7 +63,6 @@ impl SandboxUi {
         model.finished_techs.clear();
         if mode == GameMode::Normal {
             model.sandbox = None;
-            model.settings.key_bindings = crate::normal::key_bindings();
             return;
         }
         model.player.inventory = content
@@ -78,7 +77,6 @@ impl SandboxUi {
         model.player.hand = model.player.hotbar[0].map(|item| Stack { item, count: 1 });
         model.player.craft_speed = 1.0;
         model.sandbox = Some(SandboxView { brush_radius: 6, sim_paused: false });
-        model.settings.key_bindings = key_bindings();
     }
 
     /// The material that the brush paints: the material in the hand.
@@ -164,30 +162,6 @@ impl SandboxUi {
             _ => false,
         }
     }
-}
-
-/// The keys of the sandbox, for the settings screen.
-fn key_bindings() -> Vec<(String, String)> {
-    [
-        ("Paint with the material in the hand", "Left mouse"),
-        ("Erase (paint air)", "Right mouse"),
-        ("Brush size", "[  and  ]"),
-        ("Materials window", "E"),
-        ("Quickbar slot 1-10", "1 - 0"),
-        ("Quickbar slot 11-20", "Shift + 1 - 0"),
-        ("Empty the hand", "Q"),
-        ("Move the view", "W A S D, arrow keys"),
-        ("Move the view faster", "Shift"),
-        ("Move the view with the mouse", "Middle mouse drag"),
-        ("Zoom", "Mouse wheel"),
-        ("Pause the simulation", "Space"),
-        ("One tick (while paused)", ". (period)"),
-        ("Pause menu / close window", "Esc"),
-        ("Debug panel", "F3"),
-    ]
-    .iter()
-    .map(|(a, k)| (a.to_string(), k.to_string()))
-    .collect()
 }
 
 /// Draw egui on top of `target`. With `clear`, fill the target with that color first

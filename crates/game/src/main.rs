@@ -7,15 +7,19 @@
 
 mod app;
 mod args;
+mod construct;
+mod construct_draw;
 mod controls;
 mod debug_panel;
 mod demo;
 mod factory_host;
+mod keys;
 mod normal;
 mod overlay;
 mod player;
 mod saves;
 mod screenshot;
+mod settings;
 mod sim_thread;
 mod smoke;
 mod tools;
