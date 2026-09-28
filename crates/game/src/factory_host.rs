@@ -932,11 +932,12 @@ impl FactoryHost {
             if r.tank_full.is_some() {
                 self.tanks_full_until = self.ticks + TANKS_FULL_TICKS;
             }
-            if r.dug == 0 {
-                // Full tanks first: the player can do something about it now.
-                if r.tank_full.is_some() {
-                    self.notice(TANKS_FULL);
-                } else if let Some(m) = r.too_hard {
+            // Full tanks first: the player can do something about it now. (Dropped cells still
+            // dig, so this can happen while other cells are dug.)
+            if r.tank_full.is_some() {
+                self.notice(TANKS_FULL);
+            } else if r.dug == 0 {
+                if let Some(m) = r.too_hard {
                     self.notice(format!("{} is too hard: research a better drill head", content.materials.names[m.index()]));
                 } else if let Some(m) = r.too_hot {
                     self.notice(format!("{} is too hot for the tank", content.materials.names[m.index()]));
