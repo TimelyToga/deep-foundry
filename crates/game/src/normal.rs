@@ -7,12 +7,12 @@
 use crate::construct::{BuildView, Construct, DragLine, LocalGhost, Mods, footprint_at, turned_size};
 use crate::factory_host::{FactoryCommand, FactoryFrame, GameCommand, GhostRequest, Placement, PlayerInput, SlotGroup, SlotTarget, Turn};
 use crate::player::MoveInput;
-use foundry_content::{Content, ItemRef, Stack};
-use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId};
+use foundry_content::{Content, ItemRef, Phase, Stack};
+use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId, TechId};
 use foundry_factory::progress::{GoalView, LockReason, TechState as FactoryTechState, TechView};
 use foundry_factory::{Click, Status};
 use foundry_ui::{
-    BuildingSlot, BuildingSlots, BuildingView, ClickButton, CraftJobView, Delivery, GuideGoal, HoverView, MachineStatus, MaterialBuffer,
+    BuildingSlot, BuildingSlots, BuildingView, ClickButton, CraftJobView, Delivery, DigState, GuideGoal, HoverDetail, HoverView, MachineStatus, MaterialBuffer,
     MilestoneView, ResearchView, SlotClick, SlotRef, TankSlot, TechEntry, TechState, UiAction, UiModel, WindowKind,
 };
 use std::time::Instant;
@@ -388,17 +388,43 @@ impl NormalMode {
         model.discovery_points = f.discovery_points;
         model.techs.clear();
         model.techs.extend(self.techs.iter().map(tech_entry));
+        // Guide texts name keys as `{key:ID}`: the player's keys go there.
+        let goals: Vec<GuideGoal> = self
+            .guide
+            .iter()
+            .map(|g| GuideGoal {
+                id: g.id.clone(),
+                tier: g.tier,
+                title: g.title.clone(),
+                text: model.settings.with_keys(&g.text),
+                done: g.done,
+                count: g.count,
+                reward_points: g.reward_points,
+            })
+            .collect();
         model.guide.clear();
-        model.guide.extend(self.guide.iter().map(|g| GuideGoal {
-            id: g.id.clone(),
-            tier: g.tier,
-            title: g.title.clone(),
-            text: g.text.clone(),
-            done: g.done,
-            count: g.count,
-            reward_points: g.reward_points,
-        }));
+        model.guide.extend(goals);
         model.building = f.building.as_ref().map(|b| building_view(&content, b, f.milestone.as_ref()));
+    }
+
+    /// More about the thing under the mouse for the hover box: the dig rules and the discovery of
+    /// a cell, or the reason and hit points of a building.
+    pub fn hover_detail(&self, content: &Content, hover: Option<&HoverView>) -> HoverDetail {
+        let f = &self.frame;
+        match hover {
+            Some(HoverView::Cell { material, .. }) => HoverDetail {
+                dig: dig_state(content, *material, f.dig_limit, &f.finished_techs),
+                undiscovered: !material.is_air()
+                    && content.materials.phase[material.index()] != Phase::Empty
+                    && !f.discovered.contains(material),
+                ..Default::default()
+            },
+            Some(HoverView::Building { id, .. }) => match f.hover.as_ref().filter(|h| h.id == *id) {
+                Some(h) => HoverDetail { reason: h.reason.clone(), hit_points: Some(h.hit_points), ..Default::default() },
+                None => HoverDetail::default(),
+            },
+            None => HoverDetail::default(),
+        }
     }
 
     /// The hover view for the building under the mouse, if there is one.
@@ -526,37 +552,37 @@ fn building_view(content: &Content, b: &foundry_factory::BuildingView, milestone
     }
 }
 
-/// The keys of the normal mode, for the settings screen.
-pub fn key_bindings() -> Vec<(String, String)> {
-    [
-        ("Move left / right", "A / D"),
-        ("Jump, swim up", "W or Space"),
-        ("Dig (hold)", "Left mouse"),
-        ("Spray material from the tank (hold)", "Right mouse"),
-        ("Choose the spray material", "Click a tank slot"),
-        ("Scan the material under the mouse", "F (hold)"),
-        ("Place the building in the hand (drag: a line)", "Left mouse"),
-        ("Rotate the building in the hand or under the mouse", "R / Shift + R"),
-        ("Flip the building in the hand", "F"),
-        ("Open a building", "Left mouse on it (empty hand)"),
-        ("Remove buildings (hold and drag)", "Right mouse on a building"),
-        ("Pick the building under the mouse / empty the hand", "Q"),
-        ("Undo / redo", "Ctrl + Z / Ctrl + Y"),
-        ("Copy / paste the recipe", "Shift + right / left click"),
-        ("Alt mode: recipes and belt directions", "Alt"),
-        ("Character screen", "E"),
-        ("Research", "T"),
-        ("Guide", "G"),
-        ("Production statistics", "P"),
-        ("Quickbar slot 1-10", "1 - 0"),
-        ("Quickbar slot 11-20", "Shift + 1 - 0"),
-        ("Pause menu / close window", "Esc"),
-        ("Zoom", "Mouse wheel"),
-        ("Debug panel", "F3"),
-    ]
-    .iter()
-    .map(|(a, k)| (a.to_string(), k.to_string()))
-    .collect()
+/// Can the robot dig a material now, by the dig rules of `tools::dig` (for the hover box).
+/// `None` for air, gas and fire. `limit` is the hardest material the drill head digs; `done` the
+/// finished technologies (the next drill head technology is named when it is too hard).
+pub fn dig_state(content: &Content, m: MaterialId, limit: u8, done: &[TechId]) -> Option<DigState> {
+    let phase = content.materials.phase[m.index()];
+    if m.is_air() || matches!(phase, Phase::Gas | Phase::Fire | Phase::Empty) {
+        return None;
+    }
+    let h = content.materials.hardness[m.index()];
+    if h == u8::MAX {
+        return Some(DigState::Never);
+    }
+    if h <= limit {
+        return Some(DigState::CanDig);
+    }
+    let levels = &crate::tools::DIG_HARDNESS;
+    let (Some(need), Some(have)) = (levels.iter().position(|&x| x >= h), levels.iter().position(|&x| x >= limit)) else {
+        return Some(DigState::Never);
+    };
+    // The drill head technologies that are not done yet, in data order; the one that reaches the
+    // needed level.
+    let techs: Vec<&str> = content
+        .factory
+        .techs
+        .iter()
+        .enumerate()
+        .filter(|(i, t)| t.effects.iter().any(|(e, _)| e == "dig_hardness") && !done.contains(&TechId(*i as u16)))
+        .map(|(_, t)| t.name.as_str())
+        .collect();
+    let needs = techs.get(need.saturating_sub(have + 1)).map_or("a better drill head".to_string(), |n| n.to_string());
+    Some(DigState::TooHard { needs })
 }
 
 #[cfg(test)]

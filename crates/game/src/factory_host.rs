@@ -210,6 +210,10 @@ pub struct HoverBuilding {
     pub rotation: u8,
     pub flip: bool,
     pub status: Status,
+    /// Why it does not work (for the hover box).
+    pub reason: String,
+    /// Hit points now and at most.
+    pub hit_points: (u32, u32),
     pub recipe: Option<RecipeId>,
     pub progress: f32,
     pub temperature: i16,
@@ -283,6 +287,10 @@ pub struct FactoryFrame {
     /// The building that the remove button takes now, and the ones that wait after it.
     pub removing: Option<RemoveView>,
     pub remove_queue: Vec<CellRect>,
+    /// The hardest material the drill head digs now (for the hover box).
+    pub dig_limit: u8,
+    /// Materials the player has discovered (scanned).
+    pub discovered: Vec<MaterialId>,
     /// Messages for the player.
     pub notices: Vec<String>,
 }
@@ -1008,6 +1016,8 @@ impl FactoryHost {
                 rect: b.cell_rect(),
                 rotation: b.transform.rotation,
                 flip: b.transform.flip,
+                reason: v.reason.clone(),
+                hit_points: (v.hit_points, v.max_hit_points),
                 status: b.status,
                 recipe: v.recipe,
                 progress: v.progress,
@@ -1073,6 +1083,8 @@ impl FactoryHost {
             drag_stop: self.drag_stop.clone(),
             removing: self.removal_view(),
             remove_queue: self.removal_queue_rects(),
+            dig_limit: tools::dig_limit(f),
+            discovered: f.progress.discovered_materials().collect(),
             notices: std::mem::take(&mut self.notices),
         }
     }

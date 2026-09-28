@@ -21,6 +21,8 @@ use crate::debug_panel::{self, DebugAction, StatsView};
 use crate::demo;
 use crate::factory_host::{FactoryCommand, FactoryHost, GameCommand};
 use crate::construct::Mods;
+use crate::keys::{Action, Bindings, KeyBind, KeyNames, Press};
+use crate::settings::{self, SavedSettings};
 use crate::normal::NormalMode;
 use crate::overlay;
 use crate::saves::{self, SaveMeta};
@@ -34,7 +36,7 @@ use foundry_core::{CellPos, CellRect, CellTexel, ChunkPos, Command, DebugChunk, 
 use foundry_render::headless::device_descriptor;
 use foundry_render::{Renderer, wgpu};
 use foundry_sim::Simulation;
-use foundry_ui::{GameMode, GameState, HoverView, MenuPage, PerfView, SettingChange, UiAction, WindowKind, WorldSize};
+use foundry_ui::{GameMode, GameState, HoverView, MenuPage, PerfView, SettingChange, UiAction, UiKey, WindowKind, WorldSize};
 use glam::{DVec2, UVec2, Vec2};
 use std::collections::HashMap;
 use std::path::Path;
@@ -44,7 +46,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
 /// Extra cells around the screen that the simulation sends, so panning shows no empty chunks.
@@ -263,6 +265,19 @@ struct Game {
     needs_configure: bool,
     /// `--smoke-test`.
     smoke: Option<Smoke>,
+    /// The key table and the key names of the player's keyboard (in the settings file).
+    bindings: Bindings,
+    key_names: KeyNames,
+    /// The settings file and what it holds.
+    settings_path: std::path::PathBuf,
+    saved: SavedSettings,
+    /// The Controls rows in the UI model must be made again.
+    keys_dirty: bool,
+    /// The mode of the Controls rows (`None`: not made yet; `Some(None)`: the main menu).
+    rows_mode: Option<Option<bool>>,
+    /// Esc stopped the wait for a new key: stop it after the next UI frame (so the UI does not
+    /// also use this Esc to close the menu).
+    cancel_wait: bool,
 }
 
 impl Game {
@@ -295,7 +310,14 @@ impl Game {
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .context("the surface does not work with this GPU")?;
         config.format = format;
-        config.present_mode = present_mode(&caps.present_modes, !args.no_vsync);
+        // The settings file: UI scale, vsync, keys. The command line wins.
+        let settings_path = args.settings.clone().unwrap_or_else(settings::default_path);
+        let (saved, settings_error) = settings::load(&settings_path);
+        if let Some(e) = &settings_error {
+            log::warn!("{e}");
+        }
+        let vsync = saved.vsync && !args.no_vsync;
+        config.present_mode = present_mode(&caps.present_modes, vsync);
         config.desired_maximum_frame_latency = 2;
         config.alpha_mode = caps.alpha_modes[0];
         surface.configure(&device, &config);
@@ -315,8 +337,20 @@ impl Game {
 
         let saves_dir = args.saves.clone().unwrap_or_else(saves::default_dir);
         let mut ui = SandboxUi::new(&egui_ctx, content.clone(), saves_dir);
-        ui.model.settings.ui_scale = args.ui_scale;
-        ui.model.settings.vsync = !args.no_vsync;
+        ui.model.settings.ui_scale = if args.ui_scale_set { args.ui_scale } else { saved.ui_scale.clamp(0.75, 2.0) };
+        ui.model.settings.vsync = vsync;
+        ui.model.settings.show_fps = saved.show_fps;
+        ui.model.settings.show_debug = saved.show_debug;
+        for s in ui.model.settings.simulation.iter_mut() {
+            if let Some(v) = saved.simulation.get(&s.key) {
+                s.value = *v;
+            }
+        }
+        // The game reads the keys with its bindings and gives the UI its keys.
+        ui.ui.use_game_keys();
+        if let Some(e) = settings_error {
+            ui.message(e, Instant::now());
+        }
 
         let viewport = UVec2::new(config.width, config.height);
         let controls = CameraControl::new(DVec2::ZERO, 2.0, viewport, DVec2::ZERO);
@@ -360,6 +394,13 @@ impl Game {
             exit_after: args.exit_after.map(Duration::from_secs_f64),
             needs_configure: false,
             smoke: args.smoke_test.then(Smoke::new),
+            bindings: saved.bindings.clone(),
+            key_names: saved.names(),
+            settings_path,
+            saved,
+            keys_dirty: true,
+            rows_mode: None,
+            cancel_wait: false,
         };
         game.enter(args.start_state(), args.seed, args.shape());
         Ok(game)
@@ -403,11 +444,22 @@ impl Game {
             WindowEvent::KeyboardInput { event, .. } => {
                 let down = event.state == ElementState::Pressed;
                 let PhysicalKey::Code(code) = event.physical_key else { return };
+                let text = key_text(&event);
+                // Each key press teaches the name of the key on the player's keyboard.
+                if down && self.key_names.learn(code, text.as_deref()) {
+                    self.keys_dirty = true;
+                    self.save_settings();
+                }
                 // A text field has the keyboard: only key releases count.
                 if down && self.egui_ctx.text_edit_focused() {
                     return;
                 }
-                self.key(code, down, event.repeat);
+                let press = Press { code, text, ctrl: self.held.ctrl, shift: self.held.shift };
+                if down && self.ui.model.settings.key_waiting.is_some() {
+                    self.rebind(&press);
+                    return;
+                }
+                self.key(&press, down, event.repeat);
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.held.shift = m.state().shift_key();
@@ -476,81 +528,134 @@ impl Game {
         }
     }
 
-    /// Game keys. The UI reads E, P, Esc, 1-0 and Shift + 1-0 itself; the game does not use them.
-    fn key(&mut self, code: KeyCode, down: bool, repeat: bool) {
-        if self.is_normal() {
-            self.normal_key(code, down, repeat);
+    /// A key press or release: the actions of its bindings. The UI keys (windows, quickbar) go
+    /// to the UI; Esc stays with the UI.
+    fn key(&mut self, p: &Press, down: bool, repeat: bool) {
+        let normal = self.is_normal();
+        let actions = self.bindings.actions(p, down, normal);
+        if down && !repeat {
+            for a in &actions {
+                let key = match *a {
+                    Action::Character => UiKey::Character,
+                    Action::Research => UiKey::Research,
+                    Action::Guide => UiKey::Guide,
+                    Action::Production => UiKey::Production,
+                    Action::Quickbar(i) => UiKey::Quickbar(i as usize + if p.shift { 10 } else { 0 }),
+                    Action::DebugPanel if self.playing() => {
+                        let s = &mut self.ui.model.settings;
+                        s.show_debug = !s.show_debug;
+                        self.save_settings();
+                        continue;
+                    }
+                    _ => continue,
+                };
+                self.ui.ui.press_key(key);
+            }
+        }
+        if normal {
+            self.normal_key(&actions, p, down, repeat);
             return;
         }
-        match code {
-            KeyCode::KeyA | KeyCode::ArrowLeft => self.held.left = down,
-            KeyCode::KeyD | KeyCode::ArrowRight => self.held.right = down,
-            KeyCode::KeyW | KeyCode::ArrowUp => self.held.up = down,
-            KeyCode::KeyS | KeyCode::ArrowDown => self.held.down = down,
-            _ => {}
+        for a in &actions {
+            match a {
+                Action::CameraLeft => self.held.left = down,
+                Action::CameraRight => self.held.right = down,
+                Action::CameraUp => self.held.up = down,
+                Action::CameraDown => self.held.down = down,
+                _ => {}
+            }
         }
         if !down || !self.playing() {
             return;
         }
-        match code {
-            KeyCode::Space if !repeat => self.debug_action(DebugAction::TogglePause),
-            KeyCode::Period => self.debug_action(DebugAction::Step),
-            KeyCode::BracketLeft => self.ui.set_brush_radius(self.ui.brush_radius().saturating_sub(1)),
-            KeyCode::BracketRight => self.ui.set_brush_radius(self.ui.brush_radius() + 1),
-            KeyCode::F3 if !repeat => {
-                let s = &mut self.ui.model.settings;
-                s.show_debug = !s.show_debug;
+        for a in actions {
+            match a {
+                Action::PauseSim if !repeat => self.debug_action(DebugAction::TogglePause),
+                Action::StepSim => self.debug_action(DebugAction::Step),
+                Action::BrushSmaller => self.ui.set_brush_radius(self.ui.brush_radius().saturating_sub(1)),
+                Action::BrushLarger => self.ui.set_brush_radius(self.ui.brush_radius() + 1),
+                Action::Pipette if !repeat => {
+                    self.ui.sandbox_action(&UiAction::ClearHand);
+                }
+                _ => {}
             }
-            KeyCode::KeyQ if !repeat => {
-                self.ui.sandbox_action(&UiAction::ClearHand);
-            }
-            _ => {}
         }
     }
 
-    /// Keys of the normal mode. The UI reads E, T, G, P, Esc and the quickbar keys itself.
-    fn normal_key(&mut self, code: KeyCode, down: bool, repeat: bool) {
+    /// The Controls list waits for a key: this key becomes the key of that action. Esc stops the
+    /// wait. Modifier keys alone do not count (Ctrl + a key binds with Ctrl).
+    fn rebind(&mut self, p: &Press) {
+        use winit::keyboard::KeyCode as K;
+        if p.code == K::Escape {
+            self.cancel_wait = true;
+            return;
+        }
+        let modifiers = [K::ShiftLeft, K::ShiftRight, K::ControlLeft, K::ControlRight, K::SuperLeft, K::SuperRight];
+        if modifiers.contains(&p.code) {
+            return;
+        }
+        let s = &mut self.ui.model.settings;
+        if let Some(a) = s.key_waiting.take().and_then(|id| Action::from_id(&id)) {
+            self.bindings.set(a, KeyBind { code: p.code, text: p.text.clone(), ctrl: p.ctrl });
+        }
+        self.keys_dirty = true;
+        self.save_settings();
+    }
+
+    /// Write the settings file with the settings of now.
+    fn save_settings(&mut self) {
+        let m = &self.ui.model.settings;
+        let s = &mut self.saved;
+        s.ui_scale = m.ui_scale;
+        s.vsync = m.vsync;
+        s.show_fps = m.show_fps;
+        s.show_debug = m.show_debug;
+        for x in &m.simulation {
+            s.simulation.insert(x.key.clone(), x.value);
+        }
+        s.bindings = self.bindings.clone();
+        s.set_names(&self.key_names);
+        if let Err(e) = settings::save(&self.settings_path, s) {
+            log::warn!("{e}");
+            self.ui.message(e, Instant::now());
+        }
+    }
+
+    /// Keys of the normal mode (the UI keys are sent to the UI in `key`).
+    fn normal_key(&mut self, actions: &[Action], p: &Press, down: bool, repeat: bool) {
         let playing = self.playing();
         let content = self.content.clone();
         let mouse = self.mouse_cell();
-        let (shift, ctrl) = (self.held.shift, self.held.ctrl);
         let Some(n) = self.normal_mut() else { return };
-        match code {
-            KeyCode::KeyA | KeyCode::ArrowLeft => n.held.left = down && playing,
-            KeyCode::KeyD | KeyCode::ArrowRight => n.held.right = down && playing,
-            KeyCode::KeyW | KeyCode::ArrowUp | KeyCode::Space => n.held.jump = down && playing,
-            // F flips the building in the hand; with no building in the hand it scans (hold).
-            KeyCode::KeyF => {
-                if down && n.building_in_hand(&content).is_some() {
-                    if !repeat && playing {
-                        n.flip(&content);
-                    }
-                    n.held.scan = false;
-                } else {
-                    n.held.scan = down && playing;
-                }
+        let in_hand = n.building_in_hand(&content).is_some();
+        for a in actions {
+            match a {
+                Action::MoveLeft => n.held.left = down && playing,
+                Action::MoveRight => n.held.right = down && playing,
+                Action::Jump => n.held.jump = down && playing,
+                // With a building in the hand, the flip key does not scan (F does both).
+                Action::Scan => n.held.scan = down && playing && !(in_hand && actions.contains(&Action::Flip)),
+                _ => {}
             }
-            _ => {}
         }
         if !down || repeat || !playing {
             return;
         }
-        let cmds = match code {
-            KeyCode::KeyR => n.rotate(&content, mouse, shift),
-            KeyCode::KeyQ => n.pipette(&content, mouse),
-            KeyCode::KeyZ if ctrl => n.undo(shift),
-            KeyCode::KeyY if ctrl => n.undo(true),
-            KeyCode::AltLeft | KeyCode::AltRight => {
-                n.build.alt = !n.build.alt;
-                vec![]
+        let mut cmds = vec![];
+        for a in actions {
+            match a {
+                Action::Rotate => cmds.extend(n.rotate(&content, mouse, p.shift)),
+                Action::Flip => {
+                    n.flip(&content);
+                }
+                Action::Pipette => cmds.extend(n.pipette(&content, mouse)),
+                // Ctrl + Shift + Z also redoes.
+                Action::Undo => cmds.extend(n.undo(p.shift)),
+                Action::Redo => cmds.extend(n.undo(true)),
+                Action::AltMode => n.build.alt = !n.build.alt,
+                _ => {}
             }
-            KeyCode::F3 => {
-                let s = &mut self.ui.model.settings;
-                s.show_debug = !s.show_debug;
-                vec![]
-            }
-            _ => vec![],
-        };
+        }
         self.send_all(cmds);
     }
 
@@ -813,7 +918,21 @@ impl Game {
             // The simulation has no number settings yet. The liquids work adds them
             // (`Simulation::settings_mut`); then this sends them to the simulation thread.
             SettingChange::Simulation { key, value } => log::info!("simulation setting {key} = {value} (not used yet)"),
+            SettingChange::KeysByLetter(v) => {
+                self.bindings.by_letter = v;
+                self.keys_dirty = true;
+            }
+            SettingChange::RebindKey(id) => {
+                s.key_waiting = if s.key_waiting.as_deref() == Some(id.as_str()) { None } else { Some(id) };
+                return;
+            }
+            SettingChange::ResetKeys => {
+                self.bindings.reset();
+                s.key_waiting = None;
+                self.keys_dirty = true;
+            }
         }
+        self.save_settings();
     }
 
     fn debug_action(&mut self, action: DebugAction) {
@@ -907,8 +1026,20 @@ impl Game {
         let mouse = self.mouse_cell();
         let building = self.world.as_ref().and_then(|w| w.normal.as_ref()).and_then(|n| n.hover(mouse));
         self.ui.model.hover = if playing && self.mouse_inside && !over_ui { building.or_else(|| self.hover_cell()) } else { None };
+        // The Controls rows: made again when a key, a key name or the mode changed.
+        let mode = self.world.as_ref().map(|w| w.normal.is_some());
+        if self.keys_dirty || self.rows_mode != Some(mode) {
+            let s = &mut self.ui.model.settings;
+            s.key_bindings = crate::keys::rows(&self.bindings, &self.key_names, mode);
+            s.keys_by_letter = self.bindings.by_letter;
+            self.keys_dirty = false;
+            self.rows_mode = Some(mode);
+        }
         if let Some(n) = self.world.as_ref().and_then(|w| w.normal.as_ref()) {
             n.fill_model(&mut self.ui.model);
+            self.ui.model.hover_detail = n.hover_detail(&self.content, self.ui.model.hover.as_ref());
+        } else {
+            self.ui.model.hover_detail = Default::default();
         }
         let fps = 1000.0 / self.timing.frame_ms.max(0.001);
         self.ui.model.fps = fps;
@@ -1024,6 +1155,9 @@ impl Game {
         let paint_jobs = self.egui_ctx.tessellate(std::mem::take(&mut full_output.shapes), pixels_per_point);
         for action in actions {
             self.handle_action(action, event_loop, frame_start);
+        }
+        if std::mem::take(&mut self.cancel_wait) {
+            self.ui.model.settings.key_waiting = None;
         }
         for action in debug_actions {
             self.debug_action(action);
@@ -1457,6 +1591,15 @@ impl Game {
         for &center in &self.paint_points {
             world.sim.send(Command::Paint { center, radius, material, mode: PaintMode::Replace, temperature: None });
         }
+    }
+}
+
+/// The character of a key without modifiers, in lower case (`None` for keys that type none).
+fn key_text(event: &winit::event::KeyEvent) -> Option<String> {
+    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+    match event.key_without_modifiers() {
+        winit::keyboard::Key::Character(s) => Some(s.to_lowercase()),
+        _ => None,
     }
 }
 

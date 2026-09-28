@@ -440,6 +440,16 @@ pub fn hover_building(c: &Content) -> HoverView {
     }
 }
 
+/// More about the building of `hover_building`, for the hover box.
+pub fn hover_building_detail() -> HoverDetail {
+    HoverDetail { reason: "Output full: take out the Crushed malachite".into(), hit_points: Some((180, 200)), ..Default::default() }
+}
+
+/// More about the cell of the mock model, for the hover box.
+pub fn hover_cell_detail() -> HoverDetail {
+    HoverDetail { dig: Some(DigState::CanDig), ..Default::default() }
+}
+
 /// A realistic model: the player is in Tier 1, with a full inventory, a crafting queue,
 /// alerts and research. No window is open.
 pub fn model(content: Arc<Content>) -> UiModel {
@@ -528,6 +538,7 @@ pub fn model(content: Arc<Content>) -> UiModel {
     };
     model.finished_techs = ["bronze", "research", "steam_power", "steam_machines_1", "iron_logistics"].iter().map(|t| tid(c, t)).collect();
     model.hover = Some(HoverView::Cell { pos: CellPos { x: 4133, y: 612 }, material: c.expect_material("raw_malachite"), temperature: 24.0 });
+    model.hover_detail = hover_cell_detail();
     model.research = Some(ResearchView { tech: tid(c, "steam_machines_2"), progress: 0.62 });
     model.techs = tech_entries(c, &model.finished_techs, Some((tid(c, "steam_machines_2"), 0.62)));
     // A technology that started and then stopped, and one in the queue.
@@ -747,6 +758,12 @@ impl MockGame {
                         s.value = value;
                     }
                 }
+                SettingChange::KeysByLetter(v) => md.settings.keys_by_letter = v,
+                // The mock has no key bindings to change; it only shows the waiting row.
+                SettingChange::RebindKey(id) => {
+                    md.settings.key_waiting = if md.settings.key_waiting.as_deref() == Some(id.as_str()) { None } else { Some(id) };
+                }
+                SettingChange::ResetKeys => md.settings.key_bindings = crate::model::default_key_bindings(),
             },
         }
     }
