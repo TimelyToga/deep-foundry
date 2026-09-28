@@ -17,6 +17,7 @@ mod keys;
 mod normal;
 mod overlay;
 mod player;
+mod render_setup;
 mod saves;
 mod screenshot;
 mod settings;

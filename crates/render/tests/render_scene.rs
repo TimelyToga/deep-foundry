@@ -46,6 +46,8 @@ fn draws_cells_in_the_right_place_with_the_right_colors() {
     let Some(mut s) = scene(64) else { return };
     let stone = s.content.expect_material("stone").0;
     let water = s.content.expect_material("water").0;
+    // With no light pass every cell has its palette color.
+    s.renderer.settings_mut().lighting = false;
     let mut snap = Snapshot { world_cells: (128, 128), ..Default::default() };
     // Chunk (0,0): stone in the lower half. Chunk (1,0): water. Chunk (0,1): stone at 1500 °C.
     // Chunk (1,1) is not sent, so it must look like air.
@@ -100,6 +102,7 @@ fn full_gpu_drops_far_chunks() {
 #[test]
 fn fractional_camera_moves_smoothly() {
     let Some(mut s) = scene(16) else { return };
+    s.renderer.settings_mut().lighting = false;
     let stone = s.content.expect_material("stone").0;
     let mut snap = Snapshot { world_cells: (64, 64), ..Default::default() };
     // A vertical stone edge at x = 32.

@@ -20,8 +20,11 @@ const GAS_MAX_ALPHA: u8 = 200;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
 pub(crate) struct MaterialInfo {
     pub phase: u32,
+    /// Light the material gives by itself (0 to 1), from the data files.
     pub glow: f32,
-    pub _pad: [u32; 2],
+    /// How much a cell of this material stops light, 0 (air) to 1 (rock). See `opacity`.
+    pub opacity: f32,
+    pub _pad: u32,
 }
 
 /// The number the shaders use for a phase. Keep it the same as the PHASE_ constants in common.wgsl.
@@ -57,8 +60,52 @@ pub(crate) fn build_palette(content: &Content) -> Vec<[u8; 4]> {
 pub(crate) fn build_material_info(content: &Content) -> Vec<MaterialInfo> {
     let mats = &content.materials;
     (0..mats.len())
-        .map(|m| MaterialInfo { phase: phase_code(mats.phase[m]), glow: mats.glow[m], _pad: [0; 2] })
+        .map(|m| MaterialInfo {
+            phase: phase_code(mats.phase[m]),
+            glow: mats.glow[m],
+            opacity: opacity(mats.phase[m], mean_alpha(&mats.colors[m])),
+            _pad: 0,
+        })
         .collect()
+}
+
+/// The mean alpha (0 to 1) of a material's colors.
+fn mean_alpha(colors: &[[u8; 4]]) -> f32 {
+    if colors.is_empty() {
+        return 1.0;
+    }
+    colors.iter().map(|c| c[3] as f32).sum::<f32>() / (255.0 * colors.len() as f32)
+}
+
+/// How much a cell stops light, from 0 (air) to 1 (rock and sand). The light pass averages this
+/// over the cells of a light texel. Clear colors (alpha below 1) let more light through: water,
+/// glass and thin gases are see-through, oil and molten metal are not.
+pub(crate) fn opacity(phase: Phase, alpha: f32) -> f32 {
+    match phase {
+        Phase::Empty | Phase::Fire => 0.0,
+        Phase::Solid | Phase::Powder => {
+            if alpha >= 0.95 {
+                1.0
+            } else {
+                alpha * 0.5
+            }
+        }
+        Phase::Liquid => {
+            if alpha >= 0.95 {
+                0.6
+            } else {
+                0.14
+            }
+        }
+        Phase::Gas => alpha * 0.08,
+    }
+}
+
+/// For each material: true if it blocks sky light fully (solid or powder, not clear).
+/// The renderer uses it to find where the sky light stops above the view.
+pub(crate) fn build_sky_blockers(content: &Content) -> Vec<bool> {
+    let mats = &content.materials;
+    (0..mats.len()).map(|m| opacity(mats.phase[m], mean_alpha(&mats.colors[m])) >= 1.0).collect()
 }
 
 /// Glow color (r, g, b) and strength (a) of a hot cell, from 0 to 1.
@@ -139,6 +186,11 @@ mod tests {
         assert_eq!(info[0].phase, 0);
         assert_eq!(info[1].phase, 1);
         assert_eq!(info[2].phase, 4);
+        // Air lets all light through, rock none, fog a little.
+        assert_eq!(info[0].opacity, 0.0);
+        assert_eq!(info[1].opacity, 1.0);
+        assert!(info[2].opacity > 0.0 && info[2].opacity < 0.1);
+        assert_eq!(build_sky_blockers(&content()), vec![false, true, false]);
     }
 
     #[test]

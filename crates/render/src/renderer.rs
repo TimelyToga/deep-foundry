@@ -1,19 +1,25 @@
 //! The `Renderer`: GPU resources for the world and the order of the passes.
 
 use crate::camera::Camera;
-use crate::frame::{ChunkInstance, FrameUniforms};
+use crate::frame::{ChunkInstance, FrameUniforms, LightInstance, ParticleInstance, flags};
 use crate::layers::LayerMap;
 use crate::palette::{self, GLOW_LUT_SIZE, SHADES};
-use crate::passes::background::BackgroundPass;
-use crate::passes::scale::ScalePass;
-use crate::passes::world::{WORLD_COLOR_FORMAT, WorldInputs, WorldPass};
+use crate::passes::composite::CompositePass;
+use crate::passes::light::LightPass;
+use crate::passes::world::{WorldInputs, WorldPass};
 use crate::shaders;
+use crate::sky::SkyColumns;
+use crate::targets::{ALIGN_CELLS, LIGHT_CELLS, Targets};
 use foundry_content::Content;
-use foundry_core::{CHUNK_AREA, CHUNK_SIZE, CellRect, CellTexel, ChunkPos, Snapshot};
-use glam::{IVec2, UVec2};
+use foundry_core::{CHUNK_AREA, CHUNK_SIZE, CellRect, CellTexel, ChunkPos, ParticleView, Snapshot};
+use glam::{DVec2, IVec2, UVec2};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use wgpu::util::DeviceExt;
+
+/// Cells around the screen that the light pass also works on, so that light from just outside
+/// the screen reaches it. The game asks the simulation for at least this margin of chunks.
+pub const LIGHT_MARGIN: i32 = 64;
 
 /// Settings for a new `Renderer`.
 #[derive(Debug, Clone)]
@@ -30,6 +36,66 @@ impl Default for RendererOptions {
     }
 }
 
+/// How the world looks. Change it with `Renderer::settings_mut` at any time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RenderSettings {
+    /// The light pass: dark caves, light from lava, fire and hot cells, sky light on the surface.
+    /// Off: every cell has its full color (the look with no light).
+    pub lighting: bool,
+    /// A soft glow around bright light.
+    pub bloom: bool,
+    /// The air above very hot places moves a little.
+    pub heat_shimmer: bool,
+    /// Debug view: each cell has the color of its temperature. No light.
+    pub heat_map: bool,
+    /// Debug view: lines on the chunk borders (and on the tile borders when zoomed in).
+    pub chunk_grid: bool,
+    /// Debug view: only the light map.
+    pub light_only: bool,
+    /// Light that is everywhere, also deep underground (linear, 0 to 1).
+    pub ambient: f32,
+    /// Brightness of the sky light (0 to about 1.5).
+    pub sky_light: f32,
+    /// Light kept for each step of 4 cells away from a light (0.5 to 0.97). More: light goes farther.
+    pub light_keep: f32,
+    /// Spread steps of the light pass. Light goes at most 4 cells for each step. More steps cost
+    /// more GPU time.
+    pub light_steps: u32,
+    pub bloom_strength: f32,
+    /// Largest sideways move of the heat shimmer, in cells.
+    pub shimmer_strength: f32,
+}
+
+impl Default for RenderSettings {
+    fn default() -> Self {
+        Self {
+            lighting: true,
+            bloom: true,
+            heat_shimmer: true,
+            heat_map: false,
+            chunk_grid: false,
+            light_only: false,
+            ambient: 0.025,
+            sky_light: 1.0,
+            light_keep: 0.9,
+            light_steps: 24,
+            bloom_strength: 0.22,
+            shimmer_strength: 0.45,
+        }
+    }
+}
+
+/// A light that the game adds, for example the robot's lamp.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointLight {
+    /// World position in cells.
+    pub pos: DVec2,
+    /// Radius of the bright middle in cells. The light spreads farther than this.
+    pub radius: f32,
+    /// Linear RGB. 1.0 is about as bright as lava.
+    pub color: [f32; 3],
+}
+
 /// Numbers about the renderer, for the stats panel.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderStats {
@@ -41,12 +107,10 @@ pub struct RenderStats {
     pub uploaded_chunks: u32,
     /// Chunks drawn in the last frame.
     pub drawn_chunks: u32,
-}
-
-/// The offscreen texture that the world pass draws into (1 texel per cell).
-struct WorldTarget {
-    view: wgpu::TextureView,
-    size: UVec2,
+    /// Particles drawn in the last frame.
+    pub drawn_particles: u32,
+    /// Size of the light map in the last frame (texels).
+    pub light_size: (u32, u32),
 }
 
 pub struct Renderer {
@@ -63,16 +127,26 @@ pub struct Renderer {
     cells: wgpu::Texture,
     layers: LayerMap,
     material_count: u32,
+    /// Where sky light stops above the view, from the chunks on the GPU.
+    sky: SkyColumns,
 
-    world_target: Option<WorldTarget>,
+    targets: Option<Targets>,
     world_pass: WorldPass,
-    background_pass: BackgroundPass,
-    scale_pass: ScalePass,
+    light_pass: LightPass,
+    composite_pass: CompositePass,
 
     /// Reused staging memory for chunk uploads.
     belt: wgpu::util::StagingBelt,
     /// Reused each frame.
     instances: Vec<ChunkInstance>,
+    particle_instances: Vec<ParticleInstance>,
+    light_instances: Vec<LightInstance>,
+    sky_entry: Vec<f32>,
+    /// The particles of the last snapshot.
+    particles: Vec<ParticleView>,
+    lights: Vec<PointLight>,
+    settings: RenderSettings,
+    surface_y: i32,
     world_cells: (i32, i32),
     time: f32,
     stats: RenderStats,
@@ -105,7 +179,7 @@ impl Renderer {
             label: Some("frame"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -200,8 +274,8 @@ impl Renderer {
             capacity,
             dir,
         );
-        let background_pass = BackgroundPass::new(device, &frame_layout, target_format, dir);
-        let scale_pass = ScalePass::new(device, &frame_layout, target_format, dir);
+        let light_pass = LightPass::new(device, &frame_layout, dir);
+        let composite_pass = CompositePass::new(device, &frame_layout, target_format, dir);
 
         Self {
             device: device.clone(),
@@ -213,13 +287,21 @@ impl Renderer {
             cells,
             layers: LayerMap::new(capacity),
             material_count,
-            world_target: None,
+            sky: SkyColumns::new(palette::build_sky_blockers(content)),
+            targets: None,
             world_pass,
-            background_pass,
-            scale_pass,
+            light_pass,
+            composite_pass,
             // 4 MiB holds 128 chunks.
             belt: wgpu::util::StagingBelt::new(device.clone(), 4 << 20),
             instances: Vec::with_capacity(capacity as usize),
+            particle_instances: Vec::new(),
+            light_instances: Vec::new(),
+            sky_entry: Vec::new(),
+            particles: Vec::new(),
+            lights: Vec::new(),
+            settings: RenderSettings::default(),
+            surface_y: 0,
             world_cells: (0, 0),
             time: 0.0,
             stats: RenderStats { chunk_capacity: capacity, ..Default::default() },
@@ -232,6 +314,27 @@ impl Renderer {
 
     pub fn stats(&self) -> RenderStats {
         self.stats
+    }
+
+    pub fn settings(&self) -> &RenderSettings {
+        &self.settings
+    }
+
+    pub fn settings_mut(&mut self) -> &mut RenderSettings {
+        &mut self.settings
+    }
+
+    /// The row of the ground surface in this world (about). The sky color gets lighter toward it.
+    /// Chunks the renderer has no data for count as open sky (air) when they are above this row,
+    /// and as rock below it. Default: 0.
+    pub fn set_surface_level(&mut self, y: i32) {
+        self.surface_y = y;
+    }
+
+    /// The point lights of the next frames, for example the robot's lamp. At most 64 are used.
+    pub fn set_lights(&mut self, lights: &[PointLight]) {
+        self.lights.clear();
+        self.lights.extend_from_slice(lights);
     }
 
     /// The most chunks the GPU can keep.
@@ -264,16 +367,21 @@ impl Renderer {
     /// Forget all chunk data, for example for a new world.
     pub fn clear_chunks(&mut self) {
         self.layers.clear();
+        self.sky.clear();
+        self.particles.clear();
         self.stats.resident_chunks = 0;
     }
 
-    /// Upload the chunks of a snapshot. Uploads only the chunks in the snapshot.
+    /// Upload the chunks of a snapshot, and keep its particles. Uploads only the chunks in the
+    /// snapshot.
     ///
     /// When the GPU has no free layer, the chunks farthest from `camera` are dropped.
     /// Returns the dropped chunks. Send them to the simulation in `Command::ForgetChunks`,
     /// so that it sends them again when they are needed.
     pub fn apply_snapshot(&mut self, snapshot: &Snapshot, camera: &Camera) -> Vec<ChunkPos> {
         self.world_cells = snapshot.world_cells;
+        self.particles.clear();
+        self.particles.extend_from_slice(&snapshot.particles);
         let mut evicted = Vec::new();
         self.stats.uploaded_chunks = 0;
         if snapshot.chunks.is_empty() {
@@ -290,12 +398,16 @@ impl Renderer {
             }
             let Some(layer) = self.layers.assign(image.pos, view, &mut evicted) else { continue };
             self.upload_layer(&mut encoder, layer, &image.texels);
+            self.sky.update(image.pos, &image.texels);
             uploaded += 1;
         }
         self.belt.finish_and_recall_on_submit(&encoder);
         self.queue.submit([encoder.finish()]);
         // A chunk that was dropped and then stored again in the same snapshot is not dropped.
         evicted.retain(|p| self.layers.get(*p).is_none());
+        for p in &evicted {
+            self.sky.remove(*p);
+        }
         self.stats.uploaded_chunks = uploaded;
         self.stats.resident_chunks = self.layers.len() as u32;
         evicted
@@ -336,20 +448,30 @@ impl Renderer {
         if camera.viewport.x == 0 || camera.viewport.y == 0 {
             return;
         }
-        // The world texture must fit in the device limit.
-        let max_side = self.max_texture_side as f32 - 4.0;
+        // The world textures (the screen plus the margins) must fit in the device limit.
+        let border = (2 * (LIGHT_MARGIN + ALIGN_CELLS) + 256) as f32;
+        let max_side = (self.max_texture_side as f32 - border).max(64.0);
         let min_zoom = (camera.viewport.max_element() as f32 / max_side).max(1.0 / 64.0);
         let camera = Camera { zoom: camera.zoom.max(min_zoom), ..*camera };
+        let s = self.settings;
+        let lighting = s.lighting && !s.heat_map;
 
-        // The part of the world the world texture holds: the screen plus one cell on each side.
+        // The part of the world the world textures hold: the screen plus the light margin, on the
+        // grid of ALIGN_CELLS, so that light texels stay on the same cells when the camera moves.
         let top_left = camera.top_left();
         let bottom_right = top_left + camera.viewport.as_dvec2() / camera.zoom as f64;
-        let origin = IVec2::new(top_left.x.floor() as i32 - 1, top_left.y.floor() as i32 - 1);
-        let end = IVec2::new(bottom_right.x.ceil() as i32 + 1, bottom_right.y.ceil() as i32 + 1);
+        let align = ALIGN_CELLS as f64;
+        let margin = LIGHT_MARGIN as f64;
+        let down = |v: f64| ((v - margin) / align).floor() as i32 * ALIGN_CELLS;
+        let up = |v: f64| ((v + margin) / align).ceil() as i32 * ALIGN_CELLS;
+        let origin = IVec2::new(down(top_left.x), down(top_left.y));
+        let end = IVec2::new(up(bottom_right.x), up(bottom_right.y));
         let used = (end - origin).as_uvec2();
-        let tex_size = self.ensure_world_target(used);
+        let light_used = used / LIGHT_CELLS;
+        self.ensure_targets(used);
+        let targets = self.targets.as_ref().expect("made by ensure_targets");
 
-        // Chunks to draw: those on the screen and inside the world. A world width of 0 means no
+        // Chunks to draw: those in the area and inside the world. A world width of 0 means no
         // limit to the left and right.
         let mut area = CellRect::new(origin.x, origin.y, end.x, end.y);
         let (w, h) = self.world_cells;
@@ -364,69 +486,109 @@ impl Renderer {
                 self.instances.push(ChunkInstance { origin: [o.x, o.y], layer, _pad: 0 });
             }
         }
-        let count = self.world_pass.write_instances(&self.queue, &self.instances);
-        self.stats.drawn_chunks = count;
+        let chunk_count = self.world_pass.write_instances(&self.queue, &self.instances);
 
+        // Particles and lights, relative to the texture origin (so that f32 keeps whole cells).
+        let rel = |x: f64, y: f64| [(x - origin.x as f64) as f32, (y - origin.y as f64) as f32];
+        let (fw, fh) = (used.x as f32, used.y as f32);
+        self.particle_instances.clear();
+        self.particle_instances.extend(self.particles.iter().filter_map(|p| {
+            let pos = rel(p.x as f64, p.y as f64);
+            let inside = pos[0] >= -8.0 && pos[1] >= -8.0 && pos[0] < fw + 8.0 && pos[1] < fh + 8.0;
+            inside.then_some(ParticleInstance {
+                pos,
+                vel: [p.vx, p.vy],
+                material_temp: p.material as u32 | ((p.temperature as u16 as u32) << 16),
+                shade: p.shade as u32,
+            })
+        }));
+        let particle_count = self.world_pass.write_particles(&self.device, &self.queue, &self.particle_instances);
+
+        let mut light_count = 0;
+        if lighting {
+            self.light_instances.clear();
+            self.light_instances.extend(self.lights.iter().map(|l| LightInstance {
+                pos: rel(l.pos.x, l.pos.y),
+                radius: l.radius.max(1.0),
+                _pad: 0.0,
+                color: [l.color[0], l.color[1], l.color[2], 0.0],
+            }));
+            let open_above = self.surface_y;
+            self.sky.entry(origin.x, origin.y, LIGHT_CELLS as i32, light_used.x as usize, open_above, &mut self.sky_entry);
+            light_count = self.light_pass.write_inputs(
+                &self.device,
+                &self.queue,
+                targets,
+                &self.light_instances,
+                &self.sky_entry,
+            );
+        }
+
+        let mut bits = 0;
+        for (on, bit) in [
+            (lighting, flags::LIGHTING),
+            (s.heat_map, flags::HEAT_MAP),
+            (s.chunk_grid, flags::CHUNK_GRID),
+            (s.bloom && lighting, flags::BLOOM),
+            (s.heat_shimmer && lighting, flags::SHIMMER),
+            (s.light_only && lighting, flags::LIGHT_ONLY),
+        ] {
+            if on {
+                bits |= bit;
+            }
+        }
         let view_offset = top_left - origin.as_dvec2();
+        let sky = s.sky_light.max(0.0);
         let uniforms = FrameUniforms {
             screen_size: camera.viewport.as_vec2().to_array(),
-            world_tex_size: tex_size.as_vec2().to_array(),
+            world_tex_size: targets.size.as_vec2().to_array(),
             world_used_size: used.as_vec2().to_array(),
             view_offset: view_offset.as_vec2().to_array(),
             target_origin: origin.to_array(),
+            origin_wrapped: [origin.x.rem_euclid(65536) as f32, origin.y as f32],
             world_cells: [self.world_cells.0 as f32, self.world_cells.1 as f32],
-            view_top_left: top_left.as_vec2().to_array(),
+            light_tex_size: targets.light_size.as_vec2().to_array(),
+            light_used: light_used.to_array(),
             zoom: camera.zoom,
             time: self.time,
             material_count: self.material_count,
             output_srgb: self.target_format.is_srgb() as u32,
+            flags: bits,
+            light_count,
+            particle_count,
+            surface_y: self.surface_y as f32,
             _pad: [0; 2],
+            // A little warm, like daylight.
+            sky_color: [sky, sky * 0.97, sky * 0.92, 0.0],
+            ambient: [s.ambient, s.ambient, s.ambient * 1.15, 0.0],
+            params: [s.light_keep.clamp(0.3, 0.99), s.bloom_strength, s.shimmer_strength, 1.0],
         };
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // 1. World pass: cells into the offscreen texture.
-        let world_view = &self.world_target.as_ref().expect("made by ensure_world_target").view;
-        self.world_pass.draw(encoder, world_view, &self.frame_bind_group, used.to_array(), count);
+        // 1. World pass: cells and particles into the world textures.
+        self.world_pass.draw(encoder, targets, &self.frame_bind_group, used.to_array(), chunk_count, particle_count);
+        // 2. Light pass.
+        if lighting {
+            self.light_pass.run(encoder, &self.frame_bind_group, light_used.to_array(), s.light_steps, s.bloom);
+        }
+        // 3. Composite pass into the target.
+        self.composite_pass.draw(encoder, target, &self.frame_bind_group);
 
-        // 2. Background and 3. scale pass, into the target.
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("screen"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
-            })],
-            ..Default::default()
-        });
-        self.background_pass.draw(&mut pass, &self.frame_bind_group);
-        self.scale_pass.draw(&mut pass, &self.frame_bind_group);
+        self.stats.drawn_chunks = chunk_count;
+        self.stats.drawn_particles = particle_count;
+        self.stats.light_size = if lighting { (light_used.x, light_used.y) } else { (0, 0) };
     }
 
-    /// Make the world texture larger if `needed` does not fit. Returns its size.
-    fn ensure_world_target(&mut self, needed: UVec2) -> UVec2 {
-        if let Some(t) = &self.world_target
-            && t.size.x >= needed.x
-            && t.size.y >= needed.y
-        {
-            return t.size;
+    /// Make the world and light textures larger if `needed` cells do not fit.
+    fn ensure_targets(&mut self, needed: UVec2) {
+        if self.targets.as_ref().is_some_and(|t| t.fits(needed)) {
+            return;
         }
-        // Round up, so that small zoom changes do not make a new texture each frame.
-        let old = self.world_target.as_ref().map_or(UVec2::ZERO, |t| t.size);
-        let size = needed.max(old).map(|v| (v.div_ceil(256) * 256).min(self.max_texture_side));
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("world color"),
-            size: wgpu::Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: WORLD_COLOR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
-        self.scale_pass.set_source(&self.device, &view);
-        self.world_target = Some(WorldTarget { view, size });
-        size
+        // Keep the old size where it is larger, so that the textures do not change back and forth.
+        let old = self.targets.as_ref().map_or(UVec2::ZERO, |t| t.size);
+        let targets = Targets::new(&self.device, needed.max(old), self.max_texture_side);
+        self.light_pass.set_targets(&self.device, &targets);
+        self.composite_pass.set_targets(&self.device, &targets);
+        self.targets = Some(targets);
     }
 }
