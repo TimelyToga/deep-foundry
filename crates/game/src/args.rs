@@ -24,7 +24,10 @@ OPTIONS:
                              Normal mode only: building (a workbench window), ghost (a building in
                              the hand), research, guide, hub (the Hub window),
                              ghost-red, drag (a belt line), alt (alt mode), remove,
-                             tanks (full tanks: the tank HUD says what to do)
+                             tanks (full tanks: the tank HUD says what to do),
+                             guide-workbench (the guide after the workbench and the ores),
+                             guide-done (the guide when the rest waits for new machines),
+                             campfire (a campfire window: raw bricks, wood fuel, clay bricks)
     --mode MODE              The mode of a world that --ui-state starts: sandbox (default) or
                              normal (the robot, the factory and the Hub)
     --ui-scale S             Size of the UI, 0.75 to 2 (default: the settings file, else 1)
@@ -108,6 +111,12 @@ pub enum UiState {
     Remove,
     /// Normal mode: the tanks are full and the dig tool has no room.
     Tanks,
+    /// Normal mode: the guide window after the first goals (up to the workbench and the ores).
+    GuideWorkbench,
+    /// Normal mode: the guide window when every goal that the game can do is done.
+    GuideDone,
+    /// Normal mode: a campfire that fires raw clay bricks, with its window open.
+    Campfire,
 }
 
 impl UiState {
@@ -132,6 +141,9 @@ impl UiState {
             "alt" => UiState::Alt,
             "remove" => UiState::Remove,
             "tanks" => UiState::Tanks,
+            "guide-workbench" => UiState::GuideWorkbench,
+            "guide-done" => UiState::GuideDone,
+            "campfire" => UiState::Campfire,
             _ => return None,
         })
     }
@@ -155,6 +167,9 @@ impl UiState {
                 | UiState::Alt
                 | UiState::Remove
                 | UiState::Tanks
+                | UiState::GuideWorkbench
+                | UiState::GuideDone
+                | UiState::Campfire
         )
     }
 }
