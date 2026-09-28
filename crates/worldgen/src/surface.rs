@@ -242,7 +242,7 @@ impl<'a> Ctx<'a> {
         Ctx {
             wg,
             sd: Seeds::new(seed),
-            surface_y: wg.settings().surface_y,
+            surface_y: wg.world_settings().surface_y,
             hub: OnceCell::new(),
             start: OnceCell::new(),
             cache: [(r0, OnceCell::new()), (r1, OnceCell::new())],

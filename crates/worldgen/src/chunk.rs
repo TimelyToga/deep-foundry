@@ -31,12 +31,23 @@ const SED_WARP: i32 = 45;
 const LIME_WARP: i32 = 59;
 const COAL_WARP: i32 = 69;
 const SED_TABLE: usize = 10;
+/// Largest half-width of a tunnel, in noise units, and the smallest one (thinner tunnels are
+/// left out, so there are no hair-thin cracks).
+const TUNNEL_W: f32 = 0.07;
+const MIN_TUNNEL_W: f32 = 0.022;
+/// Largest half-width of an ore vein in the upper stone and below it, and the smallest one.
+const VEIN_W: f32 = 0.05;
+const DEEP_VEIN_W: f32 = 0.035;
+const MIN_VEIN_W: f32 = 0.012;
+/// Strength of the random change at the edges of caves and veins, in noise units.
+const CAVE_EDGE: f32 = 0.005;
+const VEIN_EDGE: f32 = 0.004;
 const LIME_TABLE: usize = 7;
 const COAL_TABLE: usize = 4;
 
 /// Make the cells of one chunk. See the module documentation.
 pub(crate) fn generate(wg: &WorldGen, cells: &mut ChunkCells) {
-    let s = *wg.settings();
+    let s = *wg.world_settings();
     let (x0, y0) = (cells.left(), cells.top());
     if y0 + CHUNK_SIZE <= s.surface_y - SKY_CLEAR {
         return;
@@ -106,6 +117,8 @@ struct Fill<'a, 'b> {
     lime_warp: [i32; GW],
     coal_warp: [i32; GW],
     prov_x: [f32; GW],
+    /// Thickness factor of the limestone bands along x: [even bands, odd bands].
+    lime_scale: [[f32; GW]; 2],
     bedrock: [i32; GW],
     sed_base: i32,
     sed: [u16; SED_TABLE],
@@ -117,7 +130,7 @@ struct Fill<'a, 'b> {
 
 impl<'a, 'b> Fill<'a, 'b> {
     fn new(wg: &'a WorldGen, ctx: &'b Ctx<'a>, x0: i32, y0: i32) -> Self {
-        let s = wg.settings();
+        let s = wg.world_settings();
         Fill {
             wg,
             ctx,
@@ -138,6 +151,7 @@ impl<'a, 'b> Fill<'a, 'b> {
             lime_warp: [0; GW],
             coal_warp: [0; GW],
             prov_x: [0.0; GW],
+            lime_scale: [[0.0; GW]; 2],
             bedrock: [0; GW],
             sed_base: 0,
             sed: [0; SED_TABLE],
@@ -192,6 +206,11 @@ impl<'a, 'b> Fill<'a, 'b> {
         let coal_a = sampled_columns(self.x0, n(sd::COAL_WARP, 700));
         let coal_b = sampled_columns(self.x0, n2(sd::COAL_WARP, 150));
         self.prov_x = sampled_columns(self.x0, n(sd::PROV_X, 700));
+        // Limestone bands swell and thin along x.
+        for (k, scale) in self.lime_scale.iter_mut().enumerate() {
+            let s = seeds.get(sd::LIME) ^ (k as u32 + 1).wrapping_mul(0x7FEB_352D);
+            *scale = sampled_columns(self.x0, move |x| (1.0 + 0.8 * noise1(s, x, 240)).max(0.0));
+        }
         for c in 0..GW {
             self.layer_warp[c] = (60.0 * layer[c]) as i32;
             self.sed_warp[c] = ((28.0 * sed_a[c] + 12.0 * sed_b[c]) as i32).clamp(-SED_WARP, SED_WARP);
@@ -235,9 +254,9 @@ impl<'a, 'b> Fill<'a, 'b> {
             return self.m.stone;
         }
         match (h >> 8) % 100 {
-            0..32 => self.m.dirt,
-            32..56 => self.m.clay,
-            56..78 => self.m.sand,
+            0..36 => self.m.dirt,
+            36..64 => self.m.clay,
+            64..80 => self.m.sand,
             _ => self.m.gravel,
         }
     }
@@ -245,7 +264,7 @@ impl<'a, 'b> Fill<'a, 'b> {
     fn row_info(&self, y: i32) -> RowInfo {
         let dz = (y - self.surface_y) as f32;
         let cave = (0.35 + 0.65 * smoothstep((dz - 500.0) / 200.0)) * (1.0 - 0.25 * smoothstep((dz - 1700.0) / 300.0));
-        let vein = if dz < UPPER_STONE_END as f32 { 0.04 * smoothstep((dz - 520.0) / 150.0) } else { 0.03 };
+        let vein = if dz < UPPER_STONE_END as f32 { VEIN_W * smoothstep((dz - 520.0) / 150.0) } else { DEEP_VEIN_W };
         RowInfo { cave, vein, prov_y: noise1(self.seed(sd::PROV_Y), y, 450) }
     }
 
@@ -256,9 +275,9 @@ impl<'a, 'b> Fill<'a, 'b> {
         let fbm = |seed: usize, wx: i32, wy: i32| Coarse::fbm(x0, y0, first_row, 8, sd.get(seed), wx, wy, 2);
         let mask = |seed: usize, wx: i32, wy: i32| Coarse::fbm(x0, y0, first_row, 32, sd.get(seed) ^ 0x68E3_1DA4, wx, wy, 1);
         Fields {
-            tunnel: fbm(sd::TUNNEL, 320, 170),
-            cavern: fbm(sd::CAVERN, 150, 110),
-            vein: fbm(sd::VEIN, 200, 120),
+            tunnel: fbm(sd::TUNNEL, 480, 240),
+            cavern: fbm(sd::CAVERN, 200, 140),
+            vein: fbm(sd::VEIN, 260, 150),
             pocket: fbm(sd::POCKET, 90, 60),
             tunnel_mask: mask(sd::TUNNEL, 420, 300),
             vein_mask: mask(sd::VEIN, 300, 220),
@@ -305,7 +324,7 @@ impl<'a, 'b> Fill<'a, 'b> {
                     }
                 }
                 let coal_t = self.coal[(ck - self.coal_base) as usize];
-                let lime_t = self.lime[(lk - self.lime_base) as usize];
+                let lime_t = (self.lime[(lk - self.lime_base) as usize] as f32 * self.lime_scale[(lk & 1) as usize][c]) as i32;
                 let in_coal = seam_ok && (60..1950).contains(&dz) && cr < coal_t;
                 let in_lime = (500..2150).contains(&dz) && lr < lime_t;
                 run = run.min(if cr < coal_t { coal_t - cr } else { COAL_SPACING - cr });
@@ -365,11 +384,11 @@ impl<'a, 'b> Fill<'a, 'b> {
     fn carve_blocks(&self, f: &Fields, first_row: usize) -> [[bool; 10]; 9] {
         let mut out = [[false; 10]; 9];
         // The largest tunnel width, cave amount and vein width (see `row_info`).
-        let (tunnel, vein) = (0.085 + 0.012, 0.04 * 1.4 + 0.006);
+        let (tunnel, vein) = (TUNNEL_W + CAVE_EDGE, VEIN_W * 1.4 + VEIN_EDGE);
         for (j, row) in out.iter_mut().enumerate().skip(first_row / 8) {
             let y = self.y0 + (j * 8) as i32;
             let cave = self.row_info(y).cave.max(self.row_info(y + 8).cave);
-            let cavern = 1.0 - 0.4 * cave - 0.012;
+            let cavern = 1.0 - 0.4 * cave - CAVE_EDGE;
             for (i, o) in row.iter_mut().enumerate() {
                 let corners = |c: &Coarse| {
                     let l = &c.lattice;
@@ -422,7 +441,7 @@ impl<'a, 'b> Fill<'a, 'b> {
                 f.tunnel_mask.row(r, &mut fr.tunnel_width);
                 f.vein_mask.row(r, &mut fr.vein_width);
                 for v in fr.tunnel_width.iter_mut() {
-                    *v = 0.085 * ri.cave * smoothstep((*v + 0.15) / 0.35);
+                    *v = TUNNEL_W * ri.cave * (0.35 + 0.65 * smoothstep((*v + 0.1) / 0.4));
                 }
                 for v in fr.vein_width.iter_mut() {
                     *v = ri.vein * (*v * 2.0 + 0.2).clamp(0.0, 1.4);
@@ -539,13 +558,17 @@ impl<'a, 'b> Fill<'a, 'b> {
             tunnel *= f;
             cave *= f;
         }
-        let e = jit * 0.012;
+        if tunnel < MIN_TUNNEL_W {
+            tunnel = 0.0;
+        }
+        let e = jit * CAVE_EDGE;
         if (fr.tunnel[c] + e).abs() < tunnel || fr.cavern[c] + e > 1.0 - 0.4 * cave {
             return 0;
         }
         // Ore veins: lines where the vein noise is near 0, thick in some places and missing in
         // others. The ore changes slowly with the position (the ore province).
-        if (fr.vein[c] + jit * 0.006).abs() < fr.vein_width[c] {
+        let vw = fr.vein_width[c];
+        if vw > MIN_VEIN_W && (fr.vein[c] + jit * VEIN_EDGE).abs() < vw {
             let p = self.prov_x[c] + ri.prov_y;
             return if p < -0.3 {
                 m.magnetite

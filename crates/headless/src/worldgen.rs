@@ -113,7 +113,7 @@ pub fn draw(area: &Area, content: &Content, surface_y: i32, k: i32) -> Image {
                 underground = true;
             }
             let back = if underground {
-                [26, 22, 24]
+                [74, 62, 58]
             } else {
                 // Sky: lighter near the ground.
                 let t = ((wy - (surface_y - 1024)) as f32 / 1100.0).clamp(0.0, 1.0);

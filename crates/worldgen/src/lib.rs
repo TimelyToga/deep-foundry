@@ -212,7 +212,8 @@ impl WorldGen {
         WorldGenSettings::parse(text).map(|s| Self::new(content, s))
     }
 
-    pub fn settings(&self) -> &WorldGenSettings {
+    /// The settings (the text form for world files is `ChunkSource::settings`).
+    pub fn world_settings(&self) -> &WorldGenSettings {
         &self.settings
     }
 

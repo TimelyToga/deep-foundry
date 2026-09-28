@@ -13,6 +13,7 @@ path = "src/main.rs"
 foundry_core.workspace = true
 foundry_content.workspace = true
 foundry_sim.workspace = true
+foundry_worldgen.workspace = true
 foundry_render.workspace = true
 foundry_ui.workspace = true
 foundry_factory.workspace = true
