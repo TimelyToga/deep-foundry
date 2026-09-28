@@ -39,6 +39,9 @@ pub enum SimEvent {
     /// A reaction rule fired. `index` is the index into `Content::reactions`; `at` is the cell of
     /// input A. At most one event for each reaction in each tick (the first in the update order).
     Reaction { index: u16, at: CellPos },
+    /// An explosion ran in this tick (for damage, sound and screen shake). `radius` is in cells.
+    /// See `explode/mod.rs` for the strength scale.
+    Exploded { at: CellPos, radius: f32, strength: f32 },
 }
 
 use chunk::{Chunk, FLAG_PARITY};
@@ -272,6 +275,7 @@ pub struct Simulation {
     events: Vec<SimEvent>,
     react: react::ReactTable,
     particles: particles::Particles,
+    explosions: explode::Explosions,
     debug: bool,
     /// Air temperature for each row of cells (°C). Heat moves air cells toward it.
     air_temperature: Vec<i16>,
@@ -308,11 +312,13 @@ impl Simulation {
             events: Vec::new(),
             react: react::ReactTable::default(),
             particles: particles::Particles::default(),
+            explosions: explode::Explosions::default(),
             debug: false,
             air_temperature: vec![],
             settings: SimSettings::default(),
         };
         sim.react = react::ReactTable::new(&sim.content);
+        sim.explosions = explode::Explosions::new(&sim.content.materials);
         sim.air_temperature = vec![foundry_core::DEFAULT_TEMPERATURE; sim.world.height_cells() as usize];
         if config.bedrock_border && !bedrock.is_air() && config.width_chunks.is_some() {
             let (w, h) = sim.size_cells();
@@ -479,10 +485,9 @@ impl Simulation {
         self.sync_anchors();
         let t_anchors = ms(start);
         let mats = &self.content.materials;
-        // Events of the last tick (explosions) are handled first, so chains spread over ticks.
+        // Events of the last tick (explosions) run after this tick's movement, so chains spread
+        // over ticks.
         let previous = std::mem::take(&mut self.events);
-        explode::process(&mut self.world, mats, &previous, &mut self.particles, self.tick, self.seed, self.stamp);
-        let t_explode = ms(start);
         let mut spawns = vec![];
         let splash_ok = self.particles.len() < self.settings.max_particles / 2;
         let awake = schedule::movement_tick(
@@ -501,7 +506,10 @@ impl Simulation {
             self.particles.spawn(sp, self.settings.max_particles);
         }
         let t_move = ms(start);
-        self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp);
+        let ctx = explode::Ctx { mats, settings: &self.settings, seed: self.seed, tick: self.tick, stamp: self.stamp, pool: self.pool.as_ref() };
+        self.explosions.process(&mut self.world, &ctx, &previous, &mut self.particles, &mut self.events);
+        let t_explode = ms(start);
+        self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp, self.pool.as_ref());
         let t_particles = ms(start);
         heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
         let t_heat = ms(start);
@@ -520,9 +528,9 @@ impl Simulation {
             generated_chunks: (self.world.generated_total() - generated_before) as u32,
             sections: vec![
                 ("anchors", t_anchors),
-                ("explosions", t_explode - t_anchors),
-                ("movement", t_move - t_explode),
-                ("particles", t_particles - t_move),
+                ("movement", t_move - t_anchors),
+                ("explosions", t_explode - t_move),
+                ("particles", t_particles - t_explode),
                 ("heat", t_heat - t_particles),
                 ("memory", total - t_heat),
             ],
@@ -555,6 +563,69 @@ impl Simulation {
     /// Mutable access to the particles, for tools that spawn them.
     pub fn particles_mut(&mut self) -> &mut particles::Particles {
         &mut self.particles
+    }
+
+    /// Run an explosion now (for tools, tests and the debug brush). See `explode/mod.rs` for the
+    /// strength scale; `heat` is in °C (0: no heat). The thrown cells fly from the next tick on.
+    /// If the center is in a chunk that does not update, the explosion waits in the queue until
+    /// an anchor comes near, and this returns false.
+    pub fn explode(&mut self, center: CellPos, strength: f32, heat: i16) -> bool {
+        self.sync_anchors();
+        self.stamp += 1;
+        let ctx = explode::Ctx {
+            mats: &self.content.materials,
+            settings: &self.settings,
+            seed: self.seed,
+            tick: self.tick,
+            stamp: self.stamp,
+            pool: self.pool.as_ref(),
+        };
+        let blast = explode::Blast { at: center, strength, heat };
+        self.explosions.run_now(&mut self.world, &ctx, blast, &mut self.particles, &mut self.events)
+    }
+
+    /// Number of explosions that wait in the queue.
+    pub fn queued_explosions(&self) -> usize {
+        self.explosions.queued()
+    }
+
+    /// Add a material particle: a cell that flies from `pos` with `velocity` (cells per tick) and
+    /// becomes a cell where it lands. `temperature: None` uses the material's default temperature.
+    pub fn spawn_particle(&mut self, pos: (f32, f32), velocity: (f32, f32), material: MaterialId, temperature: Option<i16>) {
+        let mats = &self.content.materials;
+        let life = match mats.life[material.index()] {
+            Some((lo, hi)) => lo + self.paint_rng.below((hi - lo) as u32 + 1) as u8,
+            None => 0,
+        };
+        let spawn = particles::Spawn {
+            x: pos.0,
+            y: pos.1,
+            vx: velocity.0,
+            vy: velocity.1,
+            material,
+            temperature: temperature.unwrap_or(mats.temperature[material.index()]),
+            shade: self.paint_rng.next_u32() as u8,
+            life,
+            flags: 0,
+        };
+        self.particles.spawn(spawn, usize::MAX);
+    }
+
+    /// Add a visual particle (only drawn, never a cell) that lives `life` ticks. `rise`: it rises
+    /// slowly like smoke; else it falls like a spark. Returns false if there are too many.
+    pub fn spawn_visual(&mut self, pos: (f32, f32), velocity: (f32, f32), material: MaterialId, life: u8, rise: bool) -> bool {
+        let spawn = particles::Spawn {
+            x: pos.0,
+            y: pos.1,
+            vx: velocity.0,
+            vy: velocity.1,
+            material,
+            temperature: self.content.materials.temperature[material.index()],
+            shade: self.paint_rng.next_u32() as u8,
+            life,
+            flags: particles::VISUAL | if rise { particles::RISE } else { 0 },
+        };
+        self.particles.spawn(spawn, self.settings.max_particles)
     }
 
     /// The events of the last tick (explosions, ...), in a fixed order.
