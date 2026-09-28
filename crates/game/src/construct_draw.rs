@@ -84,16 +84,17 @@ fn body_color(content: &Content, kind: foundry_core::BuildingKindId) -> Color32 
 
 /// A footprint as a see-through building: the body color, a green or red tint, the tile lines and
 /// the building icon.
-fn footprint_shape(p: &Painter, v: &View, cells: CellRect, size: (u8, u8), body: Color32, tint: Color32, item: Option<ItemRef>, atlas: Option<&IconAtlas>) {
+fn footprint_shape(p: &Painter, v: &View, cells: CellRect, body: Color32, tint: Color32, item: Option<ItemRef>, atlas: Option<&IconAtlas>) {
     let rect = v.cell_rect(cells);
+    let size = (cells.width() / TILE_SIZE, cells.height() / TILE_SIZE);
     p.rect_filled(rect, CornerRadius::ZERO, body.gamma_multiply(0.45));
     p.rect_filled(rect, CornerRadius::ZERO, tint.gamma_multiply(0.28));
     let thin = Stroke::new(1.0, tint.gamma_multiply(0.35));
-    for i in 1..size.0 as i32 {
+    for i in 1..size.0 {
         let x = (cells.x0 + i * TILE_SIZE) as f64;
         p.line_segment([v.pos(x, cells.y0 as f64), v.pos(x, cells.y1 as f64)], thin);
     }
-    for i in 1..size.1 as i32 {
+    for i in 1..size.1 {
         let y = (cells.y0 + i * TILE_SIZE) as f64;
         p.line_segment([v.pos(cells.x0 as f64, y), v.pos(cells.x1 as f64, y)], thin);
     }
@@ -114,7 +115,7 @@ fn ghost(p: &Painter, v: &View, g: &LocalGhost, frame: &FactoryFrame, content: &
         None => UNKNOWN,
     };
     let def = content.factory.building_def(g.request.kind);
-    footprint_shape(p, v, cells, g.size, body_color(content, g.request.kind), tint, Some(ItemRef::Part(def.part)), atlas);
+    footprint_shape(p, v, cells, body_color(content, g.request.kind), tint, Some(ItemRef::Part(def.part)), atlas);
     if let Some(k) = known {
         for port in &k.ports {
             port_arrow(p, v, port.tile, port.side, port.kind);
@@ -145,7 +146,7 @@ fn drag_line(p: &Painter, v: &View, d: &DragLine, content: &Content, mouse: Opti
     if let Some((at, text)) = &d.stop {
         let cells = footprint(*at, d.size);
         let def = content.factory.building_def(d.kind);
-        footprint_shape(p, v, cells, d.size, body_color(content, d.kind), BAD, Some(ItemRef::Part(def.part)), atlas);
+        footprint_shape(p, v, cells, body_color(content, d.kind), BAD, Some(ItemRef::Part(def.part)), atlas);
         reason(p, v, text, mouse, cells);
     }
 }

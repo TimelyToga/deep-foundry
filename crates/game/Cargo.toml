@@ -18,7 +18,7 @@ foundry_ui.workspace = true
 foundry_factory.workspace = true
 serde.workspace = true
 ron.workspace = true
-winit = "0.30.13"
+winit = { version = "0.30.13", features = ["serde"] }
 egui = "0.36.2"
 egui-wgpu = "0.36.2"
 egui-winit = "0.36.2"

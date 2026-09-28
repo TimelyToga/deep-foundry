@@ -72,9 +72,12 @@ pub fn draw(painter: &Painter, frame: &FactoryFrame, s: &Scene) {
     }
     construct_draw::draw_over(painter, &v, frame, s.build, s.content, s.atlas);
     let b = s.build;
+    // The dig circle, but not on a building (a click there opens it).
+    let on_building = |m: foundry_core::CellPos| frame.hover.as_ref().is_some_and(|h| h.rect.contains(m));
     if !b.grid
         && !b.removing
         && let (Some(mouse), Some(r)) = (b.mouse, &frame.robot)
+        && !on_building(mouse)
     {
         // The dig circle at the aim point (moved into reach).
         let aim = tools::clamp_aim(r, mouse);

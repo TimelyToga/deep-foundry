@@ -110,6 +110,9 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
         let saves_dir = args.saves.clone().unwrap_or_else(crate::saves::default_dir);
         let mut ui = SandboxUi::new(&ctx, content.clone(), saves_dir);
         ui.model.settings.ui_scale = args.ui_scale;
+        // The default keys (a picture does not read the settings file).
+        let names = crate::keys::KeyNames::default();
+        ui.model.settings.key_bindings = crate::keys::rows(&crate::keys::Bindings::default(), &names, state.has_world().then_some(normal));
         // A picture has no frame rate, so the HUD shows "-" for the FPS.
         ui.model.perf = Some(PerfView {
             fps: 0.0,
@@ -142,6 +145,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             let cell = sim.cell(pos);
             ui.model.hover =
                 n.hover(pos).or(Some(HoverView::Cell { pos, material: cell.material, temperature: cell.temperature as f32 }));
+            ui.model.hover_detail = n.hover_detail(&content, ui.model.hover.as_ref());
         }
         match state {
             UiState::Menu => {}
@@ -320,15 +324,21 @@ fn setup_normal_screen(
             }
         }
         UiState::Alt => {
-            // Machines with recipes, a crate and belts, seen in the alt mode.
-            let spots = [("steam_press", "bronze_plate"), ("steam_crusher", "")];
+            // Two machines side by side with recipes, and belts on the first, seen in the alt mode.
             let mut x = None;
-            for (id, _) in spots {
-                give(h, ItemRef::Part(part(id)), 1);
-                h.apply(FactoryCommand::PickToCursor(part(id)), sim);
-                if let Some(at) = h.free_place(kind(id), sim) {
-                    h.apply(FactoryCommand::Place(Placement::new(kind(id), at, 0)), sim);
-                    x = Some(at);
+            give(h, ItemRef::Part(part("steam_press")), 1);
+            give(h, ItemRef::Part(part("steam_crusher")), 1);
+            h.apply(FactoryCommand::PickToCursor(part("steam_press")), sim);
+            let first = h.free_place(kind("steam_press"), sim);
+            if let Some(at) = first {
+                h.apply(FactoryCommand::Place(Placement::new(kind("steam_press"), at, 0)), sim);
+                h.apply(FactoryCommand::PickToCursor(part("steam_crusher")), sim);
+                // The first free place to the right, as low as possible.
+                let k = kind("steam_crusher");
+                let spot = (3..12).flat_map(|dx| (-4..=3).rev().map(move |dy| foundry_core::TilePos::new(at.x + dx, at.y + dy)));
+                if let Some(c) = spot.into_iter().find(|t| h.check_place(k, *t, 0, false, sim).is_ok()) {
+                    h.apply(FactoryCommand::Place(Placement::new(k, c, 0)), sim);
+                    x = Some(c);
                 }
             }
             // Recipes: the first recipe each machine can run (the alt icon is its product).
@@ -340,9 +350,9 @@ fn setup_normal_screen(
             }
             give(h, ItemRef::Part(part("wood_belt")), 8);
             h.apply(FactoryCommand::PickToCursor(part("wood_belt")), sim);
-            if let Some(at) = h.free_place(kind("wood_belt"), sim) {
-                for i in 0..3 {
-                    h.apply(FactoryCommand::Place(Placement::new(kind("wood_belt"), foundry_core::TilePos::new(at.x + i, at.y), 2)), sim);
+            if let Some(at) = first {
+                for i in 0..2 {
+                    h.apply(FactoryCommand::Place(Placement::new(kind("wood_belt"), foundry_core::TilePos::new(at.x + i, at.y - 1), 2)), sim);
                 }
             }
             h.apply(FactoryCommand::ClearCursor, sim);
