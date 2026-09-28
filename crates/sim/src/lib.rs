@@ -504,7 +504,7 @@ impl Simulation {
         let ctx = explode::Ctx { mats, settings: &self.settings, seed: self.seed, tick: self.tick, stamp: self.stamp, pool: self.pool.as_ref() };
         self.explosions.process(&mut self.world, &ctx, &previous, &mut self.particles, &mut self.events);
         let t_explode = ms(start);
-        self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp);
+        self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp, self.pool.as_ref());
         let t_particles = ms(start);
         heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
         let t_heat = ms(start);

@@ -23,15 +23,19 @@
 //! that is packed or not in memory (the area moved away) waits there, with its velocity, until the
 //! chunk updates again.
 //!
-//! Particles update on one thread, in list order, so the result is deterministic.
-//! A step has three parts: move all particles (only reads cells), then turn the particles that
-//! landed into cells (in list order), then remove the particles that are gone.
+//! # The three parts of a step
+//! 1. Move all particles. This part only reads cells, and each particle changes only itself, so
+//!    many particles move in parallel (see `Table`). The result does not depend on the number of
+//!    threads.
+//! 2. Turn the material particles that hit something into cells, on one thread, in list order.
+//! 3. Remove the particles that are gone, and keep the order of the others.
 
 use crate::SimSettings;
-use crate::chunk::{FLAG_PARITY, MOTION_MOMENTUM_SHIFT, MOTION_RIGHT, MOTION_SPEED};
+use crate::chunk::{Chunk, FLAG_PARITY, MOTION_MOMENTUM_SHIFT, MOTION_RIGHT, MOTION_SPEED};
 use crate::world::{RawChunk, World};
 use foundry_content::{MaterialTable, Phase};
-use foundry_core::{CellPos, CellRect, ChunkPos, MaterialId, ParticleView};
+use foundry_core::{CHUNK_SHIFT, CellPos, CellRect, ChunkPos, MaterialId, ParticleView};
+use rayon::prelude::*;
 
 #[cfg(test)]
 mod tests;
@@ -59,7 +63,15 @@ const RISE_DRAG: f32 = 0.9;
 /// Upward pull of a rising visual particle, as a part of gravity.
 const RISE_LIFT: f32 = 0.3;
 
-/// A new particle.
+/// With at least this many particles, the move part runs on several threads.
+const PARALLEL_MIN: usize = 4096;
+/// Particles per job in the parallel move.
+const PARALLEL_PART: usize = 1024;
+/// The parallel move needs a table of all chunks around the particles. If there are more chunks
+/// than this (particles near anchors that are far apart), the move runs on one thread.
+const MAX_TABLE_CHUNKS: i64 = 4096;
+
+/// A new particle, or the state of one particle (see `Particles::get`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spawn {
     /// Position in cells.
@@ -76,37 +88,59 @@ pub struct Spawn {
     pub flags: u8,
 }
 
-/// All particles, as separate arrays.
+/// One particle in the list.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Particle {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    mat: u16,
+    temp: i16,
+    shade: u8,
+    life: u8,
+    flags: u8,
+}
+
+/// All particles.
 #[derive(Default)]
 pub struct Particles {
-    x: Vec<f32>,
-    y: Vec<f32>,
-    vx: Vec<f32>,
-    vy: Vec<f32>,
-    mat: Vec<u16>,
-    temp: Vec<i16>,
-    shade: Vec<u8>,
-    life: Vec<u8>,
-    flags: Vec<u8>,
-    /// Number of visual particles in the lists.
+    list: Vec<Particle>,
+    /// Number of visual particles in the list.
     visual: usize,
-    /// Particles that landed in this step (indices), kept to reuse the memory.
-    landing: Vec<u32>,
+    /// Memory that the step reuses.
     search: Search,
+    table: Table,
 }
 
 impl Particles {
     pub fn len(&self) -> usize {
-        self.x.len()
+        self.list.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.x.is_empty()
+        self.list.is_empty()
     }
 
     /// Number of visual particles.
     pub fn visual_count(&self) -> usize {
         self.visual
+    }
+
+    /// The state of particle `i` (for tests and tools). `flags` has only `VISUAL` and `RISE`.
+    pub fn get(&self, i: usize) -> Spawn {
+        let p = &self.list[i];
+        Spawn {
+            x: p.x,
+            y: p.y,
+            vx: p.vx,
+            vy: p.vy,
+            material: MaterialId(p.mat),
+            temperature: p.temp,
+            shade: p.shade,
+            life: p.life,
+            flags: p.flags & PUBLIC_FLAGS,
+        }
     }
 
     /// Add a particle. Returns false if it was not added.
@@ -119,208 +153,120 @@ impl Particles {
             return false;
         }
         self.visual += visual as usize;
-        self.x.push(s.x);
-        self.y.push(s.y);
-        self.vx.push(s.vx);
-        self.vy.push(s.vy);
-        self.mat.push(s.material.0);
-        self.temp.push(s.temperature);
-        self.shade.push(s.shade);
-        self.life.push(s.life);
-        self.flags.push(s.flags & PUBLIC_FLAGS);
+        self.list.push(Particle {
+            x: s.x,
+            y: s.y,
+            vx: s.vx,
+            vy: s.vy,
+            mat: s.material.0,
+            temp: s.temperature,
+            shade: s.shade,
+            life: s.life,
+            flags: s.flags & PUBLIC_FLAGS,
+        });
         true
     }
 
     /// Number of material (not visual) particles of a material. For tests that count material.
     pub fn count_material(&self, m: MaterialId) -> usize {
-        (0..self.len()).filter(|&i| self.mat[i] == m.0 && self.flags[i] & VISUAL == 0).count()
+        self.list.iter().filter(|p| p.mat == m.0 && p.flags & VISUAL == 0).count()
     }
 
     /// Move all particles one tick. Material particles that hit something become cells.
+    /// `pool`: the thread pool for the move part (`None`: the global pool).
     ///
     /// A material particle is never lost and never stays stuck: if the grid filled up around it
     /// (for example a pool rose over it), it becomes a cell at the nearest free cell above it, or
     /// else at the nearest air cell it can reach (see `free_spot`). Only if there is no air nearby
     /// at all does it stay a particle; it then moves up one cell per tick (if it can) until it
     /// finds air.
-    pub fn step(&mut self, world: &mut World, mats: &MaterialTable, settings: &SimSettings, tick: u64, stamp: u64) {
-        let mut grid = Grid::default();
-        let mut landing = std::mem::take(&mut self.landing);
-        landing.clear();
-        for i in 0..self.len() {
-            if self.move_one(i, &mut grid, world, mats, settings) {
-                landing.push(i as u32);
-            }
-        }
-        let parity_next_free = (tick & 1) as u8; // the next tick's parity is the other value
-        for &i in &landing {
-            self.land(i as usize, world, mats, parity_next_free, stamp);
-        }
-        self.landing = landing;
-        self.remove_gone();
-    }
-
-    /// Move particle `i` one tick. Only reads cells. Returns true if it is a material particle that
-    /// must become a cell (the landing part of the step does that).
-    #[inline]
-    fn move_one(&mut self, i: usize, grid: &mut Grid, world: &mut World, mats: &MaterialTable, settings: &SimSettings) -> bool {
-        let flags = self.flags[i];
-        let visual = flags & VISUAL != 0;
-        let g = settings.particle_gravity;
-        let (mut vx, mut vy) = (self.vx[i], self.vy[i]);
-        if visual {
-            if self.life[i] <= 1 {
-                self.flags[i] = flags | GONE;
-                return false;
-            }
-            self.life[i] -= 1;
-            if flags & RISE != 0 {
-                vx *= RISE_DRAG;
-                vy = vy * RISE_DRAG - g * RISE_LIFT;
-            } else {
-                vx *= VISUAL_DRAG;
-                vy += g;
+    pub fn step(
+        &mut self,
+        world: &mut World,
+        mats: &MaterialTable,
+        settings: &SimSettings,
+        tick: u64,
+        stamp: u64,
+        pool: Option<&rayon::ThreadPool>,
+    ) {
+        // 1. Move. Both ways give the same result.
+        if self.list.len() >= PARALLEL_MIN && self.table.build(world, &self.list, settings.particle_max_speed) {
+            let table = &self.table;
+            let run = |part: &mut [Particle]| {
+                let mut cache = TableCache::default();
+                for p in part {
+                    move_one(p, &mut |c| table.look(&mut cache, c), mats, settings);
+                }
+            };
+            let list = &mut self.list;
+            match pool {
+                Some(pool) => pool.install(|| list.par_chunks_mut(PARALLEL_PART).for_each(run)),
+                None => list.par_chunks_mut(PARALLEL_PART).for_each(run),
             }
         } else {
-            vx *= DRAG;
-            vy += g;
-        }
-        let max_v = settings.particle_max_speed;
-        vx = vx.clamp(-max_v, max_v);
-        vy = vy.clamp(-max_v, max_v);
-        let (mut px, mut py) = (self.x[i], self.y[i]);
-        let here = CellPos::new(px.floor() as i32, py.floor() as i32);
-        match grid.look(world, here) {
-            Look::Cell(m) if passable(m, mats) => {}
-            Look::Cell(_) | Look::Paused(_) if visual => {
-                self.flags[i] = flags | GONE;
-                return false;
-            }
-            // The grid changed under a material particle, or it is in a live chunk that does not
-            // update: it lands where it is.
-            Look::Cell(_) | Look::Paused(_) => {
-                self.flags[i] = flags | LAND;
-                (self.vx[i], self.vy[i]) = (vx, vy);
-                return true;
-            }
-            // In a chunk that is packed or not in memory: a material particle waits (it keeps its
-            // velocity).
-            Look::Wall if visual => {
-                self.flags[i] = flags | GONE;
-                return false;
-            }
-            Look::Wall => return false,
-            // Above the top of the world: come back down.
-            Look::Outside if here.y < 0 => {
-                py = 0.5;
-                vy = vy.max(0.0);
-            }
-            // Out through a side or the bottom (only if there is no bedrock border).
-            Look::Outside => {
-                self.flags[i] = flags | GONE;
-                return false;
+            let mut grid = Grid::default();
+            for p in &mut self.list {
+                move_one(p, &mut |c| grid.look(world, c), mats, settings);
             }
         }
-        let mut land = false;
-        match fly(grid, world, mats, px, py, vx, vy) {
-            Flight::Free => {
-                px += vx;
-                py += vy;
-            }
-            Flight::Hit { last, t } => {
-                if visual {
-                    self.flags[i] = flags | GONE;
-                    return false;
-                }
-                (px, py) = point_in_cell(px, py, vx, vy, t, last);
-                land = true;
-            }
-            Flight::Ceiling { last, t } => {
-                (px, py) = point_in_cell(px, py, vx, vy, t, last);
-                vy = vy.max(0.0);
-            }
-            Flight::Lost => {
-                self.flags[i] = flags | GONE;
-                return false;
+        // 2. Land, in list order.
+        let parity_next_free = (tick & 1) as u8; // the next tick's parity is the other value
+        for i in 0..self.list.len() {
+            if self.list[i].flags & LAND != 0 {
+                self.land(i, world, mats, parity_next_free, stamp);
             }
         }
-        (self.x[i], self.y[i], self.vx[i], self.vy[i]) = (px, py, vx, vy);
-        if land {
-            self.flags[i] = flags | LAND;
-        }
-        land
+        // 3. Remove.
+        self.remove_gone();
     }
 
     /// Turn particle `i` (a material particle that hit something) into a grid cell.
     fn land(&mut self, i: usize, world: &mut World, mats: &MaterialTable, parity: u8, stamp: u64) {
-        let at = CellPos::new(self.x[i].floor() as i32, self.y[i].floor() as i32);
+        let p = &mut self.list[i];
+        let at = CellPos::new(p.x.floor() as i32, p.y.floor() as i32);
         let mut grid = Grid::default();
         if let Some(spot) = free_spot(&mut grid, world, mats, at, &mut self.search) {
             let cell = Landing {
-                material: MaterialId(self.mat[i]),
-                temp: self.temp[i],
-                shade: self.shade[i],
-                life: self.life[i],
-                motion: landing_motion(self.vx[i], self.vy[i]),
+                material: MaterialId(p.mat),
+                temp: p.temp,
+                shade: p.shade,
+                life: p.life,
+                motion: landing_motion(p.vx, p.vy),
             };
             place(&mut grid, world, mats, spot, cell, parity, stamp);
-            self.flags[i] = GONE;
+            p.flags = GONE;
             return;
         }
         // No air nearby: stop, move up one cell, and try again next tick.
-        self.flags[i] &= !LAND;
-        self.vx[i] = 0.0;
-        self.vy[i] = 0.0;
+        p.flags &= !LAND;
+        p.vx = 0.0;
+        p.vy = 0.0;
         if let Look::Cell(m) | Look::Paused(m) = grid.look(world, at.offset(0, -1))
             && mats.phase[m.index()] != Phase::Solid
         {
-            self.y[i] -= 1.0;
+            p.y -= 1.0;
         }
     }
 
     /// Remove the particles marked `GONE`, keep the others in order, and clear the step flags.
     fn remove_gone(&mut self) {
-        let mut keep = 0;
-        let mut visual = 0;
-        for i in 0..self.len() {
-            let f = self.flags[i];
-            if f & GONE != 0 {
-                continue;
-            }
-            visual += (f & VISUAL != 0) as usize;
-            self.x[keep] = self.x[i];
-            self.y[keep] = self.y[i];
-            self.vx[keep] = self.vx[i];
-            self.vy[keep] = self.vy[i];
-            self.mat[keep] = self.mat[i];
-            self.temp[keep] = self.temp[i];
-            self.shade[keep] = self.shade[i];
-            self.life[keep] = self.life[i];
-            self.flags[keep] = f & PUBLIC_FLAGS;
-            keep += 1;
-        }
-        self.visual = visual;
-        self.x.truncate(keep);
-        self.y.truncate(keep);
-        self.vx.truncate(keep);
-        self.vy.truncate(keep);
-        self.mat.truncate(keep);
-        self.temp.truncate(keep);
-        self.shade.truncate(keep);
-        self.life.truncate(keep);
-        self.flags.truncate(keep);
+        self.list.retain_mut(|p| {
+            p.flags &= !LAND;
+            p.flags & GONE == 0
+        });
+        self.visual = self.list.iter().filter(|p| p.flags & VISUAL != 0).count();
     }
 
     /// Write all particles (for saves).
     pub fn write(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         w.write_all(&(self.len() as u32).to_le_bytes())?;
-        for i in 0..self.len() {
-            for v in [self.x[i], self.y[i], self.vx[i], self.vy[i]] {
+        for p in &self.list {
+            for v in [p.x, p.y, p.vx, p.vy] {
                 w.write_all(&v.to_le_bytes())?;
             }
-            w.write_all(&self.mat[i].to_le_bytes())?;
-            w.write_all(&self.temp[i].to_le_bytes())?;
-            w.write_all(&[self.shade[i], self.life[i], self.flags[i]])?;
+            w.write_all(&p.mat.to_le_bytes())?;
+            w.write_all(&p.temp.to_le_bytes())?;
+            w.write_all(&[p.shade, p.life, p.flags])?;
         }
         Ok(())
     }
@@ -359,26 +305,106 @@ impl Particles {
 
     /// Particles inside an area, for the snapshot.
     pub fn views(&self, area: CellRect, out: &mut Vec<ParticleView>) {
-        for i in 0..self.len() {
-            let (x, y) = (self.x[i], self.y[i]);
-            if area.contains(CellPos::new(x as i32, y as i32)) {
+        for p in &self.list {
+            if area.contains(CellPos::new(p.x as i32, p.y as i32)) {
                 out.push(ParticleView {
-                    x,
-                    y,
-                    vx: self.vx[i],
-                    vy: self.vy[i],
-                    material: self.mat[i],
-                    temperature: self.temp[i],
-                    shade: self.shade[i],
+                    x: p.x,
+                    y: p.y,
+                    vx: p.vx,
+                    vy: p.vy,
+                    material: p.mat,
+                    temperature: p.temp,
+                    shade: p.shade,
                 });
             }
         }
     }
+}
 
-    /// Flags and life of particle `i` (for tests and tools). See `VISUAL` and `RISE`.
-    pub fn flags_and_life(&self, i: usize) -> (u8, u8) {
-        (self.flags[i], self.life[i])
+/// Move one particle one tick. Only reads cells (through `look`). Sets `LAND` on a material
+/// particle that must become a cell (the landing part of the step does that), and `GONE` on a
+/// particle that is removed.
+#[inline]
+fn move_one(p: &mut Particle, look: &mut impl FnMut(CellPos) -> Look, mats: &MaterialTable, settings: &SimSettings) {
+    let visual = p.flags & VISUAL != 0;
+    let g = settings.particle_gravity;
+    let (mut vx, mut vy) = (p.vx, p.vy);
+    if visual {
+        if p.life <= 1 {
+            p.flags |= GONE;
+            return;
+        }
+        p.life -= 1;
+        if p.flags & RISE != 0 {
+            vx *= RISE_DRAG;
+            vy = vy * RISE_DRAG - g * RISE_LIFT;
+        } else {
+            vx *= VISUAL_DRAG;
+            vy += g;
+        }
+    } else {
+        vx *= DRAG;
+        vy += g;
     }
+    let max_v = settings.particle_max_speed;
+    vx = vx.clamp(-max_v, max_v);
+    vy = vy.clamp(-max_v, max_v);
+    let (mut px, mut py) = (p.x, p.y);
+    let here = CellPos::new(px.floor() as i32, py.floor() as i32);
+    match look(here) {
+        Look::Cell(m) if passable(m, mats) => {}
+        Look::Cell(_) | Look::Paused(_) if visual => {
+            p.flags |= GONE;
+            return;
+        }
+        // The grid changed under a material particle, or it is in a live chunk that does not
+        // update: it lands where it is.
+        Look::Cell(_) | Look::Paused(_) => {
+            p.flags |= LAND;
+            (p.vx, p.vy) = (vx, vy);
+            return;
+        }
+        // In a chunk that is packed or not in memory: a material particle waits (it keeps its
+        // velocity).
+        Look::Wall if visual => {
+            p.flags |= GONE;
+            return;
+        }
+        Look::Wall => return,
+        // Above the top of the world: come back down.
+        Look::Outside if here.y < 0 => {
+            py = 0.5;
+            vy = vy.max(0.0);
+        }
+        // Out through a side or the bottom (only if there is no bedrock border).
+        Look::Outside => {
+            p.flags |= GONE;
+            return;
+        }
+    }
+    match fly(look, mats, px, py, vx, vy) {
+        Flight::Free => {
+            px += vx;
+            py += vy;
+        }
+        Flight::Hit { last, t } => {
+            if visual {
+                p.flags |= GONE;
+                return;
+            }
+            (px, py) = point_in_cell(px, py, vx, vy, t, last);
+            p.flags |= LAND;
+        }
+        Flight::Ceiling { last, t } => {
+            (px, py) = point_in_cell(px, py, vx, vy, t, last);
+            vy = vy.max(0.0);
+        }
+        Flight::Lost => {
+            p.flags |= GONE;
+            return;
+        }
+    }
+    (p.x, p.y, p.vx, p.vy) = (px, py, vx, vy);
 }
 
 /// What a particle finds at a cell.
@@ -396,19 +422,66 @@ enum Look {
     Outside,
 }
 
-/// Reads cells for particles. It keeps the last chunk it looked at, because the cells that one
-/// particle looks at in one tick are mostly in one chunk.
+/// What a chunk is, for particles.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    /// A live chunk in a simulation area.
+    Live(*const Chunk),
+    /// A live chunk outside every simulation area.
+    Paused(*const Chunk),
+    /// All air (no cells in memory), in a simulation area.
+    Air,
+    /// Packed, not in memory, or all air outside every simulation area.
+    Wall,
+    /// Outside the world.
+    Outside,
+}
+
+impl Kind {
+    /// The kind of chunk `c`. The pointers are only used to read cells.
+    fn of(world: &mut World, c: ChunkPos) -> Kind {
+        if !world.chunk_in_bounds(c) {
+            return Kind::Outside;
+        }
+        match world.raw_chunk(c) {
+            RawChunk::Live(ch) => Kind::Live(ch.cast_const()),
+            RawChunk::Air => Kind::Air,
+            RawChunk::Unknown => match world.chunk(c) {
+                Some(ch) => Kind::Paused(std::ptr::from_ref(ch)),
+                None => Kind::Wall,
+            },
+        }
+    }
+
+    /// The cell at `p` of a chunk of this kind.
+    #[inline(always)]
+    fn look(self, p: CellPos) -> Look {
+        match self {
+            // SAFETY (both arms): the pointer points to a live chunk of the world (see `Kind::of`).
+            // No chunk leaves the world and no cell is written while a `Kind` is used: `Grid` and
+            // `Table` are used in the move part of a step (which only reads cells), and in the
+            // landing part a new `Grid` is made for each particle and is not used after the
+            // particle's cell is written. This reads one element.
+            Kind::Live(ch) => Look::Cell(MaterialId(unsafe { (*ch).mat[p.local_index()] })),
+            Kind::Paused(ch) => Look::Paused(MaterialId(unsafe { (*ch).mat[p.local_index()] })),
+            Kind::Air => Look::Cell(MaterialId::AIR),
+            Kind::Wall => Look::Wall,
+            Kind::Outside => Look::Outside,
+        }
+    }
+}
+
+/// Reads cells for particles on one thread. It keeps the last chunk it looked at, because the
+/// cells that one particle looks at in one tick are mostly in one chunk.
 struct Grid {
     pos: ChunkPos,
-    kind: RawChunk,
-    /// The chunk is live but outside every simulation area.
-    paused: bool,
+    kind: Kind,
     valid: bool,
 }
 
 impl Default for Grid {
     fn default() -> Self {
-        Self { pos: ChunkPos::new(0, 0), kind: RawChunk::Unknown, paused: false, valid: false }
+        Self { pos: ChunkPos::new(0, 0), kind: Kind::Wall, valid: false }
     }
 }
 
@@ -417,35 +490,85 @@ impl Grid {
     fn look(&mut self, world: &mut World, p: CellPos) -> Look {
         let c = p.chunk();
         if !self.valid || c != self.pos {
-            if !world.chunk_in_bounds(c) {
-                return Look::Outside;
-            }
             self.pos = c;
-            self.kind = world.raw_chunk(c);
-            self.paused = false;
-            if let RawChunk::Unknown = self.kind
-                && let Some(ch) = world.chunk(c)
-            {
-                // Only read through this pointer.
-                self.kind = RawChunk::Live(std::ptr::from_ref(ch).cast_mut());
-                self.paused = true;
-            }
+            self.kind = Kind::of(world, c);
             self.valid = true;
         }
-        match self.kind {
-            RawChunk::Live(ch) => {
-                // SAFETY: the pointer points to a live chunk (from `raw_chunk`, or from `chunk` for a
-                // live chunk outside every simulation area; that one is only read). No chunk leaves
-                // the world while a `Grid` is used: in the move part of a step nothing writes to the
-                // world, and in the landing part a new `Grid` is made for each particle and is not
-                // used after the particle's cell is written. Only one thread runs. This reads one
-                // element.
-                let m = MaterialId(unsafe { (*ch).mat[p.local_index()] });
-                if self.paused { Look::Paused(m) } else { Look::Cell(m) }
-            }
-            RawChunk::Air => Look::Cell(MaterialId::AIR),
-            RawChunk::Unknown => Look::Wall,
+        self.kind.look(p)
+    }
+}
+
+/// The kinds of all chunks around the particles, for the parallel move. It covers every chunk
+/// that a particle can reach in one tick.
+#[derive(Default)]
+struct Table {
+    x0: i32,
+    y0: i32,
+    w: i32,
+    h: i32,
+    kinds: Vec<Kind>,
+}
+
+// SAFETY: the table holds pointers to chunks only to read cells, and it is used only while no
+// thread writes to the world (the move part of a step).
+unsafe impl Sync for Table {}
+unsafe impl Send for Table {}
+
+/// The last chunk that one job of the parallel move looked at.
+#[derive(Default)]
+struct TableCache {
+    last: Option<(ChunkPos, Kind)>,
+}
+
+impl Table {
+    /// Fill the table for these particles. Returns false if it would have more than
+    /// `MAX_TABLE_CHUNKS` chunks.
+    fn build(&mut self, world: &mut World, list: &[Particle], max_speed: f32) -> bool {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for p in list {
+            x0 = x0.min(p.x);
+            y0 = y0.min(p.y);
+            x1 = x1.max(p.x);
+            y1 = y1.max(p.y);
         }
+        // A particle moves at most `max_speed` cells in x and in y in one tick. One above the top
+        // of the world first moves to y = 0.5.
+        let m = max_speed.ceil() + 2.0;
+        let limit = (1i64 << 30) as f32;
+        let chunk = |v: f32| (v.clamp(-limit, limit).floor() as i32) >> CHUNK_SHIFT;
+        let (cx0, cy0, cx1, cy1) = (chunk(x0 - m), chunk(y0.min(0.0) - m), chunk(x1 + m), chunk(y1.max(0.0) + m));
+        let (w, h) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
+        if w as i64 * h as i64 > MAX_TABLE_CHUNKS {
+            return false;
+        }
+        (self.x0, self.y0, self.w, self.h) = (cx0, cy0, w, h);
+        self.kinds.clear();
+        for cy in cy0..=cy1 {
+            for cx in cx0..=cx1 {
+                self.kinds.push(Kind::of(world, ChunkPos::new(cx, cy)));
+            }
+        }
+        true
+    }
+
+    #[inline(always)]
+    fn look(&self, cache: &mut TableCache, p: CellPos) -> Look {
+        let c = p.chunk();
+        let kind = match cache.last {
+            Some((pos, kind)) if pos == c => kind,
+            _ => {
+                let (tx, ty) = (c.x - self.x0, c.y - self.y0);
+                // Every chunk that a particle can reach is in the table; this is only a guard.
+                let kind = if (0..self.w).contains(&tx) && (0..self.h).contains(&ty) {
+                    self.kinds[(ty * self.w + tx) as usize]
+                } else {
+                    Kind::Wall
+                };
+                cache.last = Some((c, kind));
+                kind
+            }
+        };
+        kind.look(p)
     }
 }
 
@@ -465,9 +588,10 @@ enum Flight {
 
 /// Follow the line from (x, y) to (x + vx, y + vy) through the grid, cell by cell, and stop at
 /// the first cell that is not air, gas or fire (or that is in a chunk that does not update).
-fn fly(grid: &mut Grid, world: &mut World, mats: &MaterialTable, x: f32, y: f32, vx: f32, vy: f32) -> Flight {
+#[inline]
+fn fly(look: &mut impl FnMut(CellPos) -> Look, mats: &MaterialTable, x: f32, y: f32, vx: f32, vy: f32) -> Flight {
     for (last, c, t) in LineCells::new(x, y, vx, vy) {
-        match grid.look(world, c) {
+        match look(c) {
             Look::Cell(m) if passable(m, mats) => {}
             Look::Cell(_) | Look::Paused(_) | Look::Wall => return Flight::Hit { last, t },
             Look::Outside if c.y < 0 => return Flight::Ceiling { last, t },
@@ -552,8 +676,11 @@ fn passable(m: MaterialId, mats: &MaterialTable) -> bool {
 
 /// How far up a landing particle looks for air (through liquid, powder and gas).
 const SEARCH_UP: i32 = 64;
-/// A landing particle that finds no air straight up looks for air in the square of cells with
-/// this distance around it.
+/// A landing particle that finds no air straight up looks for the nearest air cell with at most
+/// this distance in x and y (the ring search).
+const SEARCH_RING: i32 = 8;
+/// If the ring search finds nothing, it looks for air in the square of cells with this distance
+/// around it (the reach search).
 const SEARCH_AROUND: i32 = 24;
 const SEARCH_SIDE: i32 = 2 * SEARCH_AROUND + 1;
 
@@ -565,11 +692,15 @@ struct Search {
     queue: Vec<CellPos>,
 }
 
-/// The cell where a landing particle becomes a grid cell: `at` if it is air or gas; else the
-/// first air cell straight up (through liquid, powder and gas, not through solids); else the
-/// nearest air cell that it can reach through cells that are not solid (so never through a wall),
-/// within `SEARCH_AROUND` cells. A particle inside a solid searches through solids too.
-/// Only cells in live chunks count.
+/// The cell where a landing particle becomes a grid cell:
+/// 1. `at` if it is air or gas;
+/// 2. else the first air cell straight up (through liquid, powder and gas, not through solids);
+/// 3. else the nearest air cell around, at most `SEARCH_RING` cells away (upper cells first), with
+///    no solid cell on the line between it and `at`;
+/// 4. else the nearest air cell that it can reach through cells that are not solid, within
+///    `SEARCH_AROUND` cells. A particle inside a solid searches through solids too.
+///
+/// So a particle never lands on the other side of a wall. Only cells in live chunks count.
 fn free_spot(grid: &mut Grid, world: &mut World, mats: &MaterialTable, at: CellPos, search: &mut Search) -> Option<CellPos> {
     let here = grid.look(world, at);
     if let Look::Cell(m) | Look::Paused(m) = here
@@ -586,6 +717,22 @@ fn free_spot(grid: &mut Grid, world: &mut World, mats: &MaterialTable, at: CellP
             Look::Cell(m) | Look::Paused(m) if m.is_air() => return Some(p),
             Look::Cell(m) | Look::Paused(m) if mats.phase[m.index()] != Phase::Solid => {}
             _ => break,
+        }
+    }
+    for r in 1..=SEARCH_RING {
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx.abs().max(dy.abs()) != r {
+                    continue;
+                }
+                let p = at.offset(dx, dy);
+                if let Look::Cell(m) | Look::Paused(m) = grid.look(world, p)
+                    && m.is_air()
+                    && clear_path(grid, world, mats, at, p)
+                {
+                    return Some(p);
+                }
+            }
         }
     }
     // Nearest first (by steps to a side neighbor); upper cells first at the same distance.
@@ -618,6 +765,22 @@ fn free_spot(grid: &mut Grid, world: &mut World, mats: &MaterialTable, at: CellP
         }
     }
     None
+}
+
+/// True if no solid cell is on the line between the centers of cells `a` and `b` (without `a`
+/// and `b`). A landing particle can move through powder and liquid, but not through a wall.
+fn clear_path(grid: &mut Grid, world: &mut World, mats: &MaterialTable, a: CellPos, b: CellPos) -> bool {
+    let (vx, vy) = ((b.x - a.x) as f32, (b.y - a.y) as f32);
+    for (_, c, _) in LineCells::new(a.x as f32 + 0.5, a.y as f32 + 0.5, vx, vy) {
+        if c == b {
+            break;
+        }
+        match grid.look(world, c) {
+            Look::Cell(m) | Look::Paused(m) if mats.phase[m.index()] != Phase::Solid => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// A particle that becomes a grid cell.

@@ -23,10 +23,10 @@ fn tick_until_landed(s: &mut Simulation, max: u32) {
             return;
         }
     }
-    let p = s.particles();
-    for i in 0..p.len() {
-        println!("left: {} {} {} {}", p.x[i], p.y[i], p.vx[i], p.vy[i]);
-        let (cx, cy) = (p.x[i] as i32, p.y[i] as i32);
+    for i in 0..s.particles().len() {
+        let p = s.particles().get(i);
+        println!("left: {p:?}");
+        let (cx, cy) = (p.x as i32, p.y as i32);
         println!("{}", crate::ascii(s, CellRect::new(cx - 6, cy - 6, cx + 7, cy + 7)));
     }
     panic!("particles did not land in {max} ticks: {} left", s.particles().len());
@@ -147,41 +147,48 @@ fn save_and_load_keep_particles() {
     assert_eq!(p.len(), 2);
     assert_eq!(p.visual_count(), 1);
     assert_eq!(p.count_material(sand), 1);
-    assert_eq!(p.flags_and_life(1), (VISUAL | RISE, 50));
+    assert_eq!((p.get(1).flags, p.get(1).life), (VISUAL | RISE, 50));
 }
 
-/// Speed of the particle step: 50,000 particles in the air. Run in release mode:
+/// Speed of the particle step with 50,000 particles in the air (material particles, and a mix of
+/// material and visual particles). Run in release mode:
 /// `cargo test -p foundry_sim --release particle_step_speed -- --ignored --nocapture`.
 #[test]
 #[ignore]
 fn particle_step_speed() {
-    for (name, visual) in [("material", false), ("visual", true)] {
-        let mut s = world(16, 12);
-        let sand = s.content().expect_material("sand");
-        let stone = s.content().expect_material("stone");
-        fill(&mut s, 2, 700, 1022, 766, stone);
-        let mut rng = Rng::new(1);
-        let n = 50_000;
-        let mut times = vec![];
-        for round in 0..20 {
-            // Keep 50,000 particles in the air: add new ones for those that landed.
-            while s.particles().len() < n {
-                let (x, y) = (50.0 + rng.unit() * 920.0, 100.0 + rng.unit() * 400.0);
-                let v = ((rng.unit() - 0.5) * 12.0, -rng.unit() * 8.0);
-                if visual {
-                    s.spawn_visual((x, y), v, sand, 200, false);
-                } else {
-                    s.spawn_particle((x, y), v, sand, None);
-                }
+    for (name, visual) in [("material", 0usize), ("mixed", MAX_VISUAL)] {
+        for threads in [1, 0] {
+            let mut s = world(16, 12);
+            if threads > 0 {
+                s.set_threads(threads);
             }
-            let settings = s.settings.clone();
-            let start = std::time::Instant::now();
-            s.particles.step(&mut s.world, &s.content.materials, &settings, round, 100 + round);
-            times.push(start.elapsed().as_secs_f64() * 1000.0);
+            let sand = s.content().expect_material("sand");
+            let stone = s.content().expect_material("stone");
+            fill(&mut s, 2, 700, 1022, 766, stone);
+            let mut rng = Rng::new(1);
+            let n = 50_000;
+            let mut times = vec![];
+            for round in 0..40 {
+                // Keep 50,000 particles in the air: add new ones for those that landed.
+                while s.particles().len() < n {
+                    let (x, y) = (50.0 + rng.unit() * 920.0, 100.0 + rng.unit() * 400.0);
+                    let v = ((rng.unit() - 0.5) * 12.0, -rng.unit() * 8.0);
+                    if s.particles().visual_count() < visual {
+                        s.spawn_visual((x, y), v, sand, 200, false);
+                    } else {
+                        s.spawn_particle((x, y), v, sand, None);
+                    }
+                }
+                let settings = s.settings.clone();
+                let start = std::time::Instant::now();
+                s.particles.step(&mut s.world, &s.content.materials, &settings, round, 100 + round, s.pool.as_ref());
+                times.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let mean = times.iter().sum::<f64>() / times.len() as f64;
+            let t = if threads == 1 { "1 thread".to_string() } else { format!("{} threads", rayon::current_num_threads()) };
+            println!("{name}, {t}: 50,000 particles, step mean {mean:.3} ms, median {:.3} ms, max {:.3} ms", times[20], times[39]);
         }
-        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let mean = times.iter().sum::<f64>() / times.len() as f64;
-        println!("{name}: 50,000 particles, step mean {mean:.3} ms, median {:.3} ms, max {:.3} ms", times[10], times[19]);
     }
 }
 
@@ -194,4 +201,31 @@ fn a_particle_made_inside_a_solid_gets_out() {
     tick_until_landed(&mut s, 10);
     assert_eq!(s.count_material(CellRect::new(0, 0, 128, 128), sand), 1);
     assert_eq!(s.count_material(CellRect::new(40, 40, 80, 80), stone), 40 * 40);
+}
+
+#[test]
+#[ignore]
+fn debug_ball() {
+    for cx in [192, 200] {
+        let mut s = Simulation::new(Arc::new(Content::load_default().unwrap()), SimConfig::finite(6, 4, 4));
+        let water = s.content().expect_material("water");
+        s.paint(CellPos::new(cx, 50), 30, water, foundry_core::PaintMode::Replace, None);
+        let mut rest = 0;
+        for t in 0..3000 {
+            s.tick();
+            if s.stats().awake_chunks == 0 && s.particles().is_empty() {
+                rest = t;
+                break;
+            }
+        }
+        println!("cx {cx} rest {rest}");
+        for y in 240..250 {
+            let xs: Vec<i32> = (0..384).filter(|&x| s.cell(CellPos::new(x, y)).material == water).collect();
+            if !xs.is_empty() && xs.len() < 50 {
+                println!("row {y}: {xs:?}");
+            } else {
+                println!("row {y}: {} water", xs.len());
+            }
+        }
+    }
 }
