@@ -851,7 +851,7 @@ impl Buildings {
     pub fn take_fuel(&mut self, id: BuildingId, n: u32) -> Option<(MaterialId, u32)> {
         let b = self.get_mut(id)?;
         if let SteamState::Boiler { fuel, fuel_units, .. } = &mut b.steam {
-            let Some(material) = *fuel else { return None };
+            let material = (*fuel)?;
             let taken = n.min(*fuel_units);
             *fuel_units -= taken;
             if *fuel_units == 0 {
