@@ -187,7 +187,7 @@ fn particle_step_speed() {
             times.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let mean = times.iter().sum::<f64>() / times.len() as f64;
             let t = if threads == 1 { "1 thread".to_string() } else { format!("{} threads", rayon::current_num_threads()) };
-            println!("{name}, {t}: 50,000 particles, step mean {mean:.3} ms, median {:.3} ms, max {:.3} ms", times[20], times[39]);
+            println!("{name}, {t}: 50,000 particles, step min {:.3} ms, median {:.3} ms, mean {mean:.3} ms", times[0], times[20]);
         }
     }
 }
@@ -204,28 +204,64 @@ fn a_particle_made_inside_a_solid_gets_out() {
 }
 
 #[test]
-#[ignore]
-fn debug_ball() {
-    for cx in [192, 200] {
-        let mut s = Simulation::new(Arc::new(Content::load_default().unwrap()), SimConfig::finite(6, 4, 4));
-        let water = s.content().expect_material("water");
-        s.paint(CellPos::new(cx, 50), 30, water, foundry_core::PaintMode::Replace, None);
-        let mut rest = 0;
-        for t in 0..3000 {
-            s.tick();
-            if s.stats().awake_chunks == 0 && s.particles().is_empty() {
-                rest = t;
-                break;
-            }
-        }
-        println!("cx {cx} rest {rest}");
-        for y in 240..250 {
-            let xs: Vec<i32> = (0..384).filter(|&x| s.cell(CellPos::new(x, y)).material == water).collect();
-            if !xs.is_empty() && xs.len() < 50 {
-                println!("row {y}: {xs:?}");
-            } else {
-                println!("row {y}: {} water", xs.len());
-            }
+fn the_parallel_move_gives_the_same_result_as_the_serial_move() {
+    let mut s = world(8, 6);
+    let (sand, stone, water) = (s.content().expect_material("sand"), s.content().expect_material("stone"), s.content().expect_material("water"));
+    fill(&mut s, 2, 300, 510, 382, stone);
+    fill(&mut s, 200, 150, 260, 300, stone);
+    fill(&mut s, 300, 280, 400, 300, water);
+    let mut rng = Rng::new(3);
+    for i in 0..20_000 {
+        let (x, y) = (5.0 + rng.unit() * 500.0, -20.0 + rng.unit() * 300.0);
+        let v = ((rng.unit() - 0.5) * 30.0, (rng.unit() - 0.7) * 30.0);
+        if i % 3 == 0 {
+            s.spawn_visual((x, y), v, sand, 100, i % 2 == 0);
+        } else {
+            s.spawn_particle((x, y), v, sand, None);
         }
     }
+    for round in 0..30 {
+        let settings = s.settings.clone();
+        let mats = &s.content.materials;
+        let mut a = s.particles.list.clone();
+        let mut b = a.clone();
+        let mut grid = Grid::default();
+        for p in &mut a {
+            move_one(p, &mut |c| grid.look(&mut s.world, c), mats, &settings);
+        }
+        assert!(s.particles.table.build(&mut s.world, &b, settings.particle_max_speed));
+        let mut cache = TableCache::default();
+        let table = &s.particles.table;
+        for p in &mut b {
+            move_one(p, &mut |c| table.look(&mut cache, c), mats, &settings);
+        }
+        assert_eq!(a, b, "round {round}");
+        s.tick();
+    }
+}
+
+#[test]
+fn many_particles_give_the_same_result_with_1_and_6_threads() {
+    let make = |threads: usize| {
+        let mut s = world(8, 6);
+        s.set_threads(threads);
+        let (sand, stone) = (s.content().expect_material("sand"), s.content().expect_material("stone"));
+        fill(&mut s, 2, 300, 510, 382, stone);
+        let mut rng = Rng::new(4);
+        for _ in 0..12_000 {
+            let (x, y) = (5.0 + rng.unit() * 500.0, 20.0 + rng.unit() * 250.0);
+            s.spawn_particle((x, y), ((rng.unit() - 0.5) * 16.0, -rng.unit() * 10.0), sand, None);
+        }
+        s
+    };
+    let (mut a, mut b) = (make(1), make(6));
+    for t in 0..200 {
+        a.tick();
+        b.tick();
+        if t % 10 == 0 {
+            assert_eq!(a.world_hash(), b.world_hash(), "tick {t}");
+            assert_eq!(a.particles().len(), b.particles().len(), "tick {t}");
+        }
+    }
+    assert!(a.particles().is_empty());
 }
