@@ -150,18 +150,41 @@ fn save_and_load_keep_particles() {
     assert_eq!((p.get(1).flags, p.get(1).life), (VISUAL | RISE, 50));
 }
 
+/// CPU time of the calling thread in ms. Other programs that use the CPU change it much less
+/// than they change the wall time.
+fn thread_cpu_ms() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        #[repr(C)]
+        struct Timespec {
+            sec: i64,
+            nsec: i64,
+        }
+        unsafe extern "C" {
+            fn clock_gettime(clock: u32, t: *mut Timespec) -> i32;
+        }
+        const CLOCK_THREAD_CPUTIME_ID: u32 = 16;
+        let mut t = Timespec { sec: 0, nsec: 0 };
+        // SAFETY: `clock_gettime` writes one `timespec` (two 64-bit numbers on macOS).
+        if unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut t) } == 0 {
+            return t.sec as f64 * 1000.0 + t.nsec as f64 / 1e6;
+        }
+    }
+    std::time::UNIX_EPOCH.elapsed().map_or(0.0, |d| d.as_secs_f64() * 1000.0)
+}
+
 /// Speed of the particle step with 50,000 particles in the air (material particles, and a mix of
 /// material and visual particles). Run in release mode:
 /// `cargo test -p foundry_sim --release particle_step_speed -- --ignored --nocapture`.
+///
+/// "one thread" is the CPU time of the step on one thread (all three parts). "all threads" is the
+/// wall time of the step with the parallel move; it depends on how busy the machine is.
 #[test]
 #[ignore]
 fn particle_step_speed() {
     for (name, visual) in [("material", 0usize), ("mixed", MAX_VISUAL)] {
-        for threads in [1, 0] {
+        for parallel in [false, true] {
             let mut s = world(16, 12);
-            if threads > 0 {
-                s.set_threads(threads);
-            }
             let sand = s.content().expect_material("sand");
             let stone = s.content().expect_material("stone");
             fill(&mut s, 2, 700, 1022, 766, stone);
@@ -180,14 +203,31 @@ fn particle_step_speed() {
                     }
                 }
                 let settings = s.settings.clone();
-                let start = std::time::Instant::now();
-                s.particles.step(&mut s.world, &s.content.materials, &settings, round, 100 + round, s.pool.as_ref());
-                times.push(start.elapsed().as_secs_f64() * 1000.0);
+                let mats = &s.content.materials;
+                if parallel {
+                    let start = std::time::Instant::now();
+                    s.particles.step(&mut s.world, mats, &settings, round, 100 + round, None);
+                    times.push(start.elapsed().as_secs_f64() * 1000.0);
+                } else {
+                    // The same work as `step` on one thread.
+                    let start = thread_cpu_ms();
+                    let mut grid = Grid::default();
+                    for p in &mut s.particles.list {
+                        move_one(p, &mut |c| grid.look(&mut s.world, c), mats, &settings);
+                    }
+                    for i in 0..s.particles.list.len() {
+                        if s.particles.list[i].flags & LAND != 0 {
+                            s.particles.land(i, &mut s.world, mats, (round & 1) as u8, 100 + round);
+                        }
+                    }
+                    s.particles.remove_gone();
+                    times.push(thread_cpu_ms() - start);
+                }
             }
             times.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let mean = times.iter().sum::<f64>() / times.len() as f64;
-            let t = if threads == 1 { "1 thread".to_string() } else { format!("{} threads", rayon::current_num_threads()) };
-            println!("{name}, {t}: 50,000 particles, step min {:.3} ms, median {:.3} ms, mean {mean:.3} ms", times[0], times[20]);
+            let how = if parallel { format!("all {} threads, wall time", rayon::current_num_threads()) } else { "one thread, CPU time".to_string() };
+            println!("{name}, {how}: 50,000 particles, step min {:.3} ms, median {:.3} ms, mean {mean:.3} ms", times[0], times[20]);
         }
     }
 }
