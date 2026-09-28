@@ -92,7 +92,7 @@ fn a_kiln_fires_clay_bricks_with_charcoal() {
     run(&mut f, &mut sim, 20);
     let v = f.building_view(id).unwrap();
     assert_eq!(v.status, Status::TooCold);
-    assert!(v.reason.contains("Put fuel in the fuel slot"), "{}", v.reason);
+    assert!(v.reason.ends_with("needs 900 °C. No fuel."), "{}", v.reason);
     // The raw bricks are recipe inputs; charcoal goes into the fuel slot.
     assert_eq!(f.buildings.insert(&c, id, item(&c, "charcoal"), 400), 400);
     let mut hottest = 0;
@@ -136,7 +136,7 @@ fn an_open_room_shows_the_hole() {
     run(&mut f, &mut sim, 2);
     let v = f.building_view(id).unwrap();
     assert_eq!(v.status, Status::NoRoom);
-    assert!(v.reason.starts_with("The room has a hole"), "{}", v.reason);
+    assert_eq!(v.reason, "The room has a hole");
     // Close the hole: the room is valid at once (a placement makes the room check again).
     f.place(kind(&c, "clay_brick_wall"), gap, 0, false, &mut sim).unwrap();
     run(&mut f, &mut sim, 1);
@@ -187,7 +187,7 @@ fn a_wood_fire_is_too_cold_for_bricks() {
     run(&mut f, &mut sim, 60 * 20);
     let v = f.building_view(id).unwrap();
     assert_eq!(v.status, Status::TooCold);
-    assert!(v.reason.contains("The fire heats it"), "{}", v.reason);
+    assert!(v.reason.ends_with("Heating."), "{}", v.reason);
     assert!(room_temp(&f, id) > 500, "the wood burns: {}", room_temp(&f, id));
 }
 

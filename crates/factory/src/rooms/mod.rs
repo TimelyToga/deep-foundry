@@ -312,17 +312,17 @@ pub fn fill_view(content: &Content, buildings: &Buildings, v: &mut BuildingView)
     };
     let problem = room.problem.as_ref().map(|p| p.text(content, def, b.at));
     if b.status == Status::NoRoom
-        && let Some(p) = &problem
+        && let Some(p) = &room.problem
     {
-        v.reason = p.clone();
+        v.reason = p.short().to_string();
     }
     if b.status == Status::TooCold
         && let (Some(t), Some(n)) = (room.temperature, needs)
     {
         v.reason = if fuel_units == 0 && room.hot_fuel_cells == 0 {
-            format!("Too cold: the room is {t} °C, needs {n} °C. Put fuel in the fuel slot.")
+            format!("Room {t} °C, needs {n} °C. No fuel.")
         } else {
-            format!("Too cold: the room is {t} °C, needs {n} °C. The fire heats it.")
+            format!("Room {t} °C, needs {n} °C. Heating.")
         };
     }
     let shape = room.shape.as_ref();
