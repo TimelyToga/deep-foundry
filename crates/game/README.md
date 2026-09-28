@@ -220,8 +220,8 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
   shows them. `--zoom 8` shows the construction shapes well.
   `--walk N` lets the robot walk N ticks first (N < 0: to the left).
   `guide-workbench` shows the guide after the first goals (up to the workbench and the two
-  ores), `guide-done` the guide when every goal that the game can do is done ("Next: the kiln.
-  It comes in a later update."), `campfire` a campfire window that fires clay bricks, and `kiln`
+  ores), `guide-done` the guide when every goal that the game can do is done ("Next: smelting
+  in the crucible. It comes in a later update."), `campfire` a campfire window that fires clay bricks, and `kiln`
   a kiln room (clay brick walls, charcoal fire) with its controller window.
 - `--pose NAME[:FRAME]` (normal mode) makes the robot act for the picture: `idle`, `walk`,
   `jump`, `fall`, `land`, `fly`, `wade` show that animation (FRAME picks one frame; `fall` and

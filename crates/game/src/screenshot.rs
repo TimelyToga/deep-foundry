@@ -599,7 +599,8 @@ fn setup_normal_screen(
             };
             place(h, sim, "workbench");
             if state == UiState::GuideDone {
-                // Every goal that the game can do is done: research, bricks, campfire, sluice.
+                // Every goal that the game can do is done: research, bricks, campfire, sluice,
+                // kiln, charcoal.
                 for tech in ["bronze", "research"] {
                     h.apply(FactoryCommand::StartResearch(content.factory.tech(tech).expect("tech")), sim);
                     for _ in 0..60 {
@@ -610,6 +611,8 @@ fn setup_normal_screen(
                 give(h, ItemRef::Part(part("clay_brick")), 8);
                 place(h, sim, "campfire");
                 place(h, sim, "sluice");
+                place(h, sim, "kiln_controller");
+                give(h, mat("charcoal"), 32);
             }
             h.factory.update_guide();
             h.apply(FactoryCommand::Windows { research: false, guide: true }, sim);
