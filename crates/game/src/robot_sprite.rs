@@ -436,9 +436,9 @@ impl RobotLook {
 /// The glow mask of a sheet: the texels with one of the `colors` (RGB), the others transparent.
 fn glow_mask(rgba: &[u8], colors: &[(u8, u8, u8)]) -> Vec<u8> {
     let mut out = vec![0; rgba.len()];
-    for (texel, mask) in rgba.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+    for (texel, mask) in rgba.as_chunks::<4>().0.iter().zip(out.as_chunks_mut::<4>().0) {
         if texel[3] > 0 && colors.contains(&(texel[0], texel[1], texel[2])) {
-            mask.copy_from_slice(texel);
+            *mask = *texel;
         }
     }
     out
@@ -490,7 +490,7 @@ mod tests {
         assert_eq!(look.rgba.len() as u32, look.size.0 * look.size.1 * 4);
         // The visor glows: the mask has texels, and only texels of the sheet.
         assert_eq!(look.glow.len(), look.rgba.len());
-        let lit = look.glow.chunks_exact(4).filter(|t| t[3] > 0).count();
+        let lit = look.glow.as_chunks::<4>().0.iter().filter(|t| t[3] > 0).count();
         assert!(lit > 10 && lit < look.rgba.len() / 40, "glow texels: {lit}");
         let dir = foundry_content::default_assets_dir().join("sprites");
         RobotLook::from_dir(&dir).unwrap();
