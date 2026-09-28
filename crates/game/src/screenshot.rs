@@ -7,7 +7,7 @@
 //! screens put items into the inventory first, so that the picture shows something.
 
 use crate::args::{Args, UiState};
-use crate::debug_panel::{self, StatsView};
+use crate::debug_panel::{self, PanelState, StatsView};
 use crate::demo;
 use crate::construct::{BuildView, Mods};
 use crate::factory_host::{FactoryCommand, FactoryFrame, FactoryHost, GameCommand, Placement, PlayerInput};
@@ -61,6 +61,13 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     // Ask for the chunks on the screen, like the game does. The view is also the anchor: only
     // chunks near it are made and updated.
     sim.apply(Command::SetView { area: view_of(center) });
+    // The render views (`--view`). The awake chunks view needs the debug data of the simulation.
+    let mut render_settings = foundry_render::RenderSettings::default();
+    let mut views = render_setup::DebugViews::default();
+    render_setup::apply_view_names(&args.view, &mut render_settings, &mut views).map_err(anyhow::Error::msg)?;
+    if views.awake_chunks {
+        sim.apply(Command::SetDebug(true));
+    }
     let tick_start = Instant::now();
     if let Some(h) = host.as_mut()
         && args.walk != 0
@@ -97,8 +104,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     let mut renderer = Renderer::new(&device, &queue, CAPTURE_FORMAT, &content);
     renderer.set_time(args.ticks as f64 * foundry_core::TICK_SECONDS);
     renderer.set_surface_level(render_setup::surface_level(snapshot.world_cells));
-    let mut views = render_setup::DebugViews::default();
-    render_setup::apply_view_names(&args.view, renderer.settings_mut(), &mut views).map_err(anyhow::Error::msg)?;
+    *renderer.settings_mut() = render_settings;
     if let Some(h) = &host {
         let (x, y) = h.robot.center();
         renderer.set_lights(&[render_setup::robot_lamp((x as f32, y as f32), h.robot.facing)]);
@@ -139,6 +145,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             gpu_chunks: renderer.stats().resident_chunks,
             gpu_capacity: renderer.stats().chunk_capacity,
             zoom: camera.zoom,
+            particles: snapshot.particles.len() as u32,
+            sections: snapshot.stats.sections.clone(),
             ..Default::default()
         };
         let show_debug = state == UiState::Debug;
@@ -195,6 +203,11 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
         }
         let mut panel = OffscreenUi::new(&device, ctx, ui, size);
         panel.overlay = normal_view.map(|nv| (camera, nv));
+        panel.panel.render = render_settings;
+        panel.panel.awake_chunks = views.awake_chunks;
+        if views.awake_chunks {
+            panel.debug_chunks = Some((camera, snapshot.debug_chunks.clone()));
+        }
         panel.layout(&device, &queue, &stats, show_debug);
         let draw_world = state.has_world();
         let clear = (!draw_world).then_some(wgpu::Color::BLACK);
@@ -427,6 +440,10 @@ struct OffscreenUi {
     ui: SandboxUi,
     /// The camera and the factory views, for the shapes over the world (normal mode).
     overlay: Option<(Camera, NormalView)>,
+    /// The awake chunks view (`--view chunks`).
+    debug_chunks: Option<(Camera, Vec<foundry_core::DebugChunk>)>,
+    /// What the debug panel shows.
+    panel: PanelState,
     ctx: egui::Context,
     size: (u32, u32),
     pixels_per_point: f32,
@@ -439,6 +456,11 @@ impl OffscreenUi {
             renderer: egui_wgpu::Renderer::new(device, CAPTURE_FORMAT, egui_wgpu::RendererOptions::default()),
             ui,
             overlay: None,
+            debug_chunks: None,
+            panel: PanelState {
+                view_keys: ["F4", "F5", "F6"].map(str::to_string),
+                ..Default::default()
+            },
             ctx,
             size,
             pixels_per_point: 1.0,
@@ -460,9 +482,14 @@ impl OffscreenUi {
             raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(1.0);
             let ui = &mut self.ui;
             let overlay_data = &self.overlay;
+            let (debug_chunks, panel) = (&self.debug_chunks, &self.panel);
             let mut out = self.ctx.run_ui(raw, |root| {
                 if show_debug {
-                    debug_panel::draw(root, stats, false, false, &mut Vec::new());
+                    debug_panel::draw(root, stats, panel, &mut Vec::new());
+                }
+                if let Some((camera, chunks)) = debug_chunks {
+                    let painter = root.ctx().layer_painter(egui::LayerId::background());
+                    debug_panel::draw_overlay(&painter, chunks, camera, root.ctx().pixels_per_point());
                 }
                 let _ = ui.ui.show(root.ctx(), &ui.model);
                 if let Some((camera, nv)) = overlay_data {
