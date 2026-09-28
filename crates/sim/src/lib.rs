@@ -393,6 +393,10 @@ impl Simulation {
             Command::SetSimSetting { key, value } => {
                 self.settings.set(&key, value);
             }
+            Command::Explode { center, strength, heat } => {
+                // A center outside the update area waits in the queue (see `explode`).
+                self.explode(center, strength, heat);
+            }
             // Handled by the thread that owns the simulation.
             Command::SaveWorld { .. } | Command::LoadWorld { .. } => {}
         }

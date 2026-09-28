@@ -154,6 +154,7 @@ The keys are the defaults (see "Keys and settings").
 | F4 | Debug view: awake chunks (yellow) and the cells the last tick updated (green) |
 | F5 | Debug view: heat map (blue cold, dark green 20 °C, then yellow, orange, red, white) |
 | F6 | Debug view: chunk grid (and the tile grid when zoomed in) |
+| F7 | Debug: an explosion at the mouse (strength 60, 1200 °C) |
 
 The HUD shows the frame rate, the tick time and the awake chunks at the top right, and the cell
 under the mouse (material and temperature) below them.
