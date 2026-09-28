@@ -12,7 +12,7 @@ use foundry_core::{BuildingKindId, CellPos, CellRect, MaterialId, TechId};
 use foundry_factory::progress::{GoalView, LockReason, TechState as FactoryTechState, TechView};
 use foundry_factory::{Click, Status};
 use foundry_ui::{
-    BuildingSlot, BuildingSlots, BuildingView, ClickButton, CraftJobView, Delivery, DigState, GuideGoal, HoverDetail, HoverView, MachineStatus, MaterialBuffer,
+    BuildingSlot, BuildingSlots, BuildingView, ClickButton, CraftJobView, Delivery, DigRule, DigState, GuideGoal, HoverDetail, HoverView, MachineStatus, MaterialBuffer,
     MilestoneView, ResearchView, SlotClick, SlotRef, TankSlot, TechEntry, TechState, UiAction, UiModel, WindowKind,
 };
 use std::time::Instant;
@@ -345,6 +345,7 @@ impl NormalMode {
             UiAction::StartResearch(t) => out.push(FactoryCommand::StartResearch(t).into()),
             UiAction::CloseWindow(WindowKind::Building) => out.push(FactoryCommand::CloseBuilding.into()),
             UiAction::EmptyTank(i) => out.push(FactoryCommand::EmptyTank(i).into()),
+            UiAction::SetKeep { material, keep } => out.push(FactoryCommand::SetKeep { material, keep }.into()),
             _ => return false,
         }
         true
@@ -386,6 +387,8 @@ impl NormalMode {
         pl.crafting.clear();
         pl.crafting.extend(f.crafting.iter().map(|j| CraftJobView { recipe: j.recipe, count: j.count, progress: j.progress }));
         pl.craft_speed = f.craft_speed;
+        pl.dig.clear();
+        pl.dig.extend(f.dig_list.iter().map(|&(material, keep)| DigRule { material, keep }));
         model.finished_techs.clear();
         model.finished_techs.extend(f.finished_techs.iter().copied());
         model.research = f.research.as_ref().map(|r| ResearchView { tech: r.tech, progress: r.progress });
@@ -483,6 +486,7 @@ pub fn machine_status(s: Status) -> MachineStatus {
         Status::OutputFull => MachineStatus::OutputFull,
         Status::OutputBlocked => MachineStatus::OutputBlocked,
         Status::NoPower => MachineStatus::NoPower,
+        Status::NoFuel => MachineStatus::NoFuel,
         Status::TooCold => MachineStatus::TooCold,
         Status::TooHot => MachineStatus::TooHot,
         Status::Broken => MachineStatus::Broken,
@@ -549,7 +553,16 @@ fn building_view(
         recipe: b.recipe,
         inputs,
         outputs: b.outputs.iter().map(|x| slot(x.item, x.count, true)).collect(),
-        fuel: vec![],
+        // The fuel slot of a campfire: a material slot with a fill bar.
+        fuel: b
+            .fuel
+            .iter()
+            .map(|f| BuildingSlot {
+                stack: f.material.filter(|_| f.units > 0).map(|m| Stack { item: ItemRef::Material(m), count: f.units }),
+                filter: f.hint.map(ItemRef::Material),
+                capacity: f.capacity,
+            })
+            .collect(),
         buffers,
         progress: b.progress,
         speed: 1.0,

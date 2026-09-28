@@ -5,7 +5,7 @@
 
 use foundry_content::ItemRef;
 use crate::model::BuildingSlots;
-use foundry_core::{BuildingId, RecipeId, TechId};
+use foundry_core::{BuildingId, MaterialId, RecipeId, TechId};
 
 /// The windows the UI can show. Used in `OpenWindow` and `CloseWindow`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -179,6 +179,8 @@ pub enum UiAction {
     /// Delete the material in this tank of the robot (the trash button). For a large amount
     /// the UI asks the player first.
     EmptyTank(usize),
+    /// Keep (true) or drop (false) this material when the robot digs.
+    SetKeep { material: MaterialId, keep: bool },
 
     // ----- Crafting -----
     /// Add hand crafting jobs to the queue.

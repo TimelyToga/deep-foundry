@@ -917,6 +917,7 @@ impl Game {
             | UiAction::SetHotbar { .. }
             | UiAction::ClearHand
             | UiAction::EmptyTank(_)
+            | UiAction::SetKeep { .. }
             | UiAction::Craft { .. }
             | UiAction::CancelCraft { .. }
             | UiAction::SetRecipe { .. }

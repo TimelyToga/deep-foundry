@@ -20,6 +20,7 @@
 pub mod buildings;
 pub mod cells;
 pub mod crafting;
+pub mod digging;
 pub mod geometry;
 pub mod inventory;
 pub mod logistics;
@@ -32,18 +33,20 @@ pub mod views;
 
 pub use buildings::{Building, Buildings, FactoryEvent, Logic};
 pub use crafting::{CraftError, CraftJobView, HandCrafting};
+pub use digging::{DigRules, Dug};
 pub use geometry::Transform;
 pub use inventory::{Click, Inventory, InventoryView, PartStack, Place, PlaceView, SlotView, Tank, TankRule, TankView};
 pub use transfer::RobotSlot;
 pub use machines::{RecipeError, Status};
 pub use placement::{PlaceError, RemoveError};
 pub use progress::{GoalView, Guide, GuideState, Progress, ProgressEvent};
-pub use views::{BufferView, BuildingView, PortView};
+pub use views::{BufferView, BuildingView, FuelView, PortView};
 
 use foundry_content::{Content, ItemRef, Stack};
 use foundry_core::{BuildingId, BuildingKindId, CellPos, MaterialId, RecipeId, TechId, TilePos};
 use foundry_sim::Simulation;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Ticks between two checks of the guide goals.
@@ -90,6 +93,8 @@ pub struct Factory {
     pub guide: Arc<Guide>,
     /// The current research in the last tick. When it changes, the labs wake. Not saved.
     last_research: Option<TechId>,
+    /// Which dug materials the robot keeps (see `digging`). The player's changes are saved.
+    pub dig: DigRules,
 }
 
 /// The saved form of the factory state. (The guide is data and is not saved.)
@@ -102,6 +107,10 @@ pub struct FactorySave {
     pub cursor: Option<PartStack>,
     pub hand: HandCrafting,
     pub player_pos: Option<CellPos>,
+    /// The player's keep (true) or drop (false) settings for dug materials that differ from the
+    /// default. Older saves have none.
+    #[serde(default)]
+    pub keep: BTreeMap<MaterialId, bool>,
 }
 
 impl Factory {
@@ -115,6 +124,7 @@ impl Factory {
             player_pos: None,
             guide: Arc::new(Guide::default()),
             last_research: None,
+            dig: DigRules::new(&content),
             content,
         };
         f.update_hub_rule();
@@ -162,6 +172,7 @@ impl Factory {
             cursor: self.cursor,
             hand: self.hand.clone(),
             player_pos: self.player_pos,
+            keep: self.dig.changed.clone(),
         }
     }
 
@@ -174,27 +185,15 @@ impl Factory {
         self.cursor = save.cursor;
         self.hand = save.hand;
         self.player_pos = save.player_pos;
+        self.dig = DigRules::new(&self.content);
+        for (m, keep) in save.keep {
+            self.dig.set(m, keep);
+        }
         // Older saves have smaller robot tanks and crates for parts only.
         self.player.grow_tanks(inventory::PLAYER_TANKS, inventory::PLAYER_TANK_UNITS);
         self.buildings.upgrade_storage(&self.content);
         self.buildings.upgrade_machines(&self.content);
         self.update_hub_rule();
-    }
-
-    /// The robot dug one cell of `material`: one unit of its broken form (see
-    /// `broken_into` in the data) goes into the tanks. The first dig of a material discovers it,
-    /// the same as a scan. Returns false and takes nothing when the tanks have no room.
-    pub fn take_dug_cell(&mut self, material: MaterialId) -> bool {
-        let broken = self.content.materials.broken_into.get(material.index()).copied().unwrap_or(material);
-        let item = ItemRef::Material(broken);
-        if self.player.room_for(&self.content, item, 1) == 0 {
-            return false;
-        }
-        self.player.insert(&self.content, item, 1);
-        if !self.progress.is_material_discovered(material) {
-            self.scan(material);
-        }
-        true
     }
 
     /// Check if a building can be placed with its top-left tile at `at`.

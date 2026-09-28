@@ -3,10 +3,12 @@
 
 pub(crate) mod building;
 pub(crate) mod character;
+pub(crate) mod drag;
 pub(crate) mod guide;
 pub(crate) mod hand;
 pub mod hud;
 pub(crate) mod inventory;
+pub(crate) mod keep;
 pub(crate) mod menus;
 pub(crate) mod power;
 pub(crate) mod production;
@@ -78,6 +80,7 @@ pub(crate) fn show_all(cx: &mut Cx, st: &mut UiState) {
                 menus::pause_menu(cx, st);
             } else {
                 tank::confirm_empty(cx, st);
+                drag::paint(cx.ctx, cx.model, cx.atlas);
             }
         }
     }

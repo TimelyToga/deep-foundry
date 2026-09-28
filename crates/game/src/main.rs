@@ -22,6 +22,7 @@ mod screenshot;
 mod settings;
 mod sim_thread;
 mod smoke;
+mod spoil;
 mod tools;
 mod ui;
 

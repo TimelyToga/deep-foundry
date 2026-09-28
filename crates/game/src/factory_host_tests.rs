@@ -252,8 +252,10 @@ fn full_tanks_stop_digging_then_a_crate_takes_the_material() {
     }
     let r = g.host.robot.rect();
     let aim = CellPos::new(r.x1 + 6, r.y1 + 3);
-    for y in aim.y - 4..aim.y + 4 {
-        for x in aim.x - 4..aim.x + 4 {
+    // Clay under the whole dig circle (the robot throws out dirt, so dirt would still dig).
+    let d = crate::tools::DIG_RADIUS + 1;
+    for y in aim.y - d..aim.y + d {
+        for x in aim.x - d..aim.x + d {
             g.sim.set_cell(CellPos::new(x, y), clay, None);
         }
     }

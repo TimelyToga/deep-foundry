@@ -218,12 +218,28 @@ pub struct PlayerView {
     pub crafting: Vec<CraftJobView>,
     /// Hand crafting speed. 1 normally, 2 near a workbench.
     pub craft_speed: f32,
+    /// Dug materials and whether the robot keeps them (normal mode): the discovered materials
+    /// that can be in a tank, and the materials in the tanks. Empty in the sandbox.
+    pub dig: Vec<DigRule>,
+}
+
+/// Keep or drop for one dug material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DigRule {
+    pub material: MaterialId,
+    /// True: dug units go into the tanks. False: the robot throws them out as loose material.
+    pub keep: bool,
 }
 
 impl PlayerView {
     /// The capacity of the first tank slot (the stack size of bulk materials in the hand).
     pub fn tank_capacity(&self) -> u32 {
         self.tank.first().map(|t| t.capacity).unwrap_or(6000)
+    }
+
+    /// Keep (true) or drop (false) for a material, if the game sent a setting for it.
+    pub fn keeps(&self, m: MaterialId) -> Option<bool> {
+        self.dig.iter().find(|r| r.material == m).map(|r| r.keep)
     }
 }
 
