@@ -114,6 +114,8 @@ struct MatHeat {
     g: f32,
     /// 1 / heat capacity.
     inv_c: f32,
+    /// `AIR_RATE` for air, 0 for other materials.
+    relax: f32,
     /// The cell changes at or above this temperature (melt or boil). `i16::MAX`: never.
     up: i16,
     /// The cell changes below this temperature (freeze or condense). `i16::MIN`: never.
@@ -161,7 +163,7 @@ impl HeatTable {
                     down = (ch.at, ch.into);
                 }
             }
-            t.mats.push(MatHeat { g, inv_c: 1.0 / c, up: up.0, down: down.0 });
+            t.mats.push(MatHeat { g, inv_c: 1.0 / c, relax: if m == 0 { AIR_RATE } else { 0.0 }, up: up.0, down: down.0 });
             t.up_into.push(up.1);
             t.down_into.push(down.1);
             t.still.push(m == 0 || matches!(mats.phase[m], Phase::Empty | Phase::Solid));
@@ -328,13 +330,18 @@ struct Scratch {
     t: [f32; W * W],
     /// Conductance `g` of the same cells. 0 on a border where no heat may cross.
     g: [f32; W * W],
-    /// 1 / heat capacity of each chunk cell (index `y * 64 + x`).
+    /// Bit y: row y of the chunk has more than one material.
+    mixed: u64,
+    /// For rows with more than one material: 1 / heat capacity of each cell (index `y * 64 + x`).
     inv_c: [f32; CHUNK_AREA],
-    /// `MatHeat::up` and `MatHeat::down` of each chunk cell.
-    up: [i16; CHUNK_AREA],
-    down: [i16; CHUNK_AREA],
-    /// The new temperature of each chunk cell.
-    new_t: [i16; CHUNK_AREA],
+    /// For rows with more than one material: `MatHeat::relax` of each cell.
+    relax: [f32; CHUNK_AREA],
+    /// For rows with one material: 1 / heat capacity and `MatHeat::relax` of the row.
+    row_inv_c: [f32; 64],
+    row_relax: [f32; 64],
+    /// The lowest and highest new temperature of each row.
+    lo: [i16; 64],
+    hi: [i16; 64],
 }
 
 thread_local! {
@@ -348,10 +355,13 @@ fn with_scratch<R>(f: impl FnOnce(&mut Scratch) -> R) -> R {
             Box::new(Scratch {
                 t: [0.0; W * W],
                 g: [0.0; W * W],
+                mixed: 0,
                 inv_c: [0.0; CHUNK_AREA],
-                up: [0; CHUNK_AREA],
-                down: [0; CHUNK_AREA],
-                new_t: [0; CHUNK_AREA],
+                relax: [0.0; CHUNK_AREA],
+                row_inv_c: [0.0; 64],
+                row_relax: [0.0; 64],
+                lo: [0; 64],
+                hi: [0; 64],
             })
         });
         f(s)
@@ -435,20 +445,39 @@ impl ChunkJob<'_> {
         let table = self.table;
         let mut out = JobOut { marks: [LocalRect::EMPTY; 9], changed_cells: 0, phase_changes: 0, active: false };
         // SAFETY: only this job uses these fields of the center chunk (see the function documentation).
-        let (temp, mat) = unsafe { (&mut *addr_of_mut!((*p).temp), &*addr_of!((*p).mat)) };
+        let (temp, mat) = unsafe { (&mut *addr_of_mut!((*p).temp), &mut *addr_of_mut!((*p).mat)) };
 
-        // The chunk's own cells.
+        // The chunk's own cells. Also note the lowest and highest temperature, and if there is air.
+        s.mixed = 0;
+        let (mut lo, mut hi, mut air) = (i16::MAX, i16::MIN, false);
         for y in 0..64 {
             let (src, dst) = (y * 64, (y + 1) * W + 1);
-            for x in 0..64 {
-                let e = table.mats[mat[src + x] as usize];
-                s.t[dst + x] = temp[src + x] as f32;
-                s.g[dst + x] = e.g;
-                s.inv_c[src + x] = e.inv_c;
-                s.up[src + x] = e.up;
-                s.down[src + x] = e.down;
+            let (mrow, trow) = (&mat[src..src + 64], &temp[src..src + 64]);
+            for (d, &t) in s.t[dst..dst + 64].iter_mut().zip(trow) {
+                *d = t as f32;
+            }
+            (lo, hi) = trow.iter().fold((lo, hi), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+            let m0 = mrow[0];
+            if mrow.iter().fold(0, |acc, &m| acc | (m ^ m0)) == 0 {
+                let e = table.mats[m0 as usize];
+                s.g[dst..dst + 64].fill(e.g);
+                s.row_inv_c[y] = e.inv_c;
+                s.row_relax[y] = e.relax;
+                air |= m0 == 0;
+            } else {
+                s.mixed |= 1 << y;
+                for (x, &m) in mrow.iter().enumerate() {
+                    let e = table.mats[m as usize];
+                    s.g[dst + x] = e.g;
+                    s.inv_c[src + x] = e.inv_c;
+                    s.relax[src + x] = e.relax;
+                    air |= m == 0;
+                }
             }
         }
+        // True while every cell, every working border cell and (if there is air) the air
+        // temperature of every row are at one temperature: then no heat flows.
+        let mut uniform = lo == hi && (!air || self.air.iter().all(|&a| a == lo as f32));
 
         // The border: the facing edges of the 4 neighbors.
         let mut edge_differs = false;
@@ -466,6 +495,7 @@ impl ChunkJob<'_> {
                     s.g[b] = g;
                     let own = side.own(k);
                     edge_differs |= differs(temp[own], tn) && g.min(s.g[own_border(own)]) > 0.0;
+                    uniform &= tn == lo;
                 }
                 continue;
             }
@@ -488,60 +518,39 @@ impl ChunkJob<'_> {
             }
         }
 
-        // The flow.
+        // The flow. At one temperature nothing changes (the random rounding adds 0 then).
         let seed = self.rng.next_u32();
-        for y in 0..64 {
-            let r = (y + 1) * W + 1;
-            let o = y * 64;
-            flow_row(
-                FlowRow {
-                    t: &s.t[r - W - 1..r + W + 65],
-                    g: &s.g[r - W - 1..r + W + 65],
-                    inv_c: &s.inv_c[o..o + 64],
-                    mat: &mat[o..o + 64],
-                    air: self.air[y],
-                    seed,
-                    first: o as u32,
-                },
-                &mut s.new_t[o..o + 64],
-            );
-        }
-
-        // Write the rows that changed, and note the change of glowing cells.
-        let mut hot = 0i32;
-        for y in 0..64 {
-            let o = y * 64;
-            let (new, old) = (&s.new_t[o..o + 64], &mut temp[o..o + 64]);
-            if new == &old[..] {
-                continue;
-            }
-            for (&a, &b) in old.iter().zip(new) {
-                if a != b {
-                    out.changed_cells += 1;
-                    if a.max(b) >= GLOW_MIN {
-                        hot = hot.max((a as i32 - b as i32).abs());
-                    }
-                }
-            }
-            old.copy_from_slice(new);
+        let mut hot = 0;
+        if uniform {
+            s.lo.fill(lo);
+            s.hi.fill(lo);
+        } else {
+            (out.changed_cells, hot) = flow_chunk(s, &self.air, seed, temp);
         }
 
         // Phase changes.
         for y in 0..64 {
             let o = y * 64;
-            let (t, up, down) = (&temp[o..o + 64], &s.up[o..o + 64], &s.down[o..o + 64]);
-            let mut hit = false;
-            for x in 0..64 {
-                hit |= (t[x] >= up[x]) | (t[x] < down[x]);
-            }
-            if !hit {
-                continue;
-            }
-            for x in 0..64 {
-                if t[x] >= up[x] || t[x] < down[x] {
-                    // SAFETY: as above; the cell is in the center chunk.
-                    unsafe { self.change_phase(&mut out, x as i32, y as i32, t[x] >= up[x]) };
+            let (t, mrow) = (&temp[o..o + 64], &mat[o..o + 64]);
+            if s.mixed & (1 << y) == 0 {
+                // One material: compare the lowest and highest temperature of the row.
+                let e = table.mats[mrow[0] as usize];
+                if s.hi[y] < e.up && s.lo[y] >= e.down {
+                    continue;
                 }
+            }
+            let (mut ups, mut downs) = (0u64, 0u64);
+            for (x, (&v, &m)) in t.iter().zip(mrow).enumerate() {
+                let e = table.mats[m as usize];
+                ups |= ((v >= e.up) as u64) << x;
+                downs |= ((v < e.down) as u64) << x;
+            }
+            let mut bits = ups | downs;
+            while bits != 0 {
+                let x = bits.trailing_zeros() as i32;
+                bits &= bits - 1;
+                // SAFETY: as above; the cell is in the center chunk.
+                unsafe { self.change_phase(&mut out, mat, x, y as i32, ups & (1 << x) != 0) };
             }
         }
 
@@ -563,33 +572,33 @@ impl ChunkJob<'_> {
             if *version == self.stamp {
                 *drift = 0;
             }
-            out.active = *quiet < QUIET_TICKS || edge_differs;
-            if out.active {
-                let mat = &*addr_of!((*p).mat);
-                let i = mat.iter().position(|&m| table.still[m as usize]).unwrap_or(0) as i32;
-                out.marks[4].add_point(i & CHUNK_MASK, i >> CHUNK_SHIFT);
-            }
+        }
+        out.active = unsafe { *addr_of!((*p).heat_quiet) } < QUIET_TICKS || edge_differs;
+        if out.active {
+            let i = mat.iter().position(|&m| table.still[m as usize]).unwrap_or(0) as i32;
+            out.marks[4].add_point(i & CHUNK_MASK, i >> CHUNK_SHIFT);
         }
         out
     }
 
-    /// Change the phase of the center chunk cell (x, y): `up` is melt or boil, else freeze or condense.
+    /// Change the phase of the center chunk cell (x, y): `up` is melt or boil, else freeze or
+    /// condense. `mat` is the material array of the center chunk.
     ///
     /// # Safety
     /// As `run`.
-    unsafe fn change_phase(&mut self, out: &mut JobOut, x: i32, y: i32, up: bool) {
+    unsafe fn change_phase(&mut self, out: &mut JobOut, mat: &mut [u16; CHUNK_AREA], x: i32, y: i32, up: bool) {
         let p = self.ptrs[4];
         let i = ((y << CHUNK_SHIFT) | x) as usize;
+        let m = mat[i] as usize;
+        let into = if up { self.table.up_into[m] } else { self.table.down_into[m] };
+        mat[i] = into.0;
+        let life = match self.table.life[into.index()] {
+            Some((lo, hi)) => lo + self.rng.below((hi - lo) as u32 + 1) as u8,
+            None => 0,
+        };
         // SAFETY: see `run`.
         unsafe {
-            let mat = &mut *addr_of_mut!((*p).mat);
-            let m = mat[i] as usize;
-            let into = if up { self.table.up_into[m] } else { self.table.down_into[m] };
-            mat[i] = into.0;
-            (*addr_of_mut!((*p).life))[i] = match self.table.life[into.index()] {
-                Some((lo, hi)) => lo + self.rng.below((hi - lo) as u32 + 1) as u8,
-                None => 0,
-            };
+            (*addr_of_mut!((*p).life))[i] = life;
             (*addr_of_mut!((*p).motion))[i] = 0;
             let flags = &mut (*addr_of_mut!((*p).flags))[i];
             // The cell counts as not updated in the next tick, so it can move at once.
@@ -626,56 +635,136 @@ fn own_border(i: usize) -> usize {
     ((i >> 6) + 1) * W + (i & 63) + 1
 }
 
-/// The input of `flow_row`: one row of 64 cells.
-struct FlowRow<'a> {
-    /// Temperatures of the row above, the row and the row below, each `W` wide, starting one
-    /// cell left of the row above (`3 * W - 1` values, so the last row may end early).
-    t: &'a [f32],
-    /// Conductance of the same cells.
-    g: &'a [f32],
-    inv_c: &'a [f32],
-    mat: &'a [u16],
-    /// Air temperature of the row.
-    air: f32,
-    seed: u32,
-    /// Index of the first cell of the row in the chunk (for the random numbers).
-    first: u32,
+/// The heat that flows from cell a into cell b in one tick (see the module documentation).
+/// Temperatures are whole numbers, so `(|d| - (MIN_DIFF - 1)).clamp(0, 1)` is 0 for a difference
+/// below `MIN_DIFF` and 1 for a larger one, with no branch. (`max` and `min` are one SIMD
+/// instruction each; `clamp` is slower.)
+#[allow(clippy::manual_clamp)]
+#[inline(always)]
+fn pair_flow(ta: f32, ga: f32, tb: f32, gb: f32) -> f32 {
+    let d = ta - tb;
+    let on = (d.abs() - (MIN_DIFF - 1) as f32).max(0.0).min(1.0);
+    ga.min(gb) * d * on
 }
 
-/// Compute the new temperatures of one row of 64 cells. The loop has no branches, so the compiler
-/// can use SIMD instructions.
-#[inline]
-fn flow_row(r: FlowRow, out: &mut [i16]) {
-    const MIN: f32 = MIN_DIFF as f32;
-    let (t, g) = (r.t, r.g);
-    // Offsets of the cells in `t` and `g`: the cell itself is at `W + 1 + x`.
-    let (tu, tl, tc, tr, td) = (&t[1..65], &t[W..W + 64], &t[W + 1..W + 65], &t[W + 2..W + 66], &t[2 * W + 1..2 * W + 65]);
-    let (gu, gl, gc, gr, gd) = (&g[1..65], &g[W..W + 64], &g[W + 1..W + 65], &g[W + 2..W + 66], &g[2 * W + 1..2 * W + 65]);
-    let (inv_c, mat, out) = (&r.inv_c[..64], &r.mat[..64], &mut out[..64]);
-    for x in 0..64 {
-        let c = tc[x];
-        let k = gc[x];
-        let flow = |gn: f32, tn: f32| {
-            let d = tn - c;
-            if d.abs() >= MIN { k.min(gn) * d } else { 0.0 }
+/// Compute the new temperatures of the chunk from the scratch arrays, and write the rows that
+/// changed into `temp`. Also sets `Scratch::lo` and `Scratch::hi`. Returns the number of cells that
+/// changed, and the largest change of a glowing cell.
+///
+/// Each flow between two cells is computed once, one row at a time: the flows across the row
+/// (between each cell and its right neighbor) and the flows down (between the row and the row
+/// below). A cell gets the flow from its left and upper neighbors and gives the flow to its right
+/// and lower neighbors. The loops have no branches, so the compiler uses SIMD instructions.
+fn flow_chunk(s: &mut Scratch, air: &[f32; 64], seed: u32, temp: &mut [i16; CHUNK_AREA]) -> (u32, i32) {
+    let (t, g) = (&s.t, &s.g);
+    let (mut changed, mut hot) = (0u32, 0i32);
+    // Flow down from the row above into each cell of the current row.
+    let mut from_above = [0.0f32; 64];
+    down_flows(t, g, 0, &mut from_above);
+    for (y, &air) in air.iter().enumerate() {
+        let r = (y + 1) * W;
+        let mut to_below = [0.0f32; 64];
+        down_flows(t, g, y + 1, &mut to_below);
+        // Flow to the right: `across[x]` goes from border column x into column x + 1.
+        let mut across = [0.0f32; 65];
+        let (tr, gr) = (&t[r..r + W], &g[r..r + W]);
+        for x in 0..65 {
+            across[x] = pair_flow(tr[x], gr[x], tr[x + 1], gr[x + 1]);
+        }
+        let flows = RowFlows { across: &across, above: &from_above, below: &to_below };
+
+        let o = y * 64;
+        let tc = &tr[1..65];
+        let mut new = [0i16; 64];
+        let row = if s.mixed & (1 << y) != 0 {
+            let (inv_c, relax) = (&s.inv_c[o..o + 64], &s.relax[o..o + 64]);
+            new_temps(tc, flows, |x| inv_c[x], |x| relax[x], air, seed, o, &mut new)
+        } else {
+            let (inv_c, relax) = (s.row_inv_c[y], s.row_relax[y]);
+            new_temps(tc, flows, |_| inv_c, |_| relax, air, seed, o, &mut new)
         };
-        let sum = flow(gu[x], tu[x]) + flow(gl[x], tl[x]) + flow(gr[x], tr[x]) + flow(gd[x], td[x]);
-        let relax = if mat[x] == 0 { AIR_RATE } else { 0.0 };
-        let dt = sum * inv_c[x] + relax * (r.air - c);
-        let v = c + (dt + unit(r.seed, r.first + x as u32)).floor();
-        out[x] = v.clamp(MIN_TEMP as f32, MAX_TEMP as f32) as i32 as i16;
+        from_above = to_below;
+        s.lo[y] = row.lo as i16;
+        s.hi[y] = row.hi as i16;
+        if row.changed != 0 {
+            changed += row.changed;
+            hot = hot.max(row.hot);
+            temp[o..o + 64].copy_from_slice(&new);
+        }
+    }
+    (changed, hot)
+}
+
+/// The flows of one row (see `flow_chunk`).
+#[derive(Clone, Copy)]
+struct RowFlows<'a> {
+    /// `across[x]` goes from border column x into border column x + 1.
+    across: &'a [f32; 65],
+    /// From the row above into each cell.
+    above: &'a [f32; 64],
+    /// From each cell into the row below.
+    below: &'a [f32; 64],
+}
+
+/// What `new_temps` found in a row.
+struct RowResult {
+    /// Cells that changed.
+    changed: u32,
+    /// The largest change of a glowing cell.
+    hot: i32,
+    /// The lowest and highest new temperature.
+    lo: i32,
+    hi: i32,
+}
+
+/// The new temperatures of one row. `c`: old temperatures, `f`: the flows, `inv_c` and `relax`:
+/// the values of each cell (or one value for the whole row).
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn new_temps(
+    c: &[f32],
+    f: RowFlows,
+    inv_c: impl Fn(usize) -> f32,
+    relax: impl Fn(usize) -> f32,
+    air: f32,
+    seed: u32,
+    first: usize,
+    out: &mut [i16; 64],
+) -> RowResult {
+    let c = &c[..64];
+    let mut r = RowResult { changed: 0, hot: 0, lo: i32::MAX, hi: i32::MIN };
+    for x in 0..64 {
+        let sum = f.across[x] - f.across[x + 1] + f.above[x] - f.below[x];
+        let dt = sum * inv_c(x) + relax(x) * (air - c[x]);
+        let v = (c[x] + (dt + unit(seed, (first + x) as u32)).floor()).max(MIN_TEMP as f32).min(MAX_TEMP as f32);
+        let (new, old) = (v as i32, c[x] as i32);
+        out[x] = new as i16;
+        let d = (new - old).abs();
+        r.changed += (d != 0) as u32;
+        r.hot = r.hot.max(if new.max(old) >= GLOW_MIN as i32 { d } else { 0 });
+        r.lo = r.lo.min(new);
+        r.hi = r.hi.max(new);
+    }
+    r
+}
+
+/// The flows from border row `r` into border row `r + 1` of the scratch arrays, for the 64 chunk
+/// columns.
+#[inline(always)]
+fn down_flows(t: &[f32; W * W], g: &[f32; W * W], r: usize, out: &mut [f32; 64]) {
+    let (a, b) = (r * W + 1, (r + 1) * W + 1);
+    let (ta, ga, tb, gb) = (&t[a..a + 64], &g[a..a + 64], &t[b..b + 64], &g[b..b + 64]);
+    for x in 0..64 {
+        out[x] = pair_flow(ta[x], ga[x], tb[x], gb[x]);
     }
 }
 
 /// A random number in `0.0..1.0` from a seed and a cell index (a hash, so it fits SIMD).
 #[inline(always)]
 fn unit(seed: u32, i: u32) -> f32 {
-    let mut h = i.wrapping_mul(0x9E37_79B9) ^ seed;
+    let mut h = (i ^ seed).wrapping_mul(0x9E37_79B1);
     h ^= h >> 16;
-    h = h.wrapping_mul(0x85EB_CA6B);
-    h ^= h >> 13;
-    h = h.wrapping_mul(0xC2B2_AE35);
-    h ^= h >> 16;
+    h = h.wrapping_mul(0x85EB_CA77);
     (h >> 8) as f32 * (1.0 / 16_777_216.0)
 }
 
