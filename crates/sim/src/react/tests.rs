@@ -457,3 +457,36 @@ fn dedupe_keeps_the_first_event_of_each_reaction() {
         ]
     );
 }
+
+#[test]
+fn a_new_cell_does_not_keep_the_burning_flag() {
+    let mut w = World::new(2, 2);
+    w.stone_box(20, 60, 100, 120);
+    w.fill(40, 110, 80, 120, "wood", Some(500));
+    w.ticks(20);
+    let (n, flagged) = w.burning(40, 110, 80, 120);
+    assert!(n > 0 && flagged > 0, "the wood burns");
+    // Paint new wood over the burning wood: the new cells do not burn and have no flag.
+    w.fill(40, 110, 80, 120, "wood", None);
+    for y in 110..120 {
+        for x in 40..80 {
+            assert_eq!(w.life_flags(x, y).1 & FLAG_BURNING, 0, "no flag on the new cell {x},{y}");
+        }
+    }
+}
+
+/// Heat warms wood next to a hot block. The heat pass wakes the wood cells when they reach their
+/// ignite temperature, so the wood catches fire although its chunk sleeps.
+#[test]
+fn heat_wakes_wood_that_reaches_its_ignite_temperature() {
+    let mut w = World::new(2, 2);
+    w.stone_box(20, 60, 100, 120);
+    w.fill(40, 110, 60, 120, "wood", None);
+    w.fill(60, 104, 70, 120, "stone", Some(1100));
+    let mut ticks = 0;
+    while w.burning(40, 110, 60, 120).0 == 0 && ticks < 1500 {
+        w.ticks(1);
+        ticks += 1;
+    }
+    assert!(ticks < 1500, "the wood next to the hot stone catches fire");
+}

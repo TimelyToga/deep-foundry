@@ -53,6 +53,8 @@ use winit::window::{Window, WindowId};
 
 /// Extra cells around the screen that the simulation sends, so panning shows no empty chunks.
 const VIEW_MARGIN: i32 = 64;
+/// Strength (hardness scale) and heat (°C) of the debug explosion (key `DebugExplode`, sandbox).
+const DEBUG_EXPLOSION: (f32, i16) = (60.0, 1200);
 
 pub fn run(args: Args, content: Arc<Content>) -> Result<()> {
     let event_loop = EventLoop::new()?;
@@ -610,6 +612,13 @@ impl Game {
                 Action::BrushLarger => self.ui.set_brush_radius(self.ui.brush_radius() + 1),
                 Action::Pipette if !repeat => {
                     self.ui.sandbox_action(&UiAction::ClearHand);
+                }
+                Action::DebugExplode if !repeat => {
+                    let center = self.mouse_cell();
+                    if let Some(w) = self.world.as_ref() {
+                        let (strength, heat) = DEBUG_EXPLOSION;
+                        w.sim.send(Command::Explode { center, strength, heat });
+                    }
                 }
                 _ => {}
             }

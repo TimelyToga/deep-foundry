@@ -32,6 +32,13 @@
 //! movement pass, and the chunk gets a new version (the renderer shows the change). There is no
 //! latent heat: a phase change does not use or give heat.
 //!
+//! # Waking reactions
+//!
+//! Some reactions start by heat alone: wood burns at its `ignite_at`, ore smelts above the
+//! `min_temp` of its rule (`ReactTable::wake_temp`). The reaction code runs only on cells that the
+//! movement pass updates. So when heat warms a cell from below its wake temperature to or above
+//! it, the cell and its 8 neighbors are marked for the movement pass, as for a phase change.
+//!
 //! # Which chunks
 //!
 //! The heat pass works on the chunks that the movement pass worked on in this tick
@@ -75,7 +82,8 @@
 //!    for any number of threads.
 //! 3. The dirty marks of all jobs are added to the chunks, in the order of the work list.
 
-use crate::chunk::{Chunk, FLAG_PARITY, LocalRect};
+use crate::chunk::{Chunk, FLAG_BUILDING, FLAG_PARITY, LocalRect};
+use crate::react::ReactTable;
 use crate::world::World;
 use foundry_content::{MaterialTable, Phase};
 use foundry_core::{CHUNK_AREA, CHUNK_MASK, CHUNK_SHIFT, ChunkPos, DEFAULT_TEMPERATURE, MaterialId, Rng};
@@ -120,6 +128,9 @@ struct MatHeat {
     up: i16,
     /// The cell changes below this temperature (freeze or condense). `i16::MIN`: never.
     down: i16,
+    /// A reaction can start at or above this temperature (`ReactTable::wake_temp`). `i16::MAX`:
+    /// none.
+    wake: i16,
 }
 
 /// The heat values of all materials, made from the material table.
@@ -137,7 +148,9 @@ pub struct HeatTable {
 }
 
 impl HeatTable {
-    pub fn new(mats: &MaterialTable) -> Self {
+    /// The table of the materials. `react`: the wake temperatures of the reactions (`None`: no
+    /// cell is woken by heat).
+    pub fn new(mats: &MaterialTable, react: Option<&ReactTable>) -> Self {
         let n = mats.len();
         let mut t = HeatTable {
             mats: Vec::with_capacity(n),
@@ -163,7 +176,8 @@ impl HeatTable {
                     down = (ch.at, ch.into);
                 }
             }
-            t.mats.push(MatHeat { g, inv_c: 1.0 / c, relax: if m == 0 { AIR_RATE } else { 0.0 }, up: up.0, down: down.0 });
+            let wake = react.and_then(|r| r.wake_temp(MaterialId(m as u16))).unwrap_or(i16::MAX);
+            t.mats.push(MatHeat { g, inv_c: 1.0 / c, relax: if m == 0 { AIR_RATE } else { 0.0 }, up: up.0, down: down.0, wake });
             t.up_into.push(up.1);
             t.down_into.push(down.1);
             t.still.push(m == 0 || matches!(mats.phase[m], Phase::Empty | Phase::Solid));
@@ -204,9 +218,11 @@ pub struct HeatStats {
 
 /// Run the heat pass on the world. Called after movement and particles.
 /// `air_temperature[y]` is the air temperature of cell row y.
+#[allow(clippy::too_many_arguments)]
 pub fn step(
     world: &mut World,
     mats: &MaterialTable,
+    react: &ReactTable,
     air_temperature: &[i16],
     tick: u64,
     seed: u64,
@@ -223,7 +239,7 @@ pub fn step(
     let mut missing = Vec::new();
     world.hood_ptrs(&work, &mut hoods, &mut missing);
     let ptrs = Ptrs(hoods);
-    let table = HeatTable::new(mats);
+    let table = HeatTable::new(mats, Some(react));
     let last_air = air_temperature.last().copied().unwrap_or(DEFAULT_TEMPERATURE);
     let parity = (tick & 1) as u8;
 
@@ -339,6 +355,8 @@ struct Scratch {
     /// For rows with more than one material: `MatHeat::up` and `MatHeat::down` of each cell.
     up: [i16; CHUNK_AREA],
     down: [i16; CHUNK_AREA],
+    /// For rows with more than one material: `MatHeat::wake` of each cell.
+    wake: [i16; CHUNK_AREA],
     /// For rows with one material: 1 / heat capacity and `MatHeat::relax` of the row.
     row_inv_c: [f32; 64],
     row_relax: [f32; 64],
@@ -363,6 +381,7 @@ fn with_scratch<R>(f: impl FnOnce(&mut Scratch) -> R) -> R {
                 relax: [0.0; CHUNK_AREA],
                 up: [0; CHUNK_AREA],
                 down: [0; CHUNK_AREA],
+                wake: [0; CHUNK_AREA],
                 row_inv_c: [0.0; 64],
                 row_relax: [0.0; 64],
                 lo: [0; 64],
@@ -482,6 +501,7 @@ impl ChunkJob<'_> {
                     s.relax[src + x..src + end].fill(e.relax);
                     s.up[src + x..src + end].fill(e.up);
                     s.down[src + x..src + end].fill(e.down);
+                    s.wake[src + x..src + end].fill(e.wake);
                     air |= m == 0;
                     x = end;
                 }
@@ -540,30 +560,42 @@ impl ChunkJob<'_> {
             (out.changed_cells, hot) = flow_chunk(s, &self.air, seed, temp);
         }
 
-        // Phase changes.
+        // Phase changes, and cells that heat woke (see "Waking reactions").
         for y in 0..64 {
             let o = y * 64;
             let t = &temp[o..o + 64];
-            let (mut ups, mut downs) = (0u64, 0u64);
+            // The temperatures before the flow.
+            let old = &s.t[(y + 1) * W + 1..(y + 1) * W + 65];
+            let (mut ups, mut downs, mut wakes) = (0u64, 0u64, 0u64);
             if s.mixed & (1 << y) == 0 {
                 // One material: compare the lowest and highest temperature of the row.
                 let e = table.mats[mat[o] as usize];
-                if s.hi[y] < e.up && s.lo[y] >= e.down {
+                if s.hi[y] < e.up && s.lo[y] >= e.down && s.hi[y] < e.wake {
                     continue;
                 }
-                for (x, &v) in t.iter().enumerate() {
+                for (x, (&v, &was)) in t.iter().zip(old).enumerate() {
                     ups |= ((v >= e.up) as u64) << x;
                     downs |= ((v < e.down) as u64) << x;
+                    wakes |= ((v >= e.wake && (was as i16) < e.wake) as u64) << x;
                 }
             } else {
-                let (up, down) = (&s.up[o..o + 64], &s.down[o..o + 64]);
-                if !t.iter().zip(up.iter().zip(down)).fold(false, |hit, (&v, (&u, &d))| hit | (v >= u) | (v < d)) {
+                let (up, down, wake) = (&s.up[o..o + 64], &s.down[o..o + 64], &s.wake[o..o + 64]);
+                let hit = |(v, (u, (d, w))): (&i16, (&i16, (&i16, &i16)))| (*v >= *u) | (*v < *d) | (*v >= *w);
+                if !t.iter().zip(up.iter().zip(down.iter().zip(wake))).fold(false, |any, c| any | hit(c)) {
                     continue;
                 }
-                for (x, (&v, (&u, &d))) in t.iter().zip(up.iter().zip(down)).enumerate() {
+                for (x, ((&v, &was), (&u, (&d, &w)))) in t.iter().zip(old).zip(up.iter().zip(down.iter().zip(wake))).enumerate() {
                     ups |= ((v >= u) as u64) << x;
                     downs |= ((v < d) as u64) << x;
+                    wakes |= ((v >= w && (was as i16) < w) as u64) << x;
                 }
+            }
+            // A cell that changes phase is marked anyway.
+            let mut woken = wakes & !(ups | downs);
+            while woken != 0 {
+                let x = woken.trailing_zeros() as i32;
+                woken &= woken - 1;
+                self.mark_around(&mut out, x, y as i32);
             }
             let mut bits = ups | downs;
             while bits != 0 {
@@ -621,12 +653,17 @@ impl ChunkJob<'_> {
             (*addr_of_mut!((*p).life))[i] = life;
             (*addr_of_mut!((*p).motion))[i] = 0;
             let flags = &mut (*addr_of_mut!((*p).flags))[i];
-            // The cell counts as not updated in the next tick, so it can move at once.
-            *flags = (*flags & !FLAG_PARITY) | self.parity;
+            // The cell counts as not updated in the next tick, so it can move at once. The new
+            // material is not part of a building.
+            *flags = (*flags & !(FLAG_PARITY | FLAG_BUILDING)) | self.parity;
             *addr_of_mut!((*p).version) = self.stamp;
         }
         out.phase_changes += 1;
-        // The cell and its 8 neighbors update in the next tick.
+        self.mark_around(out, x, y);
+    }
+
+    /// Mark the center chunk cell (x, y) and its 8 neighbors for the movement pass of the next tick.
+    fn mark_around(&self, out: &mut JobOut, x: i32, y: i32) {
         if x > 0 && x < CHUNK_MASK && y > 0 && y < CHUNK_MASK {
             out.marks[4].add_rect(LocalRect { x0: x - 1, y0: y - 1, x1: x + 2, y1: y + 2 });
             return;

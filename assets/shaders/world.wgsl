@@ -19,7 +19,9 @@ struct MaterialInfo {
     glow: f32,
     // How much a cell stops light (0 air, 1 rock).
     opacity: f32,
-    _pad: u32,
+    // 1 if the material can burn. The burning flag can be left over on other cells (flags do not
+    // move with a cell), so only these show it.
+    burns: u32,
 };
 
 const CHUNK: f32 = 64.0;
@@ -152,7 +154,7 @@ fn shade_cell(material: u32, temperature: f32, shade: u32, life: f32, cell_flags
         emission = max(emission, srgb_to_linear(g.rgb) * strength * HOT_LIGHT);
     }
 
-    if (cell_flags & CELL_FLAG_BURNING) != 0u {
+    if (cell_flags & CELL_FLAG_BURNING) != 0u && info.burns != 0u {
         // A burning cell: the material gets dark (it chars), and some cells glow orange. The glow
         // of each cell flickers.
         let f = flicker(cell, shade, life);

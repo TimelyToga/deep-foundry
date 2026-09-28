@@ -44,7 +44,7 @@ pub enum SimEvent {
     Exploded { at: CellPos, radius: f32, strength: f32 },
 }
 
-use chunk::{Chunk, FLAG_PARITY};
+use chunk::{Chunk, FLAG_BUILDING, FLAG_BURNING, FLAG_PARITY};
 use foundry_content::Content;
 use foundry_core::{
     CHUNK_AREA, CHUNK_SIZE, CellPos, CellRect, ChunkImage, ChunkPos, Command, MaterialId, PaintMode, Rng, SimStats,
@@ -393,6 +393,10 @@ impl Simulation {
             Command::SetSimSetting { key, value } => {
                 self.settings.set(&key, value);
             }
+            Command::Explode { center, strength, heat } => {
+                // A center outside the update area waits in the queue (see `explode`).
+                self.explode(center, strength, heat);
+            }
             // Handled by the thread that owns the simulation.
             Command::SaveWorld { .. } | Command::LoadWorld { .. } => {}
         }
@@ -511,7 +515,7 @@ impl Simulation {
         let t_explode = ms(start);
         self.particles.step(&mut self.world, mats, &self.settings, self.tick, self.stamp, self.pool.as_ref());
         let t_particles = ms(start);
-        heat::step(&mut self.world, mats, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
+        heat::step(&mut self.world, mats, &self.react, &self.air_temperature, self.tick, self.seed, self.stamp, self.pool.as_ref());
         let t_heat = ms(start);
         let every = self.settings.unload_every_ticks as u64;
         if every > 0 && self.tick.is_multiple_of(every) {
@@ -668,9 +672,30 @@ impl Simulation {
         c.shade[i] = shade;
         c.life[i] = life;
         c.motion[i] = 0;
-        c.flags[i] = (c.flags[i] & !FLAG_PARITY) | parity;
+        // A new cell does not burn (its life is new, and the burning state is in the life byte),
+        // and it is not part of a building (see `set_building_flag`).
+        c.flags[i] = (c.flags[i] & !(FLAG_PARITY | FLAG_BURNING | FLAG_BUILDING)) | parity;
         c.version = stamp;
         self.world.mark_dirty_around(p);
+    }
+
+    /// Mark a cell as part of a building body, or not (`FLAG_BUILDING`). Call it after
+    /// `set_cell`, which clears the mark. Does nothing outside the world.
+    pub fn set_building_flag(&mut self, p: CellPos, on: bool) {
+        let stamp = self.stamp;
+        let Some(c) = self.world.chunk_mut(p.chunk()) else { return };
+        let i = p.local_index();
+        let flags = if on { c.flags[i] | FLAG_BUILDING } else { c.flags[i] & !FLAG_BUILDING };
+        if flags != c.flags[i] {
+            c.flags[i] = flags;
+            // The renderer shows the flag: send the chunk again.
+            c.version = stamp;
+        }
+    }
+
+    /// True if the cell is marked as part of a building body (`set_building_flag`).
+    pub fn is_building_cell(&self, p: CellPos) -> bool {
+        self.world.chunk(p.chunk()).is_some_and(|c| c.flags[p.local_index()] & FLAG_BUILDING != 0)
     }
 
     /// Write a whole chunk at once (for world generation and loading). `materials` and
@@ -879,6 +904,24 @@ mod tests {
     fn sim() -> Simulation {
         let content = Arc::new(Content::load_default().unwrap());
         Simulation::new(content, SimConfig::finite(4, 4, 3))
+    }
+
+    #[test]
+    fn building_flag_is_set_and_a_new_cell_clears_it() {
+        let mut s = sim();
+        let stone = s.content().expect_material("stone");
+        let p = CellPos::new(50, 50);
+        s.set_cell(p, stone, None);
+        assert!(!s.is_building_cell(p));
+        s.set_building_flag(p, true);
+        assert!(s.is_building_cell(p));
+        let v = s.world().chunk(p.chunk()).unwrap().version;
+        s.tick();
+        assert!(s.is_building_cell(p), "a tick keeps the flag");
+        s.set_building_flag(p, true);
+        assert_eq!(s.world().chunk(p.chunk()).unwrap().version, v, "no change: no new version");
+        s.set_cell(p, MaterialId::AIR, None);
+        assert!(!s.is_building_cell(p), "a new cell is not a building cell");
     }
 
     #[test]

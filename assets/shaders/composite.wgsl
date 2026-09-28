@@ -57,7 +57,12 @@ fn shimmer_amount(t: vec2<f32>) -> f32 {
 }
 
 // The background behind air cells (linear color). `cell` is the world cell position (x wrapped).
-fn background(cell: vec2<f32>, world_y: f32, sky: f32, light: vec3<f32>) -> vec3<f32> {
+fn background(cell: vec2<f32>, world_y: f32, direct_sky: f32, light: vec3<f32>) -> vec3<f32> {
+    // The sky shows where direct sky light falls, and everywhere above the surface level: the
+    // cells under a tree or a building get no direct sky light, but the background behind them
+    // is still the sky, not the rock wall.
+    let above = 1.0 - smoothstep(frame.surface_y + 4.0, frame.surface_y + 36.0, world_y);
+    let sky = max(direct_sky, above);
     // The sky: deep blue high up, lighter near the ground.
     let h = smoothstep(frame.surface_y - 1100.0, frame.surface_y + 60.0, world_y);
     let sky_color = mix(vec3<f32>(0.035, 0.09, 0.26), vec3<f32>(0.20, 0.34, 0.54), h);

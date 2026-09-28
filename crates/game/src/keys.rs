@@ -60,6 +60,8 @@ pub enum Action {
     DebugHeat,
     /// Debug view: the chunk grid.
     DebugGrid,
+    /// Debug tool (sandbox): an explosion at the mouse.
+    DebugExplode,
 }
 
 impl Action {
@@ -146,6 +148,7 @@ const ACTIONS: &[(Action, &str, &str, Scope)] = &[
     (Action::DebugChunks, "debug_chunks", "Debug view: awake chunks", Scope::Both),
     (Action::DebugHeat, "debug_heat", "Debug view: heat map", Scope::Both),
     (Action::DebugGrid, "debug_grid", "Debug view: chunk grid", Scope::Both),
+    (Action::DebugExplode, "debug_explode", "Debug: an explosion at the mouse", Scope::Sandbox),
 ];
 
 /// One key of a binding.
@@ -222,6 +225,7 @@ pub fn default_keys(a: Action) -> Vec<KeyBind> {
         Action::DebugChunks => vec![k(K::F4)],
         Action::DebugHeat => vec![k(K::F5)],
         Action::DebugGrid => vec![k(K::F6)],
+        Action::DebugExplode => vec![k(K::F7)],
     }
 }
 
@@ -561,5 +565,8 @@ mod tests {
         assert_eq!(f(KeyCode::F4), vec![Action::DebugChunks]);
         assert_eq!(f(KeyCode::F5), vec![Action::DebugHeat]);
         assert_eq!(f(KeyCode::F6), vec![Action::DebugGrid]);
+        // The explosion key is for the sandbox only.
+        assert_eq!(b.actions(&Press::new(KeyCode::F7), true, false), vec![Action::DebugExplode]);
+        assert_eq!(f(KeyCode::F7), vec![]);
     }
 }
