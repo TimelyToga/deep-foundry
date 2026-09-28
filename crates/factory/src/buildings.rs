@@ -953,6 +953,11 @@ impl Buildings {
             }
         }
         let list: Vec<u32> = self.active.iter().copied().collect();
+        let bellows: Vec<TilePos> = self
+            .iter()
+            .filter(|(_, b)| content.factory.building_def(b.kind).kind == "bellows")
+            .map(|(_, b)| b.at)
+            .collect();
         for &i in &list {
             if let Some(b) = self.at_index_mut(i) {
                 b.busy = false;
@@ -963,7 +968,7 @@ impl Buildings {
             self.take_inputs(i, content, sim);
         }
         for &i in &list {
-            self.work(i, content, sim, progress);
+            self.work(i, content, sim, progress, &bellows);
         }
         for &i in &list {
             self.give_outputs(i, content, sim);
@@ -1124,7 +1129,14 @@ impl Buildings {
     }
 
     /// Machines work, labs research, the Hub delivers.
-    fn work<P: ProgressLink>(&mut self, i: u32, content: &Content, sim: &mut Simulation, progress: &mut P) {
+    fn work<P: ProgressLink>(
+        &mut self,
+        i: u32,
+        content: &Content,
+        sim: &mut Simulation,
+        progress: &mut P,
+        bellows: &[TilePos],
+    ) {
         let seed = self.seed ^ ((i as u64) << 32) ^ self.slots[i as usize].generation as u64;
         let Some(b) = self.at_index_mut(i) else { return };
         let def = content.factory.building_def(b.kind);
@@ -1157,14 +1169,27 @@ impl Buildings {
                 };
                 let status = m.step(recipe, &cond, seed);
                 b.status = status;
-                if status == Status::Working {
+                let burning = if status == Status::Working {
+                    true
+                } else if def.kind == "furnace" {
+                    m.burn_tick()
+                } else {
+                    false
+                };
+                if burning {
                     b.busy = true;
-                    b.power_w = power.map_or(0.0, |p| p.use_w) * machines::overclock_power(def.tier, recipe.tier) as f32;
+                    b.power_w = if status == Status::Working {
+                        power.map_or(0.0, |p| p.use_w) * machines::overclock_power(def.tier, recipe.tier) as f32
+                    } else {
+                        idle_w
+                    };
                     // A burner heats the cells at its heat ports while it works.
                     if let Some(p) = power
                         && p.burn_w > 0.0
                     {
-                        let target = def.param("heat_temp", 800.0) as i16;
+                        let boosted = def.kind == "furnace"
+                            && crate::hot_metal::bellows_reaches_fire(bellows, b.at);
+                        let target = def.param("heat_temp", 800.0) as i16 + if boosted { 300 } else { 0 };
                         let step = (p.burn_w / 1000.0).clamp(1.0, 100.0) as i16;
                         for port in b.ports.iter().filter(|p| p.kind == PortKind::Heat) {
                             cells::heat_side(sim, port.tile, port.side, target, step);
@@ -1473,7 +1498,11 @@ impl Buildings {
             inventory: None,
             progress: 0.0,
             power_w: b.power_w,
-            temperature: b.temperature,
+            // A recipe that needs heat shows the live heat-port reading in its window.
+            temperature: match &b.logic {
+                Logic::Machine(m) if m.recipe.is_some_and(|r| content.factory.recipe_def(r).min_temp.is_some()) => b.heat,
+                _ => b.temperature,
+            },
             max_temp: def.max_temp,
             hit_points: b.hit_points.ceil() as u32,
             max_hit_points: def.hit_points,
