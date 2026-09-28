@@ -1,0 +1,13 @@
+// Generated content scene: molten_salt falls from the air onto the floor.
+Scene(
+    note: "molten_salt falls and settles at the bottom.",
+    legend: {
+        "#ffd27a": "molten_salt",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "molten_salt"),
+        Count(material: "molten_salt", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

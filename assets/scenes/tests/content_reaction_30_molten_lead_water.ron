@@ -1,0 +1,15 @@
+// Generated content scene: reaction #30 (molten_lead + water).
+// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+Scene(
+    note: "Reaction: molten_lead + water.",
+    legend: {
+        "#c9a06f": "molten_lead",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "lead_block", min: 1, pending: true),
+        Total(material: "steam", min: 1, pending: true),
+    ],
+)

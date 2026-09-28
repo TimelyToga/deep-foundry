@@ -1,0 +1,13 @@
+// Generated content scene: freeze of molten_zinc into zinc_block at 410C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "molten_zinc freezes into zinc_block.",
+    legend: {
+        "#e0e6e8": (material: "molten_zinc", temperature: 330),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "zinc_block", min: 1, pending: true),
+    ],
+)

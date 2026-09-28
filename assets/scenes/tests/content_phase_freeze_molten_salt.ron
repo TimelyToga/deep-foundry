@@ -1,0 +1,13 @@
+// Generated content scene: freeze of molten_salt into salt at 791C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "molten_salt freezes into salt.",
+    legend: {
+        "#ffd27a": (material: "molten_salt", temperature: 711),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "salt", min: 1, pending: true),
+    ],
+)

@@ -1,0 +1,13 @@
+// Generated content scene: melt of resin into rubber at 150C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "resin melts into rubber.",
+    legend: {
+        "#c98a2e": (material: "resin", temperature: 230),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "rubber", min: 1, pending: true),
+    ],
+)

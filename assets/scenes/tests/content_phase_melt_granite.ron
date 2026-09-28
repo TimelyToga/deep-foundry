@@ -1,0 +1,13 @@
+// Generated content scene: melt of granite into lava at 1250C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "granite melts into lava.",
+    legend: {
+        "#a08f8a": (material: "granite", temperature: 1330),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "lava", min: 1, pending: true),
+    ],
+)

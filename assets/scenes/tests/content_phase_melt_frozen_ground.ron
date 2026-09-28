@@ -1,0 +1,13 @@
+// Generated content scene: melt of frozen_ground into mud at 1C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "frozen_ground melts into mud.",
+    legend: {
+        "#4f5a5e": (material: "frozen_ground", temperature: 81),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "mud", min: 1, pending: true),
+    ],
+)

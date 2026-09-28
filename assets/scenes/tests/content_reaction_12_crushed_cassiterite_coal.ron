@@ -1,0 +1,15 @@
+// Generated content scene: reaction #12 (crushed_cassiterite + coal).
+// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+Scene(
+    note: "Reaction: crushed_cassiterite + coal.",
+    legend: {
+        "#302420": (material: "crushed_cassiterite", temperature: 980),
+        "#181818": "coal",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_tin", min: 1, pending: true),
+        Total(material: "carbon_dioxide", min: 1, pending: true),
+    ],
+)

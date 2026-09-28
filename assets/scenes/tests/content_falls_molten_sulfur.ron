@@ -1,0 +1,13 @@
+// Generated content scene: molten_sulfur falls from the air onto the floor.
+Scene(
+    note: "molten_sulfur falls and settles at the bottom.",
+    legend: {
+        "#e0c23e": "molten_sulfur",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "molten_sulfur"),
+        Count(material: "molten_sulfur", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

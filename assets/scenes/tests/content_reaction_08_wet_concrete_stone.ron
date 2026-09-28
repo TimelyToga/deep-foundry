@@ -1,0 +1,14 @@
+// Generated content scene: reaction #8 (wet_concrete + stone).
+// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+Scene(
+    note: "Reaction: wet_concrete + stone.",
+    legend: {
+        "#8f8d88": "wet_concrete",
+        "#6b6a70": "stone",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "concrete", min: 1, pending: true),
+    ],
+)

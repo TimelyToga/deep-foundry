@@ -1,0 +1,13 @@
+// Generated content scene: washed_coal falls from the air onto the floor.
+Scene(
+    note: "washed_coal falls and settles at the bottom.",
+    legend: {
+        "#202020": "washed_coal",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "washed_coal"),
+        Count(material: "washed_coal", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

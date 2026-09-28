@@ -1,0 +1,13 @@
+// Generated content scene: freeze of brine into ice at -20C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "brine freezes into ice.",
+    legend: {
+        "#3a78c9": (material: "brine", temperature: -100),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "ice", min: 1, pending: true),
+    ],
+)

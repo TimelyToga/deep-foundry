@@ -1,0 +1,15 @@
+// Generated content scene: mud (density 1600) is denser than water and sinks below it.
+Scene(
+    note: "mud sinks through water.",
+    legend: {
+        "#4a3722": "mud",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 1500,
+    checks: [
+        TotalUnchanged(material: "mud"),
+        TotalUnchanged(material: "water"),
+        Count(material: "mud", rect: (x: 4, y: 48, w: 72, h: 18), min: 300),
+    ],
+)

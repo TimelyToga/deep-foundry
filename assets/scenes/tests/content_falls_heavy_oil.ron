@@ -1,0 +1,13 @@
+// Generated content scene: heavy_oil falls from the air onto the floor.
+Scene(
+    note: "heavy_oil falls and settles at the bottom.",
+    legend: {
+        "#1c150f": "heavy_oil",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "heavy_oil"),
+        Count(material: "heavy_oil", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)
