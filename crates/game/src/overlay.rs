@@ -13,7 +13,7 @@ use crate::player::{ROBOT_H, ROBOT_W, Robot};
 use crate::tools;
 use egui::{Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, StrokeKind, pos2, vec2};
 use foundry_content::Content;
-use foundry_core::CellRect;
+use foundry_core::{CellPos, CellRect};
 use foundry_factory::Status;
 use foundry_render::Camera;
 use foundry_ui::icons::IconAtlas;
@@ -68,22 +68,18 @@ pub fn draw(painter: &Painter, frame: &FactoryFrame, s: &Scene) {
     for (r, text) in &frame.labels {
         label(painter, &v, *r, text);
     }
+    let b = s.build;
+    let aim = aim_point(frame, b.mouse);
     // The robot itself is a sprite in the world renderer (`robot_sprite.rs`).
     if let Some(r) = &frame.robot {
         let at = s.robot_at.unwrap_or_else(|| r.draw_top_left());
         fuel_gauge(painter, &v, r, at, frame.tick);
     }
     construct_draw::draw_over(painter, &v, frame, s.build, s.content, s.atlas);
-    let b = s.build;
     // The dig circle, but not on a building (a click there opens it).
     let on_building = |m: foundry_core::CellPos| frame.hover.as_ref().is_some_and(|h| h.rect.contains(m));
-    if !b.grid
-        && !b.removing
-        && let (Some(mouse), Some(r)) = (b.mouse, &frame.robot)
-        && !on_building(mouse)
-    {
+    if !b.grid && !b.removing && frame.robot.is_some() && b.mouse.is_some_and(|m| !on_building(m)) {
         // The dig circle at the aim point (moved into reach).
-        let aim = tools::clamp_aim(r, mouse);
         let c = v.pos(aim.x as f64 + 0.5, aim.y as f64 + 0.5);
         let radius = (tools::DIG_RADIUS as f32 + 0.5) * v.scale();
         painter.circle_stroke(c, radius, Stroke::new(1.0, Color32::from_white_alpha(110)));
@@ -138,6 +134,17 @@ fn fuel_gauge(p: &Painter, v: &View, r: &Robot, at: (f32, f32), tick: u64) {
     }
 }
 
+/// The aim point of the tools to draw: the mouse cell of this frame, moved into reach of the
+/// robot. So the dig circle and the end of the tool beam follow the mouse in every frame, also
+/// when the next tick is late. With no mouse over the world (`mouse` is `None`): the aim point
+/// that the last tick used.
+pub fn aim_point(frame: &FactoryFrame, mouse: Option<CellPos>) -> CellPos {
+    match (mouse, &frame.robot) {
+        (Some(m), Some(r)) => tools::clamp_aim(r, m),
+        _ => frame.aim,
+    }
+}
+
 /// A name tag over the top middle of a building.
 fn label(p: &Painter, v: &View, r: foundry_core::CellRect, text: &str) {
     let top = v.pos((r.x0 + r.x1) as f64 * 0.5, r.y0 as f64) - vec2(0.0, 6.0);
@@ -160,3 +167,7 @@ fn status_mark(p: &Painter, v: &View, r: foundry_core::CellRect, status: Status)
     p.circle(c, radius, color, Stroke::new(1.5, Color32::from_black_alpha(200)));
     p.text(c, Align2::CENTER_CENTER, "!", FontId::proportional(radius * 1.5), Color32::from_rgb(30, 20, 10));
 }
+
+#[cfg(test)]
+#[path = "overlay_tests.rs"]
+mod tests;
