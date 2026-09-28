@@ -19,6 +19,7 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 - character: robot sprite sheet 16x20 (tools/sprites/make_robot.py -> assets/sprites/robot.png/.ron), animations, tool arm in 16 directions, sprite pass crates/render/src/sprite.rs (drawn into the world texture before the scale pass), movement tuning block in player.rs (steps 1-3 cells, jump buffer, coyote time, stuck fixes), jetpack fuel 50 ticks + gauge next to the robot, screenshot --pose/--face/--robot. 373 tests pass.
   - Open: no jetpack bar in the crates/ui HUD. When wave B (light) merges: the robot must be lit by the light map; flame/beam/sparks not darkened; visor glow mask.
 - stutter fix: sim loop on its own 1-thread pool, big ticks on an 8-thread pool (sim_pool.rs); dig circle and sprite beam use this frame's mouse (overlay::aim_point); robot drawn 1.25 ticks behind a steady clock (motion.rs); DEEP_FOUNDRY_PERF=1, DEEP_FOUNDRY_DIG_SCRIPT=1, dig_perf tests (--ignored). Worst dig tick 24-31 ms -> 0.5-2 ms under heavy load. 379 tests pass.
+- walk stutter fix (fix/walk-stutter): the part of a cell the robot has moved never points into a wall, ceiling or ground, so the drawn robot does not shake when it pushes against them (walking, flying, jetpack under a ceiling); under a liquid the robot follows the ground down steps. Tests `no_shake_*`, `walks_evenly_through_water_over_a_bumpy_bottom`. Open: the robot sprite is drawn at whole cells while the camera moves in screen pixels, so at 0.5 cells/tick (wading) or jetpack speeds it shakes on screen. Fix it in the renderer after wave B merges.
   - Open: hover box shows the cell for 1-2 ticks before building data arrives; 60 Hz fix checked only by the clock-model test.
 - play-test round 2: keep/drop per material when digging (crates/factory/src/digging.rs default = used by a recipe, port or reaction; dropped cells fly out behind the robot, spoil.rs; setting saved in .dfgame), HUD bar transfers and drag and drop (crates/ui/src/screens/drag.rs), guide tier0.ron rewritten with {key:ID}/{key1:ID}, "Next: the kiln. It comes in a later update.", campfire fuel slot + pit_fired_clay_brick (clay-brick loop solved). 395 tests pass.
   - Open: spoil lands 20-30 cells behind (piles near a wall); transfer hint not saved; guide texts describe the demo world (redo after worldgen).
@@ -27,6 +28,13 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 | Work | Where | Merge notes |
 |---|---|---|
 | Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
+
+| Room machines (Claude Opus): kiln, coke oven, blast furnace; started from 8acbcf2 | `.claude/worktrees/agent-ab9bfa3218318ff88` | new files under crates/factory rooms + ui screen. |
+| Codex agents (started by the user): automation/hot-metal, automation/ore-processing, automation/steam, automation/integration | `../sand-game-*` worktrees | The user runs these. automation/integration already merged lead/wave-b at be09994. |
+
+- The user's second stutter session is merged (fix/walk-stutter, see "walk stutter fix" above). It changed only player.rs, player_tests.rs and this file.
+
+Rule from the user: the lead does not start agents or workflows. Write task text for the user instead.
 
 ## Next
 1. Play-test rounds 1 and 2, character and stutter fix are merged. Wait for wave B.
