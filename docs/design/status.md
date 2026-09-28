@@ -28,6 +28,11 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 |---|---|---|
 | Wave B workflow (run wf_7b897b9e-c25, script scratchpad/wave_b.js): heat, reactions + SimEvent::Reaction, explosions, render light + F4-F6 overlays, worldgen as ChunkSource, content scene tests (Sonnet); then integrate, review, fix | builders in worktrees; integrate/review/fix in `.claude/worktrees/wave-b` (lead/wave-b) | Lead merges lead/wave-b into main at the end. Render-light and character both touch crates/render. |
 
+| Room machines (Claude Opus): kiln, coke oven, blast furnace; started from 8acbcf2 | `.claude/worktrees/agent-ab9bfa3218318ff88` | new files under crates/factory rooms + ui screen. |
+| Codex agents (started by the user): automation/hot-metal, automation/ore-processing, automation/steam, automation/integration | `../sand-game-*` worktrees | The user runs these. automation/integration already merged lead/wave-b at be09994. |
+
+Rule from the user: the lead does not start agents or workflows. Write task text for the user instead.
+
 ## Next
 1. Play-test rounds 1 and 2, character and stutter fix are merged. Wait for wave B.
 2. When wave B finishes: read its result, merge lead/wave-b into main (check the robot sprite is lit by the light map), tell the user it is a test point. Liquids follow-up: measure speed (flood stress case) and check commits 8969bbe..06883bd for loose ends.
