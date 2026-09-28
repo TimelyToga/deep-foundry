@@ -138,6 +138,7 @@
         text: "Set the crucible over a campfire. Choose Molten tin, add 16 cassiterite and 8 charcoal, then fuel the campfire with wood. The recipe waits for 900 °C. Cast molten tin in a plate mold to make tin plates.",
         condition: HaveItem("tin_plate", 4),
         reward_points: 2,
+        waits_for: Some("smelting in the crucible"),
     ),
     Goal(
         id: "t0_bellows",
@@ -146,6 +147,7 @@
         text: "Build bellows within 3 tiles of the campfire. They raise its real cell temperature by 300 °C, enough for copper smelting in the crucible.",
         condition: Build("bellows", 1),
         reward_points: 1,
+        waits_for: Some("tin plates (smelting)"),
     ),
     Goal(
         id: "t0_copper",
@@ -154,6 +156,7 @@
         text: "Keep the crucible over the campfire. With bellows within 3 tiles, choose Molten copper and add 16 malachite and 8 charcoal. Fuel the fire; at 1100 °C the crucible makes molten copper. Cast it in a plate mold.",
         condition: HaveItem("copper_plate", 4),
         reward_points: 2,
+        waits_for: Some("smelting in the crucible"),
     ),
     Goal(
         id: "t0_bronze",
@@ -162,6 +165,7 @@
         text: "Load 48 molten copper and 16 molten tin into a crucible over 1000 °C. The alloy recipe uses the crucible's real temperature. Cast its molten bronze output in a plate mold.",
         condition: HaveItem("bronze_plate", 10),
         reward_points: 2,
+        waits_for: Some("smelting in the crucible"),
     ),
     Goal(
         id: "t0_gears",
@@ -170,6 +174,7 @@
         text: "Hand craft bronze gears from bronze plates. Machines need gears.",
         condition: HaveItem("bronze_gear", 4),
         reward_points: 1,
+        waits_for: Some("bronze plates (smelting)"),
     ),
     Goal(
         id: "t0_stamp_mill",
