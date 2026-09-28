@@ -24,9 +24,10 @@ pub const CREW_FROM: u32 = 64;
 /// Below this number of awake chunks in the last tick, the next tick runs on the loop thread.
 pub const SOLO_BELOW: u32 = 32;
 
-/// From this number of chunks that a new view adds, the next tick uses the `crew` pool. (One
-/// thread makes a chunk in about 25 µs.)
-pub const CREW_FOR_NEW_VIEW: usize = 64;
+/// From this number of chunks that a new view adds, the next tick uses the `crew` pool. One
+/// thread makes a chunk in about 25 µs, so 256 chunks take about 6 ms. Smaller views stay on the
+/// loop thread: with a busy CPU, the wait for the crew threads can be longer than that.
+pub const CREW_FOR_NEW_VIEW: usize = 256;
 
 /// The pools of the simulation thread. See the module documentation.
 pub struct Workers {

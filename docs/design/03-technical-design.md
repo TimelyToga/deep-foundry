@@ -105,7 +105,7 @@ Dependencies go one way:
 |---|---|
 | Main thread | Window events, input, camera, UI, rendering. Runs at the display rate. |
 | Simulation thread | Runs fixed ticks at 60 per second. Owns the world, the factory and the player. It is a thread of its own one-thread rayon pool, so a tick with few awake chunks runs its parallel parts at once on this thread. A rayon call from a thread outside a pool waits for a pool thread to wake up; with a busy CPU (for example a build) this made 20 to 48 ms ticks while digging (`crates/game/src/sim_pool.rs`). |
-| Worker pool | rayon, with (cores − 2) threads, at most 8. A tick runs on it when the last tick had 64 or more awake chunks (back below 32), or when a new view adds 64 or more chunks (for example after a zoom out). Also loads and writes saves. |
+| Worker pool | rayon, with (cores − 2) threads, at most 8. A tick runs on it when the last tick had 64 or more awake chunks (back below 32), or when a new view adds 256 or more chunks (for example a large zoom out). Also loads and writes saves. |
 
 On macOS the simulation threads use the "user interactive" service class (as the main thread), so
 the system runs them before background work.
