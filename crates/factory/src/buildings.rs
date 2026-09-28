@@ -432,13 +432,16 @@ fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub: &Hub
     }
     match logic {
         Logic::Machine(m) => {
-            // Recipe inputs first, then the fuel slot.
-            let taken = m.recipe.map_or(0, |r| m.add_input(content.factory.recipe_def(r), item, n));
+            // Recipe inputs first, then the fuel slot. An item that is both (wood in a kiln that
+            // makes charcoal) fills both evenly (see `rooms::input_share`).
+            let first = crate::rooms::input_share(m, content, item, n);
+            let taken = m.recipe.map_or(0, |r| m.add_input(content.factory.recipe_def(r), item, first));
             let fuel = match (item, m.fuel.as_mut()) {
                 (ItemRef::Material(mat), Some(f)) if taken < n && is_fuel(content, mat) => f.add(mat, n - taken),
                 _ => 0,
             };
-            taken + fuel
+            let more = m.recipe.map_or(0, |r| m.add_input(content.factory.recipe_def(r), item, n - taken - fuel));
+            taken + fuel + more
         }
         Logic::Storage(inv) | Logic::Hub(inv) => n - inv.insert(content, item, n),
         Logic::Lab(lab) => match item {
