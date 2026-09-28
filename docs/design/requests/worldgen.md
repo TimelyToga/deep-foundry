@@ -15,7 +15,9 @@ What the generator does now:
   game sets it with `set_air_temperature` when it makes a generated world.
 - `WorldGen::air_temperature_at(seed, x, y)` gives the value with the biome (−20 °C near the
   tundra surface). Nothing uses it yet.
-- Tundra cells are made cold: snow, ice and frozen ground at −12 to −2 °C, lake water at 2 °C.
+- Tundra cells are made cold: snow, ice and frozen ground at −12 to −2 °C, lake water at −1 °C
+  (see item 3). Ground of other biomes near a tundra zone is as cold at the border and gets
+  warmer over 160 cells.
   When the heat pass runs, the 15 °C air will warm them, and snow and frozen ground (both melt
   at 1 °C) will slowly melt.
 
@@ -29,11 +31,13 @@ per chunk column and row band), or accept a second table by chunk column.
 tell them from the dark air. A little more color (for example a blue-gray for magnetite) would
 help. (content-data task)
 
-## 3. Water has no `freeze`
+## 3. Frozen lakes and the water `freeze` rule (done)
 
-Ice melts into water at 0 °C, but water never freezes. The generator puts liquid water under the
-ice of frozen lakes and gives it 2 °C, so this is fine for now. If water gets a `freeze` rule
-later, tundra lake water should stay above it, or the lakes become all ice.
+Water now freezes below -2 °C. The generator gives the water of a frozen lake -1 °C, and the ice,
+the lake bed and the shore 1 °C less for each cell away from the water (the ice is 11 to 13 rows
+thick, -12 °C at the top). The heat code moves no heat between neighbors that differ by less than
+2 °C, so the lake does not change when it wakes. Over a long time the warm air (item 1) still
+melts the top of the ice and the snow.
 
 ## 4. World generation settings in a data file
 
