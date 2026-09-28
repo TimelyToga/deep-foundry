@@ -145,3 +145,26 @@ fn a_press_with_a_building_starts_a_drag_line_and_the_release_ends_it() {
     assert!(n.build.drag.is_none());
     assert!(n.update(start.offset(-40, 0)).is_empty());
 }
+
+/// A key or button that goes down and up again before the next input is still in that input,
+/// and only in that one.
+#[test]
+fn a_press_and_release_in_one_frame_is_sent() {
+    let (_host, _sim, mut n, content) = setup();
+    let view = CellRect::new(0, 0, 2048, 1024);
+    let mouse = CellPos::new(10, 10);
+    let _ = n.input(&content, mouse, view);
+    // The key handler sets `held` and `pressed` on the key down; the key up clears `held`.
+    n.pressed.jump = true;
+    let cmds = n.press(&content, true, CellPos::new(1500, 900), Mods::default());
+    assert!(cmds.is_empty());
+    n.release(true);
+    let sent = |c: Option<GameCommand>| match c {
+        Some(GameCommand::Factory(FactoryCommand::Input(i))) => Some(i),
+        _ => None,
+    };
+    let first = sent(n.input(&content, mouse, view)).expect("an input is sent");
+    assert!(first.movement.jump && first.dig, "{first:?}");
+    let second = sent(n.input(&content, mouse, view)).expect("the release is sent");
+    assert!(!second.movement.jump && !second.dig, "{second:?}");
+}

@@ -224,6 +224,14 @@ impl FactoryHost {
     /// mouse since the last input join the removal queue.
     pub(super) fn set_input(&mut self, input: super::PlayerInput) {
         let old = std::mem::replace(&mut self.input, input);
+        // Keep the presses until a tick uses them (see `Taps`).
+        let t = &mut self.taps;
+        t.jump |= input.movement.jump && !old.movement.jump;
+        t.dig |= input.dig && !old.dig;
+        t.scan |= input.scan && !old.scan;
+        if input.spray.is_some() && old.spray.is_none() {
+            t.spray = input.spray;
+        }
         let Some(action) = input.remove else {
             self.removal = Removal::default();
             return;

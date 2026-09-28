@@ -107,6 +107,43 @@ fn walking_input_moves_the_robot() {
     assert!(g.host.robot.left > x + 10, "{} -> {}", x, g.host.robot.left);
 }
 
+/// A jump press and its release arrive before one tick: the robot still jumps.
+#[test]
+fn a_jump_press_and_release_before_one_tick_still_jump() {
+    let mut g = Game::new();
+    let top = g.host.robot.top;
+    let jump = PlayerInput { movement: MoveInput { x: 0, jump: true }, ..Default::default() };
+    g.apply(FactoryCommand::Input(jump));
+    g.apply(FactoryCommand::Input(PlayerInput::default()));
+    let mut highest = top;
+    for _ in 0..20 {
+        g.ticks(1);
+        highest = highest.min(g.host.robot.top);
+    }
+    assert!(highest < top, "the robot jumps: top {top}, highest {highest}");
+}
+
+/// A dig click that goes down and up before one tick digs for one tick.
+#[test]
+fn a_short_dig_click_digs_once() {
+    let mut g = Game::new();
+    let clay = g.content.expect_material("clay");
+    let r = g.host.robot.rect();
+    let aim = CellPos::new(r.x1 + 6, r.y1 + 3);
+    for y in aim.y - 4..aim.y + 4 {
+        for x in aim.x - 4..aim.x + 4 {
+            g.sim.set_cell(CellPos::new(x, y), clay, None);
+        }
+    }
+    g.apply(FactoryCommand::Input(PlayerInput { aim, dig: true, ..Default::default() }));
+    g.apply(FactoryCommand::Input(PlayerInput { aim, ..Default::default() }));
+    g.ticks(1);
+    let once = g.count(ItemRef::Material(clay));
+    assert!(once > 0, "the click digs");
+    g.ticks(5);
+    assert_eq!(g.count(ItemRef::Material(clay)), once, "only for one tick");
+}
+
 #[test]
 fn dig_fills_the_tank_and_scan_discovers() {
     let mut g = Game::new();

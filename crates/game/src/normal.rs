@@ -29,6 +29,20 @@ pub struct NormalHeld {
     pub scan: bool,
 }
 
+impl NormalHeld {
+    /// Each key or button that is down in `self` or in `o`.
+    fn or(self, o: Self) -> Self {
+        Self {
+            left: self.left || o.left,
+            right: self.right || o.right,
+            jump: self.jump || o.jump,
+            dig: self.dig || o.dig,
+            spray: self.spray || o.spray,
+            scan: self.scan || o.scan,
+        }
+    }
+}
+
 /// The state of the normal mode on the main thread.
 #[derive(Default)]
 pub struct NormalMode {
@@ -44,6 +58,9 @@ pub struct NormalMode {
     /// The material the spray tool puts out. `None`: the first tank that has material.
     pub spray: Option<MaterialId>,
     pub held: NormalHeld,
+    /// The keys and buttons that went down since the last input was made. A key that goes down
+    /// and up again in one frame is so still in one input (see `input`).
+    pub pressed: NormalHeld,
     /// Aim here instead of at the mouse (for the smoke test).
     pub aim_override: Option<CellPos>,
     last_input: Option<PlayerInput>,
@@ -150,7 +167,7 @@ impl NormalMode {
 
     /// The player input for this frame. Returns a command only when it changed.
     pub fn input(&mut self, content: &Content, mouse: CellPos, view: CellRect) -> Option<GameCommand> {
-        let h = self.held;
+        let h = self.held.or(std::mem::take(&mut self.pressed));
         let mouse = self.aim_override.unwrap_or(mouse);
         let input = PlayerInput {
             movement: MoveInput { x: h.right as i8 - h.left as i8, jump: h.jump },
@@ -211,6 +228,7 @@ impl NormalMode {
                 return vec![FactoryCommand::OpenAt(mouse).into()];
             }
             self.held.dig = true;
+            self.pressed.dig = true;
         } else {
             if mods.shift && on_building {
                 return vec![FactoryCommand::CopySettings(mouse).into()];
@@ -220,6 +238,7 @@ impl NormalMode {
                 return vec![];
             }
             self.held.spray = true;
+            self.pressed.spray = true;
         }
         vec![]
     }
