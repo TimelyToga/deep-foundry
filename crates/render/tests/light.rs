@@ -160,6 +160,49 @@ fn particles_are_drawn_and_hot_ones_glow() {
     assert!(brightness(&img, &camera, 120.0, 149.0) > brightness(&img, &camera, 45.0, 149.0) + 20, "and lights the floor below it");
 }
 
+#[test]
+fn heat_shimmer_moves_only_the_cells_above_hot_places() {
+    let Some(mut s) = scene(64) else { return };
+    let (stone, lava) = (s.id("stone"), s.id("lava"));
+    // A cave with lava on the left half of its floor, and stone pillars with fine detail above it
+    // (the shimmer moves them sideways).
+    let snap = world(4, 3, |x, y| {
+        if !(20..236).contains(&x) || !(20..170).contains(&y) {
+            return (stone, 20);
+        }
+        if y >= 150 {
+            return if x < 120 { (lava, 1200) } else { (stone, 20) };
+        }
+        if y < 120 && x % 5 == 0 { (stone, 20) } else { (0, 20) }
+    });
+    s.renderer.set_surface_level(-1000);
+    s.renderer.set_time(0.7);
+    s.renderer.settings_mut().bloom = false;
+    let camera = Camera::new(DVec2::new(128.0, 96.0), 4.0, UVec2::new(1024, 768));
+    s.renderer.settings_mut().heat_shimmer = false;
+    let still = s.shot(&snap, &camera);
+    s.renderer.settings_mut().heat_shimmer = true;
+    let moved = capture(&s.device, &s.queue, &mut s.renderer, &camera);
+    // Count the pixels that changed in a band just above the lava, and in the same band on the
+    // cold side.
+    let changed = |x0: f64, x1: f64| {
+        let a = camera.cell_to_screen(DVec2::new(x0, 118.0));
+        let b = camera.cell_to_screen(DVec2::new(x1, 148.0));
+        let mut n = 0;
+        for py in a.y as u32..b.y as u32 {
+            for px in a.x as u32..b.x as u32 {
+                let i = ((py * 1024 + px) * 4) as usize;
+                n += (still[i..i + 3] != moved[i..i + 3]) as u32;
+            }
+        }
+        n
+    };
+    let hot = changed(30.0, 110.0);
+    let cold = changed(140.0, 220.0);
+    assert!(hot > 200, "the shimmer moves pixels above the lava: {hot}");
+    assert_eq!(cold, 0, "nothing moves above cold stone");
+}
+
 /// A test world: air above row `surface`, stone below with round caves; lava or water in some caves.
 fn cave_world(s: &Scene, chunks: (i32, i32), surface: i32) -> Snapshot {
     let (stone, lava, water) = (s.id("stone"), s.id("lava"), s.id("water"));
@@ -244,4 +287,121 @@ fn light_caves_image() {
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     image::RgbaImage::from_raw(1600, 900, img).unwrap().save(&out).unwrap();
     println!("saved {}", out.display());
+}
+
+/// One cell of a look scene: material, temperature, life, flags.
+type Cell = (u16, i16, u8, u8);
+
+/// A snapshot of `w` x `h` chunks from (0, 0), made by `f(world x, world y)`.
+fn world_full(w: i32, h: i32, f: impl Fn(i32, i32) -> Cell) -> Snapshot {
+    let mut snap = Snapshot { world_cells: (0, h * CHUNK_SIZE), ..Default::default() };
+    for cy in 0..h {
+        for cx in 0..w {
+            let pos = ChunkPos::new(cx, cy);
+            let mut c = ChunkImage::new_air(pos);
+            for y in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    let (wx, wy) = (cx * CHUNK_SIZE + x, cy * CHUNK_SIZE + y);
+                    let (m, t, life, flags) = f(wx, wy);
+                    let shade = (hash(wx, wy) % 8) as u8;
+                    c.texels[local_index(x, y)] = pack_texel(m, t, shade, life, flags);
+                }
+            }
+            snap.chunks.push(c);
+        }
+    }
+    snap
+}
+
+fn hash(x: i32, y: i32) -> u32 {
+    let mut h = (x as u32).wrapping_mul(0x9e37_79b1) ^ (y as u32).wrapping_mul(0x85eb_ca77);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2c1b_3c6d);
+    h ^ (h >> 12)
+}
+
+/// Writes out/look_fire.png: a dark cave with burning wood, fire, smoke, lava with steam above
+/// it, molten steel, hot stone from 600 to 1500 °C, and hot sparks. To check the look by eye.
+/// Run with `cargo test -p foundry_render --test light -- --ignored look_image`.
+#[test]
+#[ignore]
+fn look_image() {
+    let Some(mut s) = scene(256) else { return };
+    let [stone, wood, fire, smoke, lava, steam, steel, water] =
+        ["stone", "wood", "fire", "smoke", "lava", "steam", "molten_steel", "water"].map(|n| s.id(n));
+    const BURNING: u8 = 1 << 2;
+    let snap = world_full(6, 3, |x, y| {
+        let h = hash(x, y);
+        let cave = (16..368).contains(&x) && (24..172).contains(&y);
+        if !cave {
+            return (stone, 20, 0, 0);
+        }
+        // Burning wood pile, fire above it, smoke above the fire.
+        if (30..100).contains(&x) {
+            let top = 150 - ((x - 65).abs() / 3);
+            if y >= top {
+                return (wood, 400, 0, BURNING);
+            }
+            if y >= top - 14 && h % 3 != 0 {
+                return (fire, 800, (10 + h % 30) as u8, 0);
+            }
+            if (40..92).contains(&y) && h % 5 < 3 {
+                return (smoke, 150, (40 + h % 200) as u8, 0);
+            }
+        }
+        // Lava with steam above, then water on the right side of the pool.
+        if (120..220).contains(&x) {
+            if y >= 150 {
+                return if x < 190 { (lava, 1200, 0, 0) } else { (water, 60, 0, 0) };
+            }
+            if (95..140).contains(&y) && h % 4 < 2 && x > 170 {
+                return (steam, 110, 0, 0);
+            }
+        }
+        // Molten steel.
+        if (240..290).contains(&x) && y >= 155 {
+            return (steel, 1550, 0, 0);
+        }
+        // Stone blocks from 600 °C (left) to 1500 °C (right).
+        if (300..360).contains(&x) && y >= 140 {
+            let t = 600 + (x - 300) * 15;
+            return (stone, t as i16, 0, 0);
+        }
+        (0, 20, 0, 0)
+    });
+    let mut snap = snap;
+    // Hot sparks from the fire and the lava, and water drops.
+    for i in 0..40 {
+        let f = i as f32;
+        snap.particles.push(ParticleView {
+            x: 50.0 + (f * 7.3) % 40.0,
+            y: 110.0 - (f * 3.7) % 30.0,
+            vx: ((f * 1.7) % 3.0) - 1.5,
+            vy: -1.0 - (f % 4.0) * 0.5,
+            material: stone,
+            temperature: 1300,
+            shade: (i % 8) as u8,
+        });
+        snap.particles.push(ParticleView {
+            x: 195.0 + (f * 5.1) % 20.0,
+            y: 140.0 - (f * 2.3) % 25.0,
+            vx: ((f * 1.3) % 2.0) - 1.0,
+            vy: 1.2,
+            material: water,
+            temperature: 20,
+            shade: (i % 8) as u8,
+        });
+    }
+    s.renderer.set_surface_level(-1000);
+    s.renderer.set_time(1.3);
+    let camera = Camera::new(DVec2::new(192.0, 100.0), 4.0, UVec2::new(1536, 640));
+    let img = s.shot(&snap, &camera);
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../out");
+    std::fs::create_dir_all(&dir).unwrap();
+    image::RgbaImage::from_raw(1536, 640, img).unwrap().save(dir.join("look_fire.png")).unwrap();
+    // The same with only the light map.
+    s.renderer.settings_mut().light_only = true;
+    let img = capture(&s.device, &s.queue, &mut s.renderer, &camera);
+    image::RgbaImage::from_raw(1536, 640, img).unwrap().save(dir.join("look_fire_light.png")).unwrap();
+    println!("saved {}", dir.join("look_fire.png").display());
 }

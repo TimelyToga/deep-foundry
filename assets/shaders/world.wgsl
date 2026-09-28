@@ -35,8 +35,8 @@ const CELL_FLAG_BURNING: u32 = 4u;
 // deep shadow and their whole face gets the light.
 const CELL_FLAG_BUILDING: u32 = 2u;
 // Emitted light of a material with glow 1, and of a white-hot cell.
-const GLOW_LIGHT: f32 = 1.4;
-const HOT_LIGHT: f32 = 1.8;
+const GLOW_LIGHT: f32 = 1.0;
+const HOT_LIGHT: f32 = 1.2;
 
 struct WorldOut {
     @location(0) color: vec4<f32>,
@@ -133,7 +133,8 @@ fn shade_cell(material: u32, temperature: f32, shade: u32, life: f32, cell_flags
         let old_color = color.rgb * vec3<f32>(0.95, 0.5, 0.3);
         let young_color = min(color.rgb * vec3<f32>(1.1, 1.15, 1.2) + vec3<f32>(0.05, 0.08, 0.02), vec3<f32>(1.0));
         color = vec4<f32>(mix(old_color, young_color, young) * (0.75 + 0.4 * f), color.a);
-        emission = srgb_to_linear(color.rgb) * info.glow * GLOW_LIGHT * (0.6 + 0.6 * f);
+        // The light of fire is a little redder than its color.
+        emission = srgb_to_linear(color.rgb) * vec3<f32>(1.0, 0.7, 0.45) * info.glow * GLOW_LIGHT * (0.6 + 0.6 * f);
     } else if info.glow > 0.0 {
         emission = srgb_to_linear(color.rgb) * info.glow * GLOW_LIGHT;
     }
@@ -152,20 +153,33 @@ fn shade_cell(material: u32, temperature: f32, shade: u32, life: f32, cell_flags
     }
 
     if (cell_flags & CELL_FLAG_BURNING) != 0u {
-        // A burning cell: an orange flicker on its color, and a little light.
+        // A burning cell: the material gets dark (it chars), and some cells glow orange. The glow
+        // of each cell flickers.
         let f = flicker(cell, shade, life);
-        color = vec4<f32>(mix(color.rgb, vec3<f32>(1.0, 0.52, 0.12), 0.3 + 0.35 * f), color.a);
-        emission += vec3<f32>(1.0, 0.36, 0.06) * (0.35 + 0.5 * f);
+        let ember = f * f;
+        let charred = color.rgb * 0.55;
+        color = vec4<f32>(mix(charred, vec3<f32>(1.0, 0.5, 0.1), 0.15 + 0.7 * ember), color.a);
+        emission += vec3<f32>(1.0, 0.34, 0.05) * (0.08 + 0.7 * ember);
     }
 
     if info.phase == PHASE_LIQUID {
-        // Slow waves of brightness move through liquids, so they look like they flow.
         let t = frame.time;
-        let wave = sin(cell.x * 0.13 + t * 1.3 + sin(cell.y * 0.21 - t * 0.6) * 1.6);
-        let slow = sin(cell.x * 0.047 - cell.y * 0.09 - t * 0.9);
-        let k = 1.0 + 0.045 * wave + 0.03 * slow;
-        color = vec4<f32>(color.rgb * k, color.a);
-        emission *= k;
+        if info.glow > 0.3 {
+            // Glowing liquids (lava, molten metal): dark crust lines and bright veins flow slowly.
+            let a = sin(cell.x * 0.19 + t * 0.6 + sin(cell.y * 0.31 + t * 0.35) * 2.2);
+            let b = sin(cell.x * 0.071 - t * 0.3 + cell.y * 0.17 + sin(cell.x * 0.13) * 1.5);
+            let hot = clamp(0.55 + 0.3 * a + 0.25 * b + (hash21(cell) - 0.5) * 0.15, 0.0, 1.0);
+            let crust = color.rgb * vec3<f32>(0.62, 0.4, 0.36);
+            let vein = min(color.rgb * vec3<f32>(1.0, 1.3, 1.5) + vec3<f32>(0.0, 0.06, 0.03), vec3<f32>(1.0));
+            color = vec4<f32>(mix(crust, vein, hot), color.a);
+            emission *= 0.7 + 0.5 * hot;
+        } else {
+            // Slow waves of brightness move through liquids, so they look like they flow.
+            let wave = sin(cell.x * 0.13 + t * 1.3 + sin(cell.y * 0.21 - t * 0.6) * 1.6);
+            let slow = sin(cell.x * 0.047 - cell.y * 0.09 - t * 0.9);
+            let k = 1.0 + 0.045 * wave + 0.03 * slow;
+            color = vec4<f32>(color.rgb * k, color.a);
+        }
     }
 
     let rgb = min(color.rgb, vec3<f32>(1.0));
