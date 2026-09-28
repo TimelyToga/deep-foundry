@@ -6,7 +6,7 @@
 use crate::chunk::{MOTION_MOMENTUM, MOTION_MOMENTUM_SHIFT, MOTION_RIGHT, MOTION_SPEED};
 use crate::hood::Hood;
 use foundry_content::{MaterialTable, Phase};
-use foundry_core::{CellPos, MaterialId};
+use foundry_core::{CHUNK_MASK, CellPos, MaterialId};
 
 /// Density of air (kg/m³). Lighter gases rise, heavier gases sink.
 pub const AIR_DENSITY: f32 = 1.2;
@@ -57,13 +57,20 @@ pub fn fall_only(h: &mut Hood, x: i32, y: i32, phase: Phase) -> bool {
 /// place to fall there; the level pass wakes the far ends of that row (see `wake_row_ends`).
 /// Only if a cell next to it on its row is a floor: else no top row can walk to it (for example
 /// a cell in the middle of a falling stream).
+///
+/// In the fall pass a job must not read cells of the chunk columns to the left and right (other
+/// jobs change them at the same time). So at the left and right edge of the chunk the side check
+/// is not done and the place is always given to the level pass. `wake_row_ends` then looks along
+/// the row itself; an extra place costs only that look.
 #[inline]
 fn opened(h: &mut Hood, x: i32, y: i32, was_top: bool) {
-    if was_top
-        && h.mat(x, y).is_air()
-        && h.mat(x, y - 1).is_air()
-        && (!passable(h, h.mat(x - 1, y)) || !passable(h, h.mat(x + 1, y)))
-    {
+    let side_floor = |h: &Hood| {
+        if h.fall_pass && (x == 0 || x == CHUNK_MASK) {
+            return true;
+        }
+        !passable(h, h.mat(x - 1, y)) || !passable(h, h.mat(x + 1, y))
+    };
+    if was_top && h.mat(x, y).is_air() && h.mat(x, y - 1).is_air() && side_floor(h) {
         let p = h.world_pos(x, y);
         h.opened.push(p);
     }
