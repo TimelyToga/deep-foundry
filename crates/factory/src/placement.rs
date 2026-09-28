@@ -218,6 +218,26 @@ impl Buildings {
         Ok(id)
     }
 
+    /// Turn or mirror a placed building where it stands. The footprint must not change (so a
+    /// 2 × 3 building can only turn by half turns), and belts face only left or right. The
+    /// building keeps its contents and its recipe; its ports move.
+    pub fn set_transform(&mut self, content: &Content, id: BuildingId, t: Transform) -> Result<(), PlaceError> {
+        let b = self.get(id).ok_or(PlaceError::UnknownKind)?;
+        let def = content.factory.building_def(b.kind);
+        if matches!(b.logic, Logic::Belt(_)) && t.rotation & 1 == 1 {
+            return Err(PlaceError::CannotTurn);
+        }
+        if t.size(def.size) != b.size {
+            return Err(PlaceError::CannotTurn);
+        }
+        let at = b.at;
+        let b = self.get_mut(id).ok_or(PlaceError::UnknownKind)?;
+        b.transform = t;
+        b.ports = crate::buildings::placed_ports(def, at, t);
+        self.wake(id);
+        Ok(())
+    }
+
     /// Take a building out of the registry. Its cells stay as they are.
     fn unregister(&mut self, id: BuildingId) -> Option<Building> {
         self.get(id)?;

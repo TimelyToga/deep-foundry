@@ -4,6 +4,7 @@
 //! The timing uses deadlines: tick N starts at `start + N × tick length`. If the thread falls behind,
 //! it runs at most `MAX_CATCH_UP` ticks at once and then forgets the rest of the lost time.
 
+use crate::factory_host::{self, FactoryFrame, FactoryHost, FactoryMailbox, GameCommand};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use foundry_core::{Command, Snapshot, SnapshotMailbox, TICK_SECONDS};
 use foundry_sim::Simulation;
@@ -16,8 +17,10 @@ use std::time::{Duration, Instant};
 const MAX_CATCH_UP: u32 = 3;
 
 pub struct SimThread {
-    commands: Sender<Command>,
+    commands: Sender<GameCommand>,
     mailbox: Arc<SnapshotMailbox>,
+    /// The factory views (normal mode only).
+    factory: Arc<FactoryMailbox>,
     stop: Arc<AtomicBool>,
     /// Measured ticks per second, as the bits of an f32.
     tps: Arc<AtomicU32>,
@@ -26,25 +29,38 @@ pub struct SimThread {
 
 impl SimThread {
     /// Start the thread. It owns the simulation from now on.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn start(sim: Simulation) -> Self {
+        Self::start_with(sim, None)
+    }
+
+    /// Start the thread with the factory and the robot (the normal game mode). The factory ticks
+    /// after each cell update, and its views go to `take_factory`.
+    pub fn start_with(sim: Simulation, host: Option<FactoryHost>) -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mailbox = Arc::new(SnapshotMailbox::new());
+        let factory = Arc::new(FactoryMailbox::default());
         let stop = Arc::new(AtomicBool::new(false));
         let tps = Arc::new(AtomicU32::new(0));
         let handle = {
-            let (mailbox, stop, tps) = (mailbox.clone(), stop.clone(), tps.clone());
+            let (mailbox, factory, stop, tps) = (mailbox.clone(), factory.clone(), stop.clone(), tps.clone());
             std::thread::Builder::new()
                 .name("simulation".into())
-                .spawn(move || run(sim, rx, &mailbox, &stop, &tps))
+                .spawn(move || run(sim, host, rx, &mailbox, &factory, &stop, &tps))
                 .expect("cannot start the simulation thread")
         };
-        Self { commands: tx, mailbox, stop, tps, handle: Some(handle) }
+        Self { commands: tx, mailbox, factory, stop, tps, handle: Some(handle) }
     }
 
     /// Queue a command. The simulation applies it at the start of the next tick.
-    pub fn send(&self, cmd: Command) {
+    pub fn send(&self, cmd: impl Into<GameCommand>) {
         // An error means the thread has stopped. Nothing to do then.
-        let _ = self.commands.send(cmd);
+        let _ = self.commands.send(cmd.into());
+    }
+
+    /// The newest factory views, if there are new ones (normal mode only).
+    pub fn take_factory(&self) -> Option<FactoryFrame> {
+        self.factory.take()
     }
 
     /// The newest snapshot, if there is a new one.
@@ -76,8 +92,10 @@ impl Drop for SimThread {
 
 fn run(
     mut sim: Simulation,
-    commands: Receiver<Command>,
+    mut host: Option<FactoryHost>,
+    commands: Receiver<GameCommand>,
     mailbox: &SnapshotMailbox,
+    factory: &FactoryMailbox,
     stop: &AtomicBool,
     tps: &AtomicU32,
 ) {
@@ -97,17 +115,31 @@ fn run(
         while ran < MAX_CATCH_UP && Instant::now() >= next {
             loop {
                 match commands.try_recv() {
-                    Ok(Command::SaveWorld { path }) => notices.push(save_world(&sim, &path)),
-                    Ok(Command::LoadWorld { path }) => notices.push(load_world(&mut sim, &path)),
-                    Ok(cmd) => sim.apply(cmd),
+                    Ok(GameCommand::Sim(Command::SaveWorld { path })) => {
+                        notices.push(save_world(&sim, &path));
+                        factory_host::save_side(host.as_ref(), &path, &mut notices);
+                    }
+                    Ok(GameCommand::Sim(Command::LoadWorld { path })) => notices.push(load_world(&mut sim, &path)),
+                    Ok(GameCommand::Sim(cmd)) => sim.apply(cmd),
+                    Ok(GameCommand::Factory(cmd)) => {
+                        if let Some(h) = host.as_mut() {
+                            h.apply(cmd, &mut sim);
+                        }
+                    }
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => return,
                 }
             }
             if sim.advance() {
                 count += 1;
+                if let Some(h) = host.as_mut() {
+                    h.tick(&mut sim);
+                }
             }
             let mut snapshot = sim.take_snapshot();
+            if let Some(h) = host.as_mut() {
+                factory.publish(h.frame(&sim, snapshot.tick));
+            }
             snapshot.notices.append(&mut notices);
             mailbox.publish(snapshot);
             next += tick;

@@ -294,3 +294,45 @@ pub fn recipe(content: &Content, id: RecipeId) -> Option<&Recipe> {
 pub fn recipe_item(recipe: &Recipe) -> Option<ItemRef> {
     recipe.outputs.first().map(|s| s.item)
 }
+
+/// A technology by id, if it exists.
+pub fn tech(content: &Content, id: TechId) -> Option<&foundry_content::Tech> {
+    content.factory.techs.get(id.0 as usize)
+}
+
+/// The item whose icon shows a technology: the first thing it unlocks, or its first kit.
+pub fn tech_icon(content: &Content, tech: &foundry_content::Tech) -> Option<ItemRef> {
+    tech.unlocks
+        .iter()
+        .filter_map(|r| recipe(content, *r))
+        .find_map(recipe_item)
+        .or_else(|| tech.kits.first().map(|k| k.item))
+}
+
+/// The name of a tier (game design section 14), for example "Steam" for tier 1.
+pub fn tier_name(tier: u8) -> &'static str {
+    match tier {
+        0 => "Hand and Fire",
+        1 => "Steam",
+        2 => "LV",
+        3 => "MV",
+        4 => "HV",
+        5 => "EV",
+        _ => "Late game",
+    }
+}
+
+/// A title for a tier, for example "Tier 1: Steam".
+pub fn tier_title(tier: u8) -> String {
+    format!("Tier {tier}: {}", tier_name(tier))
+}
+
+/// A discovery that a technology needs, for the player: "Malachite" for a material id, or
+/// "Water + Lava" for "reaction:water+lava".
+pub fn discovery_name(content: &Content, id: &str) -> String {
+    let material = |m: &str| content.material(m).map(|x| name(content, ItemRef::Material(x)).to_string()).unwrap_or_else(|| m.to_string());
+    match id.strip_prefix("reaction:") {
+        Some(pair) => pair.split('+').map(material).collect::<Vec<_>>().join(" + "),
+        None => material(id),
+    }
+}
