@@ -126,7 +126,7 @@
         grain: Medium,
         heat_capacity: 0.6,
         conductivity: 0.1,
-        burn: Some((ignite_at: 450, fire_temp: 900, chance: 0.01, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.25)),
+        burn: Some((ignite_at: 450, fire_temp: 900, chance: 0.01, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.25, gases: [("carbon_dioxide", 0.05), ("sulfur_dioxide", 0.01)])),
         tags: ["ore", "fuel", "carbon", "flammable"],
     ),
     Material(
@@ -139,7 +139,7 @@
         grain: Small,
         heat_capacity: 0.6,
         conductivity: 0.1,
-        burn: Some((ignite_at: 450, fire_temp: 900, chance: 0.02, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.25)),
+        burn: Some((ignite_at: 450, fire_temp: 900, chance: 0.02, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.25, gases: [("carbon_dioxide", 0.05), ("sulfur_dioxide", 0.01)])),
         tags: ["ore", "fuel", "carbon", "flammable"],
     ),
     Material(
@@ -152,7 +152,7 @@
         grain: Small,
         heat_capacity: 0.6,
         conductivity: 0.1,
-        burn: Some((ignite_at: 450, fire_temp: 950, chance: 0.02, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.2)),
+        burn: Some((ignite_at: 450, fire_temp: 950, chance: 0.02, into: Some("ash"), smoke: Some("smoke"), smoke_chance: 0.2, gases: [("carbon_dioxide", 0.05), ("sulfur_dioxide", 0.01)])),
         tags: ["ore", "fuel", "carbon", "flammable"],
     ),
 

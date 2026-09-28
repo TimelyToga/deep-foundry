@@ -337,8 +337,9 @@ impl<'a> Hood<'a> {
         self.read_u8(x, y, |p| unsafe { addr_of!((*p).flags).cast::<u8>() })
     }
 
+    /// Set all flag bits of a cell. Keep `FLAG_PARITY` as it is (use `set_updated` for it).
     #[inline(always)]
-    fn set_flags(&mut self, x: i32, y: i32, v: u8) {
+    pub fn set_flags(&mut self, x: i32, y: i32, v: u8) {
         self.write_u8(x, y, v, |p| unsafe { addr_of_mut!((*p).flags).cast::<u8>() })
     }
 
