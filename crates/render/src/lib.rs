@@ -15,6 +15,7 @@
 //!
 //! The passes of one frame, in order:
 //! 1. World pass (`passes::world`): each visible chunk at 1 texel per cell into an offscreen texture.
+//!    Then the sprites (`sprite.rs`, the robot) go into the same texture, on the cell grid.
 //! 2. Background pass (`passes::background`): a dark gradient over the whole target.
 //! 3. Scale pass (`passes::scale`): the offscreen texture over the background, with sharp bilinear filtering.
 //!
@@ -28,10 +29,12 @@ pub mod palette;
 mod passes;
 mod renderer;
 mod shaders;
+mod sprite;
 
 pub use camera::Camera;
 pub use renderer::{RenderStats, Renderer, RendererOptions};
 pub use shaders::default_shader_dir;
+pub use sprite::{BODY_THROUGH, Sprite, SpriteLayer};
 
 /// Re-exported so that users of this crate use the same wgpu version.
 pub use wgpu;
