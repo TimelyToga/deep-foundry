@@ -30,6 +30,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+mod steam_line;
+
 pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     let start = Instant::now();
     let state = if args.no_ui { UiState::Playing } else { args.ui_state.unwrap_or(UiState::Playing) };
@@ -201,7 +203,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             | UiState::Alt
             | UiState::Remove
             | UiState::Tanks
-            | UiState::Campfire => {
+            | UiState::Campfire
+            | UiState::SteamLine => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
@@ -545,6 +548,9 @@ fn setup_normal_screen(
                 h.apply(FactoryCommand::OpenAt(cell), sim);
             }
             give(h, mat("wood"), 40);
+        }
+        UiState::SteamLine => {
+            mouse = Some(steam_line::setup(h, sim, &content));
         }
         UiState::GuideWorkbench | UiState::GuideDone => {
             // The goals up to the workbench and the two ores are done.
