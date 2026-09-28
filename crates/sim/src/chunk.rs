@@ -78,6 +78,10 @@ pub struct Chunk {
     pub pristine: bool,
     /// The chunk is in the world's awake list or paused set. Only `World` changes this.
     pub(crate) queued: bool,
+    /// Rows (bit y) that may hold a cell with a fall speed. The fall pass of the movement tick
+    /// looks only at these rows (see `schedule.rs`). A bit that is set with no falling cell in the
+    /// row only costs a look; a new chunk has all bits set.
+    pub falling_rows: u64,
 }
 
 /// The version of a chunk that the chunk source made and that did not change since.
@@ -98,6 +102,7 @@ impl Chunk {
             dirty: LocalRect::EMPTY,
             pristine: true,
             queued: false,
+            falling_rows: u64::MAX,
         })
     }
 

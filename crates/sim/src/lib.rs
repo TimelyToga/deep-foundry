@@ -167,6 +167,72 @@ impl Default for SimSettings {
     }
 }
 
+/// A number setting that the game shows as a slider (see `SimSettings::sliders`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingSlider {
+    /// The key for `SimSettings::set` and `Command::SetSimSetting`.
+    pub key: &'static str,
+    /// The name shown to the player.
+    pub label: &'static str,
+    /// One short sentence about what it does.
+    pub help: &'static str,
+    pub value: f32,
+    pub min: f32,
+    pub max: f32,
+    /// Round the value to steps of this size.
+    pub step: f32,
+}
+
+impl SimSettings {
+    /// The settings that a player can change with a slider: the liquid and droplet settings.
+    /// (The per-material liquid values are in the data files; see `assets/data/README.md`.)
+    pub fn sliders(&self) -> Vec<SettingSlider> {
+        vec![
+            SettingSlider {
+                key: "splash_min_speed",
+                label: "Splash speed",
+                help: "Liquid that lands faster than this splashes droplets. Lower: more splashes.",
+                value: self.splash_min_speed as f32,
+                min: 0.0,
+                max: 28.0,
+                step: 1.0,
+            },
+            SettingSlider {
+                key: "liquid_look_ahead",
+                label: "Liquid reach",
+                help: "How far liquids look and push to the side. Lower: slower leveling, steeper heaps.",
+                value: self.liquid_look_ahead as f32,
+                min: 1.0,
+                max: 31.0,
+                step: 1.0,
+            },
+            SettingSlider {
+                key: "particle_gravity",
+                label: "Droplet gravity",
+                help: "Gravity for droplets in the air. Higher: lower, shorter splashes.",
+                value: self.particle_gravity,
+                min: 0.05,
+                max: 0.5,
+                step: 0.01,
+            },
+        ]
+    }
+
+    /// Change a setting by its slider key. The value is clamped to the slider range.
+    /// Returns false for an unknown key.
+    pub fn set(&mut self, key: &str, value: f32) -> bool {
+        let Some(s) = self.sliders().into_iter().find(|s| s.key == key) else { return false };
+        let v = value.clamp(s.min, s.max);
+        match key {
+            "splash_min_speed" => self.splash_min_speed = v.round() as u8,
+            "liquid_look_ahead" => self.liquid_look_ahead = v.round() as i32,
+            "particle_gravity" => self.particle_gravity = v,
+            _ => return false,
+        }
+        true
+    }
+}
+
 /// Identifies an anchor. See `Simulation::add_anchor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AnchorId(pub u64);
@@ -315,6 +381,9 @@ impl Simulation {
             Command::SetPaused(p) => self.paused = p,
             Command::Step => self.step_requested = true,
             Command::SetDebug(on) => self.debug = on,
+            Command::SetSimSetting { key, value } => {
+                self.settings.set(&key, value);
+            }
             // Handled by the thread that owns the simulation.
             Command::SaveWorld { .. } | Command::LoadWorld { .. } => {}
         }

@@ -52,6 +52,30 @@ fn main() {
     }
     println!("awake chunks at end: {}", s.stats().awake_chunks);
     report("sand rain (600 ticks)", &mut times);
+
+    // 3. Flood: a block of water 1000 wide and 600 tall (600,000 cells) at the left of a
+    //    48 × 16 chunk world, as if a dam was just removed.
+    let mut s = Simulation::new(content.clone(), SimConfig::finite(48, 16, 5));
+    if threads > 0 {
+        s.set_threads(threads);
+    }
+    let (_, h) = s.size_cells();
+    for y in h - 602..h - 2 {
+        for x in 2..1002 {
+            s.set_cell(CellPos::new(x, y), water, None);
+        }
+    }
+    let mut times = vec![];
+    let (mut awake, mut particles) = (0u64, 0usize);
+    for _ in 0..600 {
+        let start = Instant::now();
+        s.tick();
+        times.push(start.elapsed().as_secs_f64() * 1000.0);
+        awake += s.stats().awake_chunks as u64;
+        particles = particles.max(s.particles().len());
+    }
+    println!("flood: mean awake chunks {}, most particles {particles}", awake / 600);
+    report("flood (600 ticks)", &mut times);
 }
 
 fn report(name: &str, times: &mut [f64]) {

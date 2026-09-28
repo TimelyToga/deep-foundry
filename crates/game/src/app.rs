@@ -506,7 +506,17 @@ impl Game {
         let center = self.start_center.unwrap_or(DVec2::from(demo.start_center));
         self.reset_view(center, DVec2::new(w as f64, h as f64));
         self.world = Some(World { sim: SimThread::start(demo.sim), seed, chunks, user_paused: false, overlay: false });
+        self.send_sim_settings();
         self.ui.model.state = GameState::Playing;
+    }
+
+    /// Give the simulation the player's slider values (the simulation starts with the defaults).
+    fn send_sim_settings(&self) {
+        if let Some(w) = &self.world {
+            for cmd in self.ui.sim_setting_commands() {
+                w.sim.send(cmd);
+            }
+        }
     }
 
     /// Load a save when no world runs (from the main menu). The file is read here, then the
@@ -524,6 +534,7 @@ impl Game {
                 self.reset_view(center, DVec2::new(w as f64, h as f64));
                 let chunks = (w / foundry_core::CHUNK_SIZE, h / foundry_core::CHUNK_SIZE);
                 self.world = Some(World { sim: SimThread::start(sim), seed: meta.seed, chunks, user_paused: false, overlay: false });
+                self.send_sim_settings();
                 self.ui.model.state = GameState::Playing;
                 let mut text = format!("Game loaded: {}", save_name(path));
                 if !report.unknown_materials.is_empty() {
@@ -649,9 +660,14 @@ impl Game {
                 self.config.present_mode = present_mode(&self.present_modes, v);
                 self.surface.configure(&self.device, &self.config);
             }
-            // The simulation has no number settings yet. The liquids work adds them
-            // (`Simulation::settings_mut`); then this sends them to the simulation thread.
-            SettingChange::Simulation { key, value } => log::info!("simulation setting {key} = {value} (not used yet)"),
+            SettingChange::Simulation { key, value } => {
+                if let Some(slider) = s.simulation.iter_mut().find(|s| s.key == key) {
+                    slider.value = value;
+                }
+                if let Some(w) = &self.world {
+                    w.sim.send(Command::SetSimSetting { key, value });
+                }
+            }
         }
     }
 

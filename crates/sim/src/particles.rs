@@ -341,6 +341,9 @@ fn place(world: &mut World, mats: &MaterialTable, p: CellPos, cell: Landing, par
     c.shade[i] = cell.shade;
     c.life[i] = cell.life;
     c.motion[i] = if liquid { cell.motion } else { cell.motion & (MOTION_SPEED | MOTION_RIGHT) };
+    if cell.motion & MOTION_SPEED != 0 {
+        c.falling_rows |= 1 << (p.y & 63);
+    }
     c.flags[i] = (c.flags[i] & !FLAG_PARITY) | parity;
     c.version = stamp;
     world.mark_dirty_around(p);
