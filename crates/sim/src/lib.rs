@@ -595,7 +595,7 @@ impl Simulation {
 
     /// Add a material particle: a cell that flies from `pos` with `velocity` (cells per tick) and
     /// becomes a cell where it lands. `temperature: None` uses the material's default temperature.
-    pub fn spawn_particle(&mut self, pos: (f32, f32), velocity: (f32, f32), material: MaterialId, temperature: Option<i16>) {
+    pub fn spawn_particle(&mut self, pos: (f64, f64), velocity: (f32, f32), material: MaterialId, temperature: Option<i16>) {
         let mats = &self.content.materials;
         let life = match mats.life[material.index()] {
             Some((lo, hi)) => lo + self.paint_rng.below((hi - lo) as u32 + 1) as u8,
@@ -617,7 +617,7 @@ impl Simulation {
 
     /// Add a visual particle (only drawn, never a cell) that lives `life` ticks. `rise`: it rises
     /// slowly like smoke; else it falls like a spark. Returns false if there are too many.
-    pub fn spawn_visual(&mut self, pos: (f32, f32), velocity: (f32, f32), material: MaterialId, life: u8, rise: bool) -> bool {
+    pub fn spawn_visual(&mut self, pos: (f64, f64), velocity: (f32, f32), material: MaterialId, life: u8, rise: bool) -> bool {
         let spawn = particles::Spawn {
             x: pos.0,
             y: pos.1,
@@ -1149,7 +1149,7 @@ pub(crate) fn render(s: &Simulation, r: CellRect, scale: u32) -> image::RgbImage
     let mut views = vec![];
     s.particles().views(r, &mut views);
     for v in views {
-        let (px, py) = ((v.x - r.x0 as f32) as u32, (v.y - r.y0 as f32) as u32);
+        let (px, py) = ((v.x - r.x0 as f64) as u32, (v.y - r.y0 as f64) as u32);
         if px < w && py < h {
             let col = c.materials.colors[v.material as usize][0];
             for dy in 0..scale {

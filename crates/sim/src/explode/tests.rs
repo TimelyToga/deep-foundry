@@ -86,7 +86,7 @@ fn an_explosion_in_sand_throws_sand_that_lands_again() {
     assert!(s.particles().visual_count() > 0, "sparks, smoke and dust");
     assert!(s.events().iter().any(|e| matches!(e, SimEvent::Exploded { at, .. } if *at == center)));
     // Some sand flies above the old surface.
-    let mut highest = f32::MAX;
+    let mut highest = f64::MAX;
     for _ in 0..10 {
         s.tick();
         let mut views = vec![];

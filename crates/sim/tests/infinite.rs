@@ -367,6 +367,74 @@ fn coordinates_near_one_million_chunks_work() {
     }
 }
 
+/// A particle far from x = 0 flies the same path as one near x = 0: its position is stored as a
+/// cell plus a place inside the cell, so it does not lose the small steps.
+#[test]
+fn particles_fly_the_same_path_far_from_zero() {
+    let path = |cx: i32| {
+        let mut s = layer_world(31);
+        let sand = s.content().expect_material("sand");
+        let base = cx * CHUNK_SIZE;
+        s.apply(Command::SetView { area: CellRect::new(base - 640, 640, base + 640, 1280) });
+        s.spawn_particle((base as f64 + 201.5, 900.5), (1.5, -3.0), sand, None);
+        let mut xs = vec![];
+        for _ in 0..200 {
+            s.tick();
+            if s.particles().is_empty() {
+                break;
+            }
+            let p = s.particles().get(0);
+            xs.push((p.x - base as f64, p.y));
+        }
+        let landed = (base + 150..base + 400).find(|&x| s.cell(CellPos::new(x, 1023)).material == sand);
+        (xs, landed.map(|x| x - base))
+    };
+    let (near, landed) = path(0);
+    assert!(near.len() > 10 && near[0].0 > 202.5, "the particle flies to the right: {:?}", &near[..3]);
+    assert!(landed.is_some_and(|x| x > 250), "it lands far to the right: {landed:?}");
+    for cx in [1_000_000, -1_000_000, 30_000_000] {
+        let (far, far_landed) = path(cx);
+        assert_eq!(far_landed, landed, "chunk x {cx}: the same landing column");
+        assert_eq!(far.len(), near.len(), "chunk x {cx}: the same flight time");
+        // `Spawn` gives the position as f64; at 2 billion cells it holds the place in the cell to
+        // about 1/4 000 000 of a cell.
+        for (k, (a, b)) in near.iter().zip(&far).enumerate() {
+            assert!((a.0 - b.0).abs() < 1e-5 && (a.1 - b.1).abs() < 1e-5, "chunk x {cx}, tick {k}: {a:?} and {b:?}");
+        }
+    }
+}
+
+/// An explosion far from x = 0 breaks about as many cells as one near x = 0, and its debris
+/// starts in the middle of the cells it came from.
+#[test]
+fn explosions_work_the_same_far_from_zero() {
+    let blast = |cx: i32| {
+        let mut s = layer_world(31);
+        let base = cx * CHUNK_SIZE;
+        s.apply(Command::SetView { area: CellRect::new(base - 640, 640, base + 640, 1280) });
+        s.tick();
+        let center = CellPos::new(base + 200, 1030);
+        let stone = s.content().expect_material("stone");
+        let area = CellRect::around(center, 40);
+        let before = s.count_material(area, stone);
+        assert!(s.explode(center, 200.0, 0));
+        let broken = before - s.count_material(area, stone);
+        let p = s.particles();
+        let debris: Vec<_> = (0..p.len()).map(|i| p.get(i)).filter(|q| q.flags == 0).collect();
+        assert!(!debris.is_empty(), "chunk x {cx}: the explosion throws cells");
+        for q in &debris {
+            assert_eq!((q.x.fract().abs(), q.y.fract()), (0.5, 0.5), "chunk x {cx}: debris starts in the middle of a cell");
+        }
+        broken
+    };
+    let near = blast(0);
+    for cx in [1_000_000, -1_000_000] {
+        let far = blast(cx);
+        println!("chunk x {cx}: {far} cells broken, near x = 0: {near}");
+        assert!(near > 50 && far.abs_diff(near) * 5 <= near, "chunk x {cx}: {far} cells broken, near x = 0: {near}");
+    }
+}
+
 #[test]
 fn a_tick_touches_only_chunks_with_work() {
     let mut s = layer_world(40);
