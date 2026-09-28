@@ -1067,7 +1067,7 @@ impl Game {
         let c = self.controls.camera.screen_to_cell(self.mouse);
         let pos = CellPos::new(c.x.floor() as i32, c.y.floor() as i32);
         let (w, h) = (self.controls.world.x as i32, self.controls.world.y as i32);
-        if pos.x < 0 || pos.y < 0 || pos.x >= w || pos.y >= h {
+        if (w > 0 && (pos.x < 0 || pos.x >= w)) || pos.y < 0 || pos.y >= h {
             return None;
         }
         let texel = self.cells.get(&pos.chunk())?.get(pos.local_index())?;
