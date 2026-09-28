@@ -51,4 +51,12 @@ firebrick (1200 °C) needs charcoal and bellows; pig iron (1400 °C) needs coke 
 - `demo.rs`: the second clay deposit is now left of the Hub (it was left of the pool, where the
   robot cannot walk), so the tier 0 test has clay for the kiln.
 - Data: the coke oven controller and hatch are firebrick now (the lead asked for firebrick walls);
-  new recipe `pig_iron_from_hematite`; CO₂ byproduct of pig iron; coke needs 600 °C.
+  new recipe `pig_iron_from_hematite`; CO₂ byproduct of pig iron; coke needs 600 °C; kiln recipes
+  `kiln_tin_*` and `kiln_copper_*` (raw, crushed, washed ore + charcoal, 900 °C and 1100 °C).
+
+## 5. Not done
+
+- Hatches have no ports in the data: their role comes from their place in the wall, so the ghost
+  shows no port arrows for them.
+- The room bonus of game design section 13 (better yield inside a room) and a room id per inside
+  tile for reactions are not built.
