@@ -1,13 +1,14 @@
 //! The player robot: a small body in the cell world (game design section 6.1).
 //!
 //! - The body is `ROBOT_W` × `ROBOT_H` cells. Its position is whole cells plus a remainder, so
-//!   slow speeds still move it.
+//!   slow speeds still move it. The remainder never points into a wall, a ceiling or the ground,
+//!   so the drawn body does not shake when the robot pushes against them.
 //! - Solid cells and powder stop it. Liquids, gases, fire and air do not.
 //! - It only checks the cells that it moves into. So when sand falls onto the robot, the robot
 //!   can still walk out of it. When much of the body is in powder (the robot is buried), powder
 //!   does not stop it when it moves up, so it can jump out.
 //! - Walking: it steps up onto ledges of up to `STEP_UP` cells and it follows the ground down
-//!   steps of up to `STEP_UP` cells, so it stays on uneven ground. It never leaves the ground
+//!   steps of up to `STEP_UP` cells, so it stays on uneven ground (also under a liquid). It never leaves the ground
 //!   unless the jump key is down or the ground ends. The picture of the robot moves to the new
 //!   height over a few ticks (`draw_lift`), so a step does not look like a jump.
 //! - Jump: a press of the jump key is kept for `JUMP_BUFFER` ticks, so a press just before the
@@ -310,9 +311,10 @@ impl Robot {
         self.rise_out_of_powder(sim, c);
         self.move_x(sim, c);
         self.move_y(sim, c);
+        self.keep_rem_out_of_walls(sim, c);
         self.on_ground = !self.free(sim, c, self.rect(), 0, 1);
         // Walking down a step: follow the ground, do not fall.
-        if !self.on_ground && was_on_ground && !self.jumping && !self.in_liquid && self.vel.1 >= 0.0 {
+        if !self.on_ground && was_on_ground && !self.jumping && self.vel.1 >= 0.0 {
             self.follow_ground(sim, c);
         }
 
@@ -346,13 +348,7 @@ impl Robot {
         let steps = self.rem.0.trunc() as i32;
         self.rem.0 -= steps as f32;
         let dir = steps.signum();
-        let max_up = if self.on_ground || self.in_liquid {
-            STEP_UP
-        } else if self.vel.1 > -AIR_STEP_MAX_RISE {
-            AIR_STEP_UP
-        } else {
-            0
-        };
+        let max_up = self.max_step_up();
         for _ in 0..steps.abs() {
             let body = self.rect();
             if self.free(sim, c, body, dir, 0) {
@@ -362,13 +358,7 @@ impl Robot {
                 }
                 continue;
             }
-            // A low ledge: step up onto it. The cells above the body and the cells beside the
-            // raised body must be free.
-            let up = (1..=max_up).find(|&up| {
-                let raised = shifted(body, 0, -up);
-                self.free(sim, c, body, 0, -up) && is_free(sim, c, shifted(raised, dir, 0), raised, false)
-            });
-            match up {
+            match self.step_up(sim, c, body, dir, max_up) {
                 Some(up) => {
                     self.left += dir;
                     self.top -= up;
@@ -376,13 +366,27 @@ impl Robot {
                     self.walk_dist += 1.0;
                 }
                 None => {
-                    self.vel.0 = 0.0;
-                    self.rem.0 = 0.0;
-                    self.blocked = BLOCKED_TICKS;
-                    break;
+                    self.stop_x();
+                    return;
                 }
             }
         }
+    }
+
+    /// Stop against a wall.
+    fn stop_x(&mut self) {
+        self.vel.0 = 0.0;
+        self.rem.0 = 0.0;
+        self.blocked = BLOCKED_TICKS;
+    }
+
+    /// A low ledge beside the body in `dir`: the smallest step up (up to `max_up` cells) onto it.
+    /// The cells above the body and the cells beside the raised body must be free.
+    fn step_up(&self, sim: &Simulation, c: &Content, body: CellRect, dir: i32, max_up: i32) -> Option<i32> {
+        (1..=max_up).find(|&up| {
+            let raised = shifted(body, 0, -up);
+            self.free(sim, c, body, 0, -up) && is_free(sim, c, shifted(raised, dir, 0), raised, false)
+        })
     }
 
     fn move_y(&mut self, sim: &Simulation, c: &Content) {
@@ -406,7 +410,35 @@ impl Robot {
             }
             self.vel.1 = 0.0;
             self.rem.1 = 0.0;
-            break;
+            return;
+        }
+    }
+
+    /// The part of a cell that is left (`rem`) must not point into a wall, a ceiling or the
+    /// ground. If it did, the drawn body would move into the wall and jump back each few ticks
+    /// (a shake). Run it after both moves, because the move up or down changes which cells are
+    /// beside the body.
+    fn keep_rem_out_of_walls(&mut self, sim: &Simulation, c: &Content) {
+        let body = self.rect();
+        let dx = self.rem.0.signum() as i32;
+        if self.rem.0 != 0.0 && !self.free(sim, c, body, dx, 0) && self.step_up(sim, c, body, dx, self.max_step_up()).is_none() {
+            self.stop_x();
+        }
+        let dy = self.rem.1.signum() as i32;
+        if self.rem.1 != 0.0 && !self.free(sim, c, body, 0, dy) && (dy > 0 || self.corner_nudge(sim, c, body).is_none()) {
+            self.vel.1 = 0.0;
+            self.rem.1 = 0.0;
+        }
+    }
+
+    /// The highest ledge the robot can step up onto now.
+    fn max_step_up(&self) -> i32 {
+        if self.on_ground || self.in_liquid {
+            STEP_UP
+        } else if self.vel.1 > -AIR_STEP_MAX_RISE {
+            AIR_STEP_UP
+        } else {
+            0
         }
     }
 
