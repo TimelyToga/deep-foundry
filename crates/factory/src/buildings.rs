@@ -725,7 +725,26 @@ impl Buildings {
     pub fn insert(&mut self, content: &Content, id: BuildingId, item: ItemRef, count: u32) -> u32 {
         let hub = self.hub.clone();
         let Some(b) = self.get_mut(id) else { return 0 };
-        let n = accept(&mut b.logic, content, item, count, &hub);
+        let n = match (&mut b.steam, item) {
+            (SteamState::Boiler { fuel, fuel_units, .. }, ItemRef::Material(material))
+                if is_fuel(content, material) && fuel.is_none_or(|old| old == material) =>
+            {
+                let moved = count.min(32u32.saturating_sub(*fuel_units));
+                if moved > 0 {
+                    *fuel = Some(material);
+                    *fuel_units += moved;
+                }
+                moved
+            }
+            (SteamState::Boiler { water, .. }, ItemRef::Material(material))
+                if content.material("water") == Some(material) =>
+            {
+                let moved = count.min((200.0 - *water).floor().max(0.0) as u32);
+                *water += moved as f64;
+                moved
+            }
+            _ => accept(&mut b.logic, content, item, count, &hub),
+        };
         if n > 0 {
             self.wake(id);
         }
@@ -734,7 +753,19 @@ impl Buildings {
 
     /// How many of an item a building can take now.
     pub fn room_for(&self, content: &Content, id: BuildingId, item: ItemRef) -> u32 {
-        self.get(id).map_or(0, |b| accept_room(&b.logic, content, item, &self.hub))
+        self.get(id).map_or(0, |b| match (b.steam, item) {
+            (SteamState::Boiler { fuel, fuel_units, .. }, ItemRef::Material(material))
+                if is_fuel(content, material) && fuel.is_none_or(|old| old == material) =>
+            {
+                32u32.saturating_sub(fuel_units)
+            }
+            (SteamState::Boiler { water, .. }, ItemRef::Material(material))
+                if content.material("water") == Some(material) =>
+            {
+                (200.0 - water).floor().max(0.0) as u32
+            }
+            _ => accept_room(&b.logic, content, item, &self.hub),
+        })
     }
 
     /// The finished products in a machine (outputs and byproducts that are not empty).
@@ -752,6 +783,16 @@ impl Buildings {
     /// Take up to `n` of one product out of a machine. Returns the count taken.
     pub fn take_output(&mut self, content: &Content, id: BuildingId, item: ItemRef, n: u32) -> u32 {
         let Some(b) = self.get_mut(id) else { return 0 };
+        if let (SteamState::Boiler { steam, .. }, ItemRef::Material(material)) = (&mut b.steam, item)
+            && content.material("steam") == Some(material)
+        {
+            let taken = (*steam).floor().min(n as f64) as u32;
+            *steam -= taken as f64;
+            if taken > 0 {
+                self.wake(id);
+            }
+            return taken;
+        }
         let Logic::Machine(m) = &mut b.logic else { return 0 };
         let Some(r) = m.recipe else { return 0 };
         let recipe = content.factory.recipe_def(r);
@@ -789,7 +830,16 @@ impl Buildings {
                 ItemRef::Part(p) => lab.kits.take(p, n),
                 ItemRef::Material(_) => 0,
             },
-            _ => 0,
+            _ => match (&mut b.steam, item) {
+                (SteamState::Boiler { water, .. }, ItemRef::Material(material))
+                    if content.material("water") == Some(material) =>
+                {
+                    let taken = water.floor().min(n as f64) as u32;
+                    *water -= taken as f64;
+                    taken
+                }
+                _ => 0,
+            },
         };
         if taken > 0 {
             self.wake(id);
@@ -800,6 +850,19 @@ impl Buildings {
     /// Take up to `n` units out of the fuel slot of a machine. Returns the material and the count.
     pub fn take_fuel(&mut self, id: BuildingId, n: u32) -> Option<(MaterialId, u32)> {
         let b = self.get_mut(id)?;
+        if let SteamState::Boiler { fuel, fuel_units, .. } = &mut b.steam {
+            let Some(material) = *fuel else { return None };
+            let taken = n.min(*fuel_units);
+            *fuel_units -= taken;
+            if *fuel_units == 0 {
+                *fuel = None;
+            }
+            if taken > 0 {
+                self.wake(id);
+                return Some((material, taken));
+            }
+            return None;
+        }
         let Logic::Machine(m) = &mut b.logic else { return None };
         let taken = m.fuel.as_mut()?.take(n);
         if taken.is_some() {
@@ -907,14 +970,27 @@ impl Buildings {
     /// machine now (the campfire), and a machine that has a fuel slot now.
     pub fn upgrade_machines(&mut self, content: &Content) {
         for i in 0..self.slots.len() {
-            let Some(b) = self.slots[i].building.as_mut() else { continue };
-            let new = Logic::for_kind(content.factory.building_def(b.kind));
-            match (&mut b.logic, new) {
-                (Logic::Passive, new @ Logic::Machine(_)) => b.logic = new,
-                (Logic::Machine(old), Logic::Machine(new)) if old.fuel.is_none() && new.fuel.is_some() => old.fuel = new.fuel,
-                _ => continue,
+            let mut wake = false;
+            {
+                let Some(b) = self.slots[i].building.as_mut() else { continue };
+                if b.steam == SteamState::None {
+                    let def = content.factory.building_def(b.kind);
+                    let steam = SteamState::for_kind(&def.kind, def.power.as_ref().is_some_and(|p| p.steam_per_s > 0.0));
+                    if steam != SteamState::None {
+                        b.steam = steam;
+                        wake = true;
+                    }
+                }
+                let new = Logic::for_kind(content.factory.building_def(b.kind));
+                match (&mut b.logic, new) {
+                    (Logic::Passive, new @ Logic::Machine(_)) => { b.logic = new; wake = true; }
+                    (Logic::Machine(old), Logic::Machine(new)) if old.fuel.is_none() && new.fuel.is_some() => { old.fuel = new.fuel; wake = true; }
+                    _ => {}
+                }
             }
-            self.wake_index(i as u32);
+            if wake {
+                self.wake_index(i as u32);
+            }
         }
     }
 
@@ -1237,11 +1313,27 @@ impl Buildings {
                 b.busy |= delivered;
             }
             Logic::Passive if def.kind == "boiler" => {
-                b.status = match b.steam {
-                    SteamState::Boiler { fuel_units: 0, burn_ticks: 0, water, .. } if water > 0.0 => Status::NoFuel,
-                    SteamState::Boiler { water, .. } if water <= 0.0 => Status::NoInput,
-                    _ => Status::Working,
-                };
+                match b.steam {
+                    SteamState::Boiler { fuel_units: 0, burn_ticks: 0, water, .. } if water > 0.0 => {
+                        b.status = Status::NoFuel;
+                    }
+                    SteamState::Boiler { water, .. } if water <= 0.0 => {
+                        b.status = Status::NoInput;
+                        b.steam_reason = Some("Waiting for water from a connected bronze pipe".into());
+                    }
+                    SteamState::Boiler { steam, .. } if steam >= crate::steam::TANK_CAPACITY => {
+                        b.status = Status::OutputFull;
+                        b.steam_reason = Some("Steam tank full".into());
+                    }
+                    SteamState::Boiler { .. } if b.temperature < 100 => {
+                        b.status = Status::Working;
+                        b.steam_reason = Some(format!("Heating water: {} °C / 100 °C", b.temperature));
+                    }
+                    _ => {
+                        b.status = Status::Working;
+                        b.steam_reason = Some("Making steam".into());
+                    }
+                }
             }
             Logic::Storage(_) | Logic::Workbench | Logic::Passive => b.status = Status::Idle,
             Logic::Hopper(_) | Logic::Belt(_) => {}
