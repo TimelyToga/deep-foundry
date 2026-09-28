@@ -572,6 +572,7 @@ dependencies = [
  "image",
  "log",
  "pollster",
+ "rayon",
  "ron",
  "serde",
  "spin_sleep",
