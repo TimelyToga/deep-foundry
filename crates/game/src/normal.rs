@@ -502,6 +502,7 @@ pub fn machine_status(s: Status) -> MachineStatus {
         Status::TooCold => MachineStatus::TooCold,
         Status::TooHot => MachineStatus::TooHot,
         Status::Broken => MachineStatus::Broken,
+        Status::NoRoom => MachineStatus::RoomNotValid,
     }
 }
 

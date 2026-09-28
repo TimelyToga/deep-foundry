@@ -61,8 +61,8 @@
     Recipe(id: "crushed_slag", category: "crushing", inputs: [("slag_block", 16)], outputs: [("crushed_slag", 16)], time: 4.0),
 
     Recipe(id: "firebrick_wall", category: "hand", inputs: [("firebrick", 2)], outputs: [("firebrick_wall", 1)], time: 0.5),
-    Recipe(id: "coke_oven_controller", category: "hand", inputs: [("clay_brick", 8), ("wood", 2)], outputs: [("coke_oven_controller", 1)], time: 2.0),
-    Recipe(id: "coke_oven_hatch", category: "hand", inputs: [("clay_brick", 4), ("wood", 2)], outputs: [("coke_oven_hatch", 1)], time: 1.0),
+    Recipe(id: "coke_oven_controller", category: "hand", inputs: [("firebrick", 8), ("wood", 2)], outputs: [("coke_oven_controller", 1)], time: 2.0),
+    Recipe(id: "coke_oven_hatch", category: "hand", inputs: [("firebrick", 4), ("wood", 2)], outputs: [("coke_oven_hatch", 1)], time: 1.0),
     Recipe(
         id: "coke",
         category: "coke_oven",
@@ -70,7 +70,7 @@
         outputs: [("coke", 24)],
         byproducts: [(item: "creosote", count: 8, chance: 1.0), (item: "coal_gas", count: 4, chance: 1.0)],
         time: 60.0,
-        min_temp: Some(300),
+        min_temp: Some(600),
     ),
 
     Recipe(id: "blast_furnace_controller", category: "hand", inputs: [("firebrick", 8), ("wood", 2)], outputs: [("blast_furnace_controller", 1)], time: 3.0),
@@ -81,7 +81,17 @@
         category: "blast_furnace",
         inputs: [("crushed_magnetite", 16), ("coke", 8), ("crushed_limestone", 4)],
         outputs: [("molten_pig_iron", 14)],
-        byproducts: [(item: "molten_slag", count: 4, chance: 1.0)],
+        byproducts: [(item: "molten_slag", count: 4, chance: 1.0), (item: "carbon_dioxide", count: 4, chance: 1.0)],
+        time: 20.0,
+        min_temp: Some(1400),
+    ),
+    Recipe(
+        id: "pig_iron_from_hematite",
+        name: Some("Molten pig iron (hematite)"),
+        category: "blast_furnace",
+        inputs: [("crushed_hematite", 16), ("coke", 8), ("crushed_limestone", 4)],
+        outputs: [("molten_pig_iron", 14)],
+        byproducts: [(item: "molten_slag", count: 4, chance: 1.0), (item: "carbon_dioxide", count: 4, chance: 1.0)],
         time: 20.0,
         min_temp: Some(1400),
     ),

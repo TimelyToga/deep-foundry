@@ -102,4 +102,6 @@ pub struct BuildingView {
     pub hit_points: u32,
     pub max_hit_points: u32,
     pub ports: Vec<PortView>,
+    /// The room of a room machine controller. `Factory::building_view` fills it.
+    pub room: Option<crate::rooms::RoomView>,
 }
