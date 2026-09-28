@@ -1,7 +1,8 @@
 //! The demo world, made by a chunk source: stone ground with gentle hills, a dirt layer, a sand
 //! dune, a water pool, a small lava pocket, gravel patches, a few wooden posts, and small
 //! deposits of clay, copper ore (malachite) and tin ore (cassiterite in gravel) near the start,
-//! so the Tier 0 loop can be played. World generation (a later task) replaces this.
+//! so the Tier 0 loop can be played. `Shape::Generated` makes a world with the world generator
+//! (`foundry_worldgen`) instead; the demo world stays the default.
 //!
 //! The world has no limit to the left and right. The hills go on without end. The pool, dune,
 //! lava pocket, posts and gravel repeat in sections of `SECTION` cells. Each section except the
@@ -12,6 +13,7 @@
 use foundry_content::Content;
 use foundry_core::{CHUNK_SIZE, CellRect, ChunkPos, Rng, local_index};
 use foundry_sim::{ChunkCells, ChunkSource, SimConfig, Simulation};
+use foundry_worldgen::{WorldGen, WorldGenSettings};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
@@ -32,6 +34,20 @@ pub enum Shape {
     Infinite { depth_chunks: i32 },
     /// A finite box of this many chunks, with bedrock walls.
     Box { width_chunks: i32, height_chunks: i32 },
+    /// A world made by the world generator (`foundry_worldgen`): no limit to the left and right,
+    /// `depth_chunks` below the surface level.
+    Generated { depth_chunks: i32 },
+}
+
+impl Shape {
+    /// The same kind of world with another depth. A box keeps its size.
+    pub fn with_depth(self, depth_chunks: i32) -> Shape {
+        match self {
+            Shape::Box { .. } => self,
+            Shape::Infinite { .. } => Shape::Infinite { depth_chunks },
+            Shape::Generated { .. } => Shape::Generated { depth_chunks },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -286,9 +302,12 @@ fn cell_hash(x: i32, y: i32, seed: u64) -> u64 {
     h
 }
 
-/// The chunk source of a saved world: the demo source, else a built-in source.
-/// For `Simulation::load_file_with_resolver`.
+/// The chunk source of a saved world: the demo source, the world generator, else a built-in
+/// source. For `Simulation::load_file_with_resolver`.
 pub fn resolve_source(content: &Content, name: &str, settings: &str) -> Option<Arc<dyn ChunkSource>> {
+    if name == "worldgen" {
+        return WorldGen::from_settings(content, settings).map(|g| Arc::new(g) as Arc<dyn ChunkSource>);
+    }
     if name != "demo" {
         return foundry_sim::source::built_in(content, name, settings);
     }
@@ -305,10 +324,13 @@ pub fn resolve_source(content: &Content, name: &str, settings: &str) -> Option<A
     Some(Arc::new(DemoSource::new(content, surface?, bottom?)))
 }
 
-/// Make the demo world.
+/// Make the world: the demo world, or a generated world for `Shape::Generated`.
 pub fn build(content: Arc<Content>, shape: Shape, seed: u64) -> Demo {
+    if let Shape::Generated { depth_chunks } = shape {
+        return build_generated(content, depth_chunks, seed);
+    }
     let (mut config, surface_y) = match shape {
-        Shape::Infinite { depth_chunks } => {
+        Shape::Infinite { depth_chunks } | Shape::Generated { depth_chunks } => {
             let config = SimConfig { depth_chunks, ..SimConfig::infinite(seed, None) };
             let surface_y = config.surface_y();
             (config, surface_y)
@@ -326,6 +348,20 @@ pub fn build(content: Arc<Content>, shape: Shape, seed: u64) -> Demo {
     let cx = SECTION as f64 * 0.48;
     let cy = source.surface(cx as i32, &DemoSource::phases(seed)) as f64 + 30.0;
     Demo { sim, start_center: (cx, cy) }
+}
+
+/// Make a world with the world generator. The start (the Hub and the robot in the normal mode,
+/// and the camera) is at x = 0, on the flat ground that the generator makes there.
+fn build_generated(content: Arc<Content>, depth_chunks: i32, seed: u64) -> Demo {
+    let mut config = SimConfig { depth_chunks, ..SimConfig::infinite(seed, None) };
+    let settings = WorldGenSettings::for_world(config.sky_chunks, config.depth_chunks);
+    let source = WorldGen::new(&content, settings);
+    let (x, ground) = source.start(seed);
+    let air = source.air_temperature_rows().to_vec();
+    config.source = Some(Arc::new(source));
+    let mut sim = Simulation::new(content, config);
+    sim.set_air_temperature(&air);
+    Demo { sim, start_center: (x as f64, ground as f64 - 30.0) }
 }
 
 /// The part of the world that section `s` covers, from the top of the world to `depth` cells.

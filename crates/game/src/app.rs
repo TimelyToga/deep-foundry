@@ -724,19 +724,14 @@ impl Game {
         self.controls.min_zoom = self.renderer.min_zoom(viewport, VIEW_MARGIN).max(1.0);
     }
 
-    /// The world for a new game of this size: a box from `--world`, else an endless world whose
-    /// depth depends on the size.
+    /// The world for a new game of this size: a box from `--world WxH`, else an endless world (the
+    /// demo world, or a generated world with `--world gen`) whose depth depends on the size.
     fn shape_for(&self, size: WorldSize) -> demo::Shape {
-        match self.start_shape {
-            demo::Shape::Box { .. } => self.start_shape,
-            demo::Shape::Infinite { .. } => demo::Shape::Infinite {
-                depth_chunks: match size {
-                    WorldSize::Small => 64,
-                    WorldSize::Normal => 128,
-                    WorldSize::Large => 256,
-                },
-            },
-        }
+        self.start_shape.with_depth(match size {
+            WorldSize::Small => 64,
+            WorldSize::Normal => 128,
+            WorldSize::Large => 256,
+        })
     }
 
     fn start_new_world(&mut self, seed: u64, shape: demo::Shape, mode: GameMode) {

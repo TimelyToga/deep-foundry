@@ -7,6 +7,7 @@
 //! - `bench`: benchmark worlds made in code, timing, baselines.
 //! - `image`: read and write PNG files, draw the world into an image.
 //! - `paths`: where scenes, pictures and baselines are.
+//! - `worldgen`: pictures of the world generator.
 
 pub mod bench;
 pub mod check;
@@ -14,6 +15,7 @@ pub mod image;
 pub mod paths;
 pub mod runner;
 pub mod scene;
+pub mod worldgen;
 
 pub use check::Check;
 pub use image::Image;
