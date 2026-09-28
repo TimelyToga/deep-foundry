@@ -1,0 +1,13 @@
+// Generated content scene: slaked_lime falls from the air onto the floor.
+Scene(
+    note: "slaked_lime falls and settles at the bottom.",
+    legend: {
+        "#f4f3ee": "slaked_lime",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "slaked_lime"),
+        Count(material: "slaked_lime", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

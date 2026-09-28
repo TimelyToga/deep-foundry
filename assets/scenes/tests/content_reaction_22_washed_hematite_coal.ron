@@ -1,0 +1,15 @@
+// Generated content scene: reaction #22 (washed_hematite + coal).
+// A touches B; the reactions system (task 1C) is being built in parallel, so all checks are pending.
+Scene(
+    note: "Reaction: washed_hematite + coal.",
+    legend: {
+        "#783227": (material: "washed_hematite", temperature: 1480),
+        "#181818": "coal",
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_pig_iron", min: 1, pending: true),
+        Total(material: "carbon_dioxide", min: 1, pending: true),
+    ],
+)

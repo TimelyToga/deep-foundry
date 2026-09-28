@@ -1,0 +1,13 @@
+// Generated content scene: melt of slag_block into molten_slag at 1200C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "slag_block melts into molten_slag.",
+    legend: {
+        "#6a4a34": (material: "slag_block", temperature: 1280),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_slag", min: 1, pending: true),
+    ],
+)

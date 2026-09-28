@@ -1,0 +1,13 @@
+// Generated content scene: melt of raw_limestone into quicklime at 900C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "raw_limestone melts into quicklime.",
+    legend: {
+        "#c9c2ab": (material: "raw_limestone", temperature: 980),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "quicklime", min: 1, pending: true),
+    ],
+)

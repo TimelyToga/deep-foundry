@@ -1,0 +1,13 @@
+// Generated content scene: cement falls from the air onto the floor.
+Scene(
+    note: "cement falls and settles at the bottom.",
+    legend: {
+        "#9a9690": "cement",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "cement"),
+        Count(material: "cement", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

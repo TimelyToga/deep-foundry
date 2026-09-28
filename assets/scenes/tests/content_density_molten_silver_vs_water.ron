@@ -1,0 +1,15 @@
+// Generated content scene: molten_silver (density 9300) is denser than water and sinks below it.
+Scene(
+    note: "molten_silver sinks through water.",
+    legend: {
+        "#f0f2f4": "molten_silver",
+        "#2f6fd6": "water",
+        "#6b6a70": "stone",
+    },
+    ticks: 1500,
+    checks: [
+        TotalUnchanged(material: "molten_silver"),
+        TotalUnchanged(material: "water"),
+        Count(material: "molten_silver", rect: (x: 4, y: 48, w: 72, h: 18), min: 300),
+    ],
+)

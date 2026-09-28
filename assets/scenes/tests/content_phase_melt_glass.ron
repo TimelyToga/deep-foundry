@@ -1,0 +1,13 @@
+// Generated content scene: melt of glass into molten_glass at 1000C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "glass melts into molten_glass.",
+    legend: {
+        "#cfe8ec": (material: "glass", temperature: 1080),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_glass", min: 1, pending: true),
+    ],
+)

@@ -1,0 +1,13 @@
+// Generated content scene: melt of gold_dust into molten_gold at 1064C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "gold_dust melts into molten_gold.",
+    legend: {
+        "#d9b23c": (material: "gold_dust", temperature: 1144),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_gold", min: 1, pending: true),
+    ],
+)

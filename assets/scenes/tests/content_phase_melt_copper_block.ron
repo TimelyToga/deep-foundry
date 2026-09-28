@@ -1,0 +1,13 @@
+// Generated content scene: melt of copper_block into molten_copper at 1085C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "copper_block melts into molten_copper.",
+    legend: {
+        "#b5652f": (material: "copper_block", temperature: 1165),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "molten_copper", min: 1, pending: true),
+    ],
+)

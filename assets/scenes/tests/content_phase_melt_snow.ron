@@ -1,0 +1,13 @@
+// Generated content scene: melt of snow into water at 1C.
+// Heat and phase changes (the heat task) are being built in parallel, so this check is pending.
+Scene(
+    note: "snow melts into water.",
+    legend: {
+        "#f5fbff": (material: "snow", temperature: 81),
+        "#6b6a70": "stone",
+    },
+    ticks: 300,
+    checks: [
+        Total(material: "water", min: 1, pending: true),
+    ],
+)

@@ -1,0 +1,13 @@
+// Generated content scene: lead_dust falls from the air onto the floor.
+Scene(
+    note: "lead_dust falls and settles at the bottom.",
+    legend: {
+        "#767a80": "lead_dust",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "lead_dust"),
+        Count(material: "lead_dust", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)

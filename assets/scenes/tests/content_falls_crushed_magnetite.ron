@@ -1,0 +1,13 @@
+// Generated content scene: crushed_magnetite falls from the air onto the floor.
+Scene(
+    note: "crushed_magnetite falls and settles at the bottom.",
+    legend: {
+        "#191b22": "crushed_magnetite",
+        "#6b6a70": "stone",
+    },
+    ticks: 400,
+    checks: [
+        TotalUnchanged(material: "crushed_magnetite"),
+        Count(material: "crushed_magnetite", rect: (x: 0, y: 40, w: 40, h: 20), min: 190),
+    ],
+)
