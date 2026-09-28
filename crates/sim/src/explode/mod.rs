@@ -12,7 +12,7 @@
 //!
 //! # What an explosion does
 //! 1. Rays go out from the center in all directions. The power on a ray is the strength at the
-//!    center and falls to 0 at the radius. Each cell that breaks takes some power from the ray
+//!    center and falls to 0 at the radius (slowly near the center, fast near the radius). Each cell that breaks takes some power from the ray
 //!    (a harder cell takes more). A cell that does not break stops the ray. So hard walls shield
 //!    the cells behind them. Each cell gets the highest power of all rays that reach it.
 //! 2. Each cell that breaks:
@@ -67,8 +67,8 @@ pub const MAX_QUEUED: usize = 4096;
 pub const CORE: f32 = 0.45;
 
 /// Power that a breaking cell takes from a ray: this, plus `ABSORB_PER_HARDNESS` × its hardness.
-const ABSORB: f32 = 0.5;
-const ABSORB_PER_HARDNESS: f32 = 0.1;
+const ABSORB: f32 = 0.25;
+const ABSORB_PER_HARDNESS: f32 = 0.15;
 /// Rays per cell of circumference.
 const RAYS_PER_CELL: f32 = 1.5;
 /// Chance that an air cell at the center becomes fire (it falls to 0 at the edge of the core).
@@ -251,7 +251,8 @@ impl Explosions {
             let mut last = CellPos::new(i32::MIN, i32::MIN);
             for s in 0..=steps {
                 let d = s as f32 * 0.5;
-                let power = b.strength * (1.0 - d / r) - absorbed;
+                let f = d / r;
+                let power = b.strength * (1.0 - f * f) - absorbed;
                 if power <= 0.0 {
                     break;
                 }
