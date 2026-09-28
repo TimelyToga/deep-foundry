@@ -131,7 +131,8 @@ pub(crate) fn show(cx: &mut Cx, st: &mut UiState) {
         }
         recipe_slot = building_panel(ui, cx, st, b, &recipes, fb.content);
     });
-    if st.picker_open && st.is_open(WindowKind::Building) {
+    // The picker is a Foreground layer: hide it under the pause menu.
+    if st.picker_open && st.is_open(WindowKind::Building) && cx.model.state == crate::model::GameState::Playing {
         recipe_picker(cx, st, b, &recipes, recipe_slot);
     }
 }
