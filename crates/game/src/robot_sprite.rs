@@ -340,13 +340,14 @@ impl RobotLook {
     }
 
     /// Dust at the feet after a hard landing.
-    fn dust(&self, cx: i32, feet_y: i32, age: i32, out: &mut Vec<Sprite>) {
+    /// `left` is the left column of the body, `feet_y` the row of the feet.
+    fn dust(&self, left: i32, feet_y: i32, age: i32, out: &mut Vec<Sprite>) {
         let alpha = (220 - age * 25).clamp(40, 220) as u8;
         for k in 0..3 {
             let spread = 2 + age / 2 + k;
             let y = feet_y - (k + age / 3).min(2);
-            self.pixel(cx - 1 - spread, y, [196, 184, 160, alpha], out);
-            self.pixel(cx + ROBOT_W + spread, y, [196, 184, 160, alpha], out);
+            self.pixel(left - 1 - spread, y, [196, 184, 160, alpha], out);
+            self.pixel(left + ROBOT_W + spread, y, [196, 184, 160, alpha], out);
         }
     }
 

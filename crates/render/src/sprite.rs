@@ -14,6 +14,11 @@
 //! - `SpriteLayer::Front` (flame, beam, sparks): drawn over everything.
 //!
 //! Use: `Renderer::set_sprite_sheet` once, then `Renderer::set_sprites` each frame.
+//!
+//! Light (for the light pass): the sprites are in the world texture, like the cells, before the
+//! scale pass. A light pass that multiplies the world texture by the light map lights the robot
+//! with no change here. The `Front` sprites (flame, beam, sparks) give light themselves: they
+//! should not be made darker (draw that range after the light, or leave it out of the light).
 
 use crate::shaders::{ShaderFile, create_pipeline};
 use bytemuck::{Pod, Zeroable};
