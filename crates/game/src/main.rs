@@ -16,6 +16,7 @@ mod demo;
 mod dig_perf;
 mod factory_host;
 mod keys;
+mod motion;
 mod normal;
 mod overlay;
 mod perf;
