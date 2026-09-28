@@ -69,7 +69,7 @@ fn all(s: &Simulation) -> CellRect {
 #[test]
 fn table_limits_the_step() {
     let c = content();
-    let t = HeatTable::new(&c.materials);
+    let t = HeatTable::new(&c.materials, None);
     for m in c.materials.all() {
         let e = t.mats[m.index()];
         assert!(e.g >= 0.0 && e.g * e.inv_c <= MAX_STEP + 1e-6, "{}: g {} inv_c {}", c.materials.ids[m.index()], e.g, e.inv_c);
