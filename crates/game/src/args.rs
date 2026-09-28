@@ -47,6 +47,9 @@ OPTIONS:
                              dig, spray, scan (the tool points at a place in front of the robot)
       --face left|right      Normal mode: the direction the robot looks in the picture
       --robot X              Normal mode: put the robot on the ground (or in the water) at column X
+      --view LIST            Render views, comma separated: nolight, nobloom, noshimmer, heat
+                             (heat map), grid (chunk grid), light (only the light map), chunks
+                             (awake chunks)
     -h, --help               Show this text
 ";
 
@@ -67,6 +70,8 @@ pub struct Args {
     pub center: Option<(f64, f64)>,
     /// Screenshots: draw only the world.
     pub no_ui: bool,
+    /// Screenshots: render views (`--view`), see `render_setup::VIEW_NAMES`.
+    pub view: Vec<String>,
     /// Folder for saves. `None`: the default folder.
     pub saves: Option<PathBuf>,
     /// The screen to start in. `None`: the default.
@@ -202,6 +207,7 @@ impl Default for Args {
             zoom: None,
             center: None,
             no_ui: false,
+            view: Vec::new(),
             saves: None,
             ui_state: None,
             ui_scale: 1.0,
@@ -328,6 +334,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     "right" => false,
                     other => return Err(format!("--face: `{other}` is not left or right")),
                 })
+            }
+            "--view" => {
+                let names: Vec<String> = value("--view")?.split(',').map(|v| v.trim().to_string()).collect();
+                let (mut s, mut v) = Default::default();
+                crate::render_setup::apply_view_names(&names, &mut s, &mut v)?;
+                out.view = names;
             }
             "--saves" => out.saves = Some(PathBuf::from(value("--saves")?)),
             "--settings" => out.settings = Some(PathBuf::from(value("--settings")?)),

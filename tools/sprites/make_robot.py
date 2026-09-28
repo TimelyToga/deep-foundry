@@ -42,6 +42,8 @@ FLAME_AT = (8, 1)
 NOZZLE = (3, 17)
 # Number of arm directions (the full circle).
 ARM_DIRS = 16
+# Palette keys whose color gives light in the game (a glow mask): the visor and the lights.
+GLOW_KEYS = ["C"]
 
 PALETTE = {
     "K": (22, 17, 30),  # outline
@@ -336,6 +338,7 @@ def write_description(rows, arms):
         "// - An animation has a speed: Fps(n) is frames per second; Cells(n) is one frame per n",
         "//   cells walked. Each frame has the arm direction (when no tool is used) and how many",
         "//   cells the shoulder moves down in that frame.",
+        "// - `glow`: sheet colors (RGB) that give light in the game (the visor and the lights).",
         "(",
         '    image: "robot.png",',
         f"    frame: ({FW}, {FH}),",
@@ -360,6 +363,8 @@ def write_description(rows, arms):
     lines.append(f"    arm_tips: [{tips}],")
     lines.append(f"    flame: (row: {row_of['flame']}, frames: {len(FLAMES)}),")
     lines.append(f"    pixel: (row: {row_of['pixel']}, frames: 1),")
+    glow = ", ".join(f"({r}, {g}, {b})" for r, g, b in (PALETTE[k] for k in GLOW_KEYS))
+    lines.append(f"    glow: [{glow}],")
     lines.append(")")
     with open(OUT_DESC, "w") as f:
         f.write("\n".join(lines) + "\n")

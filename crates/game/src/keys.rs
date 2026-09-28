@@ -54,6 +54,12 @@ pub enum Action {
     BrushSmaller,
     BrushLarger,
     DebugPanel,
+    /// Debug view: awake chunks and their update rectangles.
+    DebugChunks,
+    /// Debug view: cells colored by temperature.
+    DebugHeat,
+    /// Debug view: the chunk grid.
+    DebugGrid,
 }
 
 impl Action {
@@ -102,10 +108,13 @@ impl Action {
         }
     }
 
-    /// Every action, in the order of the settings screen.
+    /// Every action, in the order of the settings screen: the quickbar slots come before the
+    /// debug keys.
     pub fn all() -> impl Iterator<Item = Action> {
-        let before = ACTIONS.iter().take_while(|x| x.0 != Action::DebugPanel).map(|x| x.0);
-        before.chain((0..10).map(Action::Quickbar)).chain(std::iter::once(Action::DebugPanel))
+        let split = ACTIONS.iter().position(|x| x.0 == Action::DebugPanel).unwrap_or(ACTIONS.len());
+        let before = ACTIONS[..split].iter().map(|x| x.0);
+        let debug = ACTIONS[split..].iter().map(|x| x.0);
+        before.chain((0..10).map(Action::Quickbar)).chain(debug)
     }
 }
 
@@ -134,6 +143,9 @@ const ACTIONS: &[(Action, &str, &str, Scope)] = &[
     (Action::BrushSmaller, "brush_smaller", "Smaller brush", Scope::Sandbox),
     (Action::BrushLarger, "brush_larger", "Larger brush", Scope::Sandbox),
     (Action::DebugPanel, "debug", "Debug panel", Scope::Both),
+    (Action::DebugChunks, "debug_chunks", "Debug view: awake chunks", Scope::Both),
+    (Action::DebugHeat, "debug_heat", "Debug view: heat map", Scope::Both),
+    (Action::DebugGrid, "debug_grid", "Debug view: chunk grid", Scope::Both),
 ];
 
 /// One key of a binding.
@@ -207,6 +219,9 @@ pub fn default_keys(a: Action) -> Vec<KeyBind> {
         Action::BrushSmaller => vec![k(K::BracketLeft)],
         Action::BrushLarger => vec![k(K::BracketRight)],
         Action::DebugPanel => vec![k(K::F3)],
+        Action::DebugChunks => vec![k(K::F4)],
+        Action::DebugHeat => vec![k(K::F5)],
+        Action::DebugGrid => vec![k(K::F6)],
     }
 }
 
@@ -512,5 +527,39 @@ mod tests {
             assert!(!a.label().is_empty());
         }
         assert_eq!(Action::all().count(), ACTIONS.len() + 10);
+    }
+
+    #[test]
+    fn no_two_actions_of_a_mode_share_a_key() {
+        // Actions that may share a key on purpose: they work in different situations.
+        let shared = [
+            (Action::Scan, Action::Flip),
+            (Action::Jump, Action::CameraUp),
+            (Action::MoveLeft, Action::CameraLeft),
+            (Action::MoveRight, Action::CameraRight),
+            (Action::Jump, Action::PauseSim),
+        ];
+        let b = Bindings::default();
+        for normal in [true, false] {
+            let actions: Vec<Action> = Action::all()
+                .filter(|a| match a.scope() {
+                    Scope::Both => true,
+                    Scope::Normal => normal,
+                    Scope::Sandbox => !normal,
+                })
+                .collect();
+            for (i, a) in actions.iter().enumerate() {
+                for c in &actions[i + 1..] {
+                    let clash = b.keys(*a).iter().any(|k| b.keys(*c).contains(k));
+                    let allowed = shared.iter().any(|&(x, y)| (x, y) == (*a, *c) || (y, x) == (*a, *c));
+                    assert!(!clash || allowed, "{a:?} and {c:?} have the same key");
+                }
+            }
+        }
+        // The debug keys.
+        let f = |code| b.actions(&Press::new(code), true, true);
+        assert_eq!(f(KeyCode::F4), vec![Action::DebugChunks]);
+        assert_eq!(f(KeyCode::F5), vec![Action::DebugHeat]);
+        assert_eq!(f(KeyCode::F6), vec![Action::DebugGrid]);
     }
 }
