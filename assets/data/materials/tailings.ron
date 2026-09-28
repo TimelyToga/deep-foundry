@@ -1,0 +1,14 @@
+// Light mineral fines carried out of the sluice with its water.
+[
+    Material(
+        id: "silt",
+        name: "Silt tailings",
+        phase: Powder,
+        colors: ["#86765d", "#98866a", "#766a55"],
+        density: 700,
+        friction: 0.1,
+        grain: Small,
+        heat_capacity: 0.7,
+        conductivity: 0.1,
+    ),
+]

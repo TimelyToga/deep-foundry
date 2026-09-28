@@ -340,6 +340,28 @@ impl Buildings {
 impl Building {
     /// Everything the building holds, as stacks. The building is emptied.
     pub fn take_all(&mut self, content: &Content) -> Vec<Stack> {
-        crate::buildings::take_contents(&mut self.logic, content)
+        let mut out = crate::buildings::take_contents(&mut self.logic, content);
+        let add = |out: &mut Vec<Stack>, material: Option<foundry_core::MaterialId>, count: u32| {
+            if let Some(material) = material.filter(|_| count > 0) {
+                out.push(Stack { item: ItemRef::Material(material), count });
+            }
+        };
+        match &mut self.steam {
+            crate::steam::SteamState::Boiler { fuel, fuel_units, water, steam, .. } => {
+                add(&mut out, *fuel, *fuel_units);
+                add(&mut out, content.material("water"), water.floor() as u32);
+                add(&mut out, content.material("steam"), steam.floor() as u32);
+                *fuel_units = 0;
+                *water = 0.0;
+                *steam = 0.0;
+            }
+            crate::steam::SteamState::Pipe(tank) | crate::steam::SteamState::Machine(tank) => {
+                add(&mut out, tank.material, tank.amount.floor() as u32);
+                tank.amount = 0.0;
+                tank.material = None;
+            }
+            crate::steam::SteamState::None => {}
+        }
+        out
     }
 }

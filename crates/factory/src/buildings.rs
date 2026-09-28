@@ -19,6 +19,7 @@ use crate::inventory::{Inventory, TankRule};
 use crate::logistics::{Belt, Hopper, Lab, steps_in_tick};
 use crate::machines::{self, Conditions, Fuel, Machine, RecipeError, Status, is_fuel, output_stack};
 use crate::progress_link::{self, ProgressLink};
+use crate::steam::{SteamState, consume_steam, steam_ready};
 use crate::views::{BufferView, BuildingView, FuelView, PortView};
 use foundry_content::{Building as BuildingDef, Content, ItemRef, Layer, Phase, PortKind, Side, Stack};
 use foundry_core::{BuildingId, BuildingKindId, CellPos, MaterialId, PartId, RecipeId, TILE_SIZE, TilePos};
@@ -142,6 +143,12 @@ pub struct Building {
     pub power_w: f32,
     pub status: Status,
     pub logic: Logic,
+    /// Persisted boiler, pipe and steam-machine fluid state.
+    #[serde(default)]
+    pub steam: SteamState,
+    /// More useful text for a steam-starved machine than the generic power status.
+    #[serde(skip)]
+    pub steam_reason: Option<String>,
     /// The tick at which a sleeping building wakes. `None` while awake or asleep until woken.
     pub(crate) timer: Option<u64>,
     /// Ticks in a row with nothing done.
@@ -176,6 +183,8 @@ impl Building {
             power_w: 0.0,
             status: Status::Idle,
             logic: Logic::for_kind(def),
+            steam: SteamState::for_kind(&def.kind, def.power.as_ref().is_some_and(|p| p.steam_per_s > 0.0)),
+            steam_reason: None,
             timer: None,
             idle: 0,
             busy: false,
@@ -728,7 +737,26 @@ impl Buildings {
     pub fn insert(&mut self, content: &Content, id: BuildingId, item: ItemRef, count: u32) -> u32 {
         let hub = self.hub.clone();
         let Some(b) = self.get_mut(id) else { return 0 };
-        let n = accept(&mut b.logic, content, item, count, &hub);
+        let n = match (&mut b.steam, item) {
+            (SteamState::Boiler { fuel, fuel_units, .. }, ItemRef::Material(material))
+                if is_fuel(content, material) && fuel.is_none_or(|old| old == material) =>
+            {
+                let moved = count.min(32u32.saturating_sub(*fuel_units));
+                if moved > 0 {
+                    *fuel = Some(material);
+                    *fuel_units += moved;
+                }
+                moved
+            }
+            (SteamState::Boiler { water, .. }, ItemRef::Material(material))
+                if content.material("water") == Some(material) =>
+            {
+                let moved = count.min((200.0 - *water).floor().max(0.0) as u32);
+                *water += moved as f64;
+                moved
+            }
+            _ => accept(&mut b.logic, content, item, count, &hub),
+        };
         if n > 0 {
             self.wake(id);
         }
@@ -737,7 +765,19 @@ impl Buildings {
 
     /// How many of an item a building can take now.
     pub fn room_for(&self, content: &Content, id: BuildingId, item: ItemRef) -> u32 {
-        self.get(id).map_or(0, |b| accept_room(&b.logic, content, item, &self.hub))
+        self.get(id).map_or(0, |b| match (b.steam, item) {
+            (SteamState::Boiler { fuel, fuel_units, .. }, ItemRef::Material(material))
+                if is_fuel(content, material) && fuel.is_none_or(|old| old == material) =>
+            {
+                32u32.saturating_sub(fuel_units)
+            }
+            (SteamState::Boiler { water, .. }, ItemRef::Material(material))
+                if content.material("water") == Some(material) =>
+            {
+                (200.0 - water).floor().max(0.0) as u32
+            }
+            _ => accept_room(&b.logic, content, item, &self.hub),
+        })
     }
 
     /// The finished products in a machine (outputs and byproducts that are not empty).
@@ -755,6 +795,16 @@ impl Buildings {
     /// Take up to `n` of one product out of a machine. Returns the count taken.
     pub fn take_output(&mut self, content: &Content, id: BuildingId, item: ItemRef, n: u32) -> u32 {
         let Some(b) = self.get_mut(id) else { return 0 };
+        if let (SteamState::Boiler { steam, .. }, ItemRef::Material(material)) = (&mut b.steam, item)
+            && content.material("steam") == Some(material)
+        {
+            let taken = (*steam).floor().min(n as f64) as u32;
+            *steam -= taken as f64;
+            if taken > 0 {
+                self.wake(id);
+            }
+            return taken;
+        }
         let Logic::Machine(m) = &mut b.logic else { return 0 };
         let Some(r) = m.recipe else { return 0 };
         let recipe = content.factory.recipe_def(r);
@@ -792,7 +842,16 @@ impl Buildings {
                 ItemRef::Part(p) => lab.kits.take(p, n),
                 ItemRef::Material(_) => 0,
             },
-            _ => 0,
+            _ => match (&mut b.steam, item) {
+                (SteamState::Boiler { water, .. }, ItemRef::Material(material))
+                    if content.material("water") == Some(material) =>
+                {
+                    let taken = water.floor().min(n as f64) as u32;
+                    *water -= taken as f64;
+                    taken
+                }
+                _ => 0,
+            },
         };
         if taken > 0 {
             self.wake(id);
@@ -803,6 +862,19 @@ impl Buildings {
     /// Take up to `n` units out of the fuel slot of a machine. Returns the material and the count.
     pub fn take_fuel(&mut self, id: BuildingId, n: u32) -> Option<(MaterialId, u32)> {
         let b = self.get_mut(id)?;
+        if let SteamState::Boiler { fuel, fuel_units, .. } = &mut b.steam {
+            let material = (*fuel)?;
+            let taken = n.min(*fuel_units);
+            *fuel_units -= taken;
+            if *fuel_units == 0 {
+                *fuel = None;
+            }
+            if taken > 0 {
+                self.wake(id);
+                return Some((material, taken));
+            }
+            return None;
+        }
         let Logic::Machine(m) = &mut b.logic else { return None };
         let taken = m.fuel.as_mut()?.take(n);
         if taken.is_some() {
@@ -910,14 +982,27 @@ impl Buildings {
     /// machine now (the campfire), and a machine that has a fuel slot now.
     pub fn upgrade_machines(&mut self, content: &Content) {
         for i in 0..self.slots.len() {
-            let Some(b) = self.slots[i].building.as_mut() else { continue };
-            let new = Logic::for_kind(content.factory.building_def(b.kind));
-            match (&mut b.logic, new) {
-                (Logic::Passive, new @ Logic::Machine(_)) => b.logic = new,
-                (Logic::Machine(old), Logic::Machine(new)) if old.fuel.is_none() && new.fuel.is_some() => old.fuel = new.fuel,
-                _ => continue,
+            let mut wake = false;
+            {
+                let Some(b) = self.slots[i].building.as_mut() else { continue };
+                if b.steam == SteamState::None {
+                    let def = content.factory.building_def(b.kind);
+                    let steam = SteamState::for_kind(&def.kind, def.power.as_ref().is_some_and(|p| p.steam_per_s > 0.0));
+                    if steam != SteamState::None {
+                        b.steam = steam;
+                        wake = true;
+                    }
+                }
+                let new = Logic::for_kind(content.factory.building_def(b.kind));
+                match (&mut b.logic, new) {
+                    (Logic::Passive, new @ Logic::Machine(_)) => { b.logic = new; wake = true; }
+                    (Logic::Machine(old), Logic::Machine(new)) if old.fuel.is_none() && new.fuel.is_some() => { old.fuel = new.fuel; wake = true; }
+                    _ => {}
+                }
             }
-            self.wake_index(i as u32);
+            if wake {
+                self.wake_index(i as u32);
+            }
         }
     }
 
@@ -965,6 +1050,11 @@ impl Buildings {
             }
         }
         let list: Vec<u32> = self.active.iter().copied().collect();
+        let bellows: Vec<TilePos> = self
+            .iter()
+            .filter(|(_, b)| content.factory.building_def(b.kind).kind == "bellows")
+            .map(|(_, b)| b.at)
+            .collect();
         for &i in &list {
             if let Some(b) = self.at_index_mut(i) {
                 b.busy = false;
@@ -974,8 +1064,9 @@ impl Buildings {
         for &i in &list {
             self.take_inputs(i, content, sim);
         }
+        self.tick_steam_network(content, sim);
         for &i in &list {
-            self.work(i, content, sim, progress);
+            self.work(i, content, sim, progress, &bellows);
         }
         for &i in &list {
             self.give_outputs(i, content, sim);
@@ -1006,6 +1097,7 @@ impl Buildings {
                 }
                 _ => continue,
             };
+            let mut hot_mold_input = None;
             let taken = match &mut b.logic {
                 Logic::Machine(m) => {
                     let recipe = m.recipe.map(|r| content.factory.recipe_def(r));
@@ -1020,12 +1112,15 @@ impl Buildings {
                     if !wanted && !fuel_room {
                         continue;
                     }
-                    cells::take_from_side(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, phases, |mat| {
+                    cells::take_from_side_with_temperature(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, phases, |mat, temperature| {
                         let item = ItemRef::Material(mat);
                         if !port_allows(def, &port, item) {
                             return false;
                         }
                         if recipe.is_some_and(|r| m.add_input(r, item, 1) == 1) {
+                            if def.kind == "mold" && content.materials.freeze[mat.index()].is_some() {
+                                hot_mold_input = Some(hot_mold_input.map_or(temperature, |t: i16| t.max(temperature)));
+                            }
                             return true;
                         }
                         is_fuel(content, mat) && m.fuel.as_mut().is_some_and(|f| f.add(mat, 1) == 1)
@@ -1053,8 +1148,28 @@ impl Buildings {
                             && inv.insert(content, item, 1) == 0
                     })
                 }
+                Logic::Passive if def.kind == "boiler" => {
+                    if let SteamState::Boiler { fuel, fuel_units, .. } = &mut b.steam {
+                        if port.kind == PortKind::BulkIn && *fuel_units < 32 {
+                            cells::take_from_side(sim, content, port.tile, port.side, INPUT_DEPTH, PORT_CELLS_PER_TICK, &[Phase::Powder], |mat| {
+                                if !port_allows(def, &port, ItemRef::Material(mat)) || !is_fuel(content, mat) || fuel.is_some_and(|f| f != mat) {
+                                    return false;
+                                }
+                                *fuel = Some(mat);
+                                *fuel_units += 1;
+                                true
+                            })
+                        } else { 0 }
+                    } else { 0 }
+                }
                 _ => 0,
             };
+            if taken > 0
+                && let Some(temperature) = hot_mold_input
+            {
+                crate::hot_metal::prime_mold(sim, def.body, b.cell_rect(), temperature);
+                b.temperature = b.temperature.max(temperature);
+            }
             if taken > 0 {
                 b.busy = true;
             }
@@ -1135,10 +1250,38 @@ impl Buildings {
         None
     }
 
+    /// A bulk output can feed a neighboring storage port directly, so powder need not land in
+    /// one exact world cell before the crate can collect it.
+    fn push_bulk(&mut self, i: u32, port: PlacedPort, item: ItemRef, count: u32, content: &Content) -> Option<(u32, u32)> {
+        let ItemRef::Material(_) = item else { return None };
+        let n_tile = neighbor_tile(port.tile, port.side);
+        let &nid = self.front.get(&n_tile)?;
+        let (me, dst) = two_mut(&mut self.slots, i as usize, nid.index as usize)?;
+        let their_port = dst.ports.iter().find(|p| {
+            p.kind == PortKind::BulkIn && p.tile == n_tile && p.side == opposite(port.side)
+        }).copied()?;
+        let my_def = content.factory.building_def(me.kind);
+        let their_def = content.factory.building_def(dst.kind);
+        if !port_allows(my_def, &port, item) || !port_allows(their_def, &their_port, item) {
+            return None;
+        }
+        let Logic::Storage(inv) = &mut dst.logic else { return None };
+        let left = inv.insert(content, item, count);
+        Some((count - left, nid.index))
+    }
+
     /// Machines work, labs research, the Hub delivers.
-    fn work<P: ProgressLink>(&mut self, i: u32, content: &Content, sim: &mut Simulation, progress: &mut P) {
+    fn work<P: ProgressLink>(
+        &mut self,
+        i: u32,
+        content: &Content,
+        sim: &mut Simulation,
+        progress: &mut P,
+        bellows: &[TilePos],
+    ) {
         let seed = self.seed ^ ((i as u64) << 32) ^ self.slots[i as usize].generation as u64;
         let Some(b) = self.at_index_mut(i) else { return };
+        b.steam_reason = None;
         let def = content.factory.building_def(b.kind);
         let power = def.power.as_ref();
         let electric = power.is_some_and(|p| p.tier > 0 || p.use_w > 0.0);
@@ -1159,6 +1302,16 @@ impl Buildings {
                     return;
                 };
                 let recipe = content.factory.recipe_def(r);
+                if def.kind == "mold"
+                    && m.inputs.iter().zip(&recipe.inputs).all(|(have, need)| *have >= need.count)
+                    && let Some(freeze_at) = crate::hot_metal::casting_freeze_point(content, recipe)
+                    && b.temperature >= freeze_at
+                {
+                    b.heat = b.temperature;
+                    b.status = Status::TooHot;
+                    b.power_w = idle_w;
+                    return;
+                }
                 if b.exhaust_blocked {
                     b.status = Status::OutputBlocked;
                     b.power_w = idle_w;
@@ -1168,20 +1321,37 @@ impl Buildings {
                 b.heat = heat;
                 let cond = Conditions {
                     speed: def.speed as f64 * machines::overclock_speed(def.tier, recipe.tier) * power_scale,
-                    has_power,
+                    has_power: has_power && steam_ready(b.steam, power.map_or(0.0, |p| p.steam_per_s as f64)),
                     too_hot,
                     heat,
                 };
+                if has_power && !steam_ready(b.steam, power.map_or(0.0, |p| p.steam_per_s as f64)) {
+                    b.steam_reason = Some("Needs steam from a connected bronze pipe".into());
+                }
                 let status = m.step(recipe, &cond, seed);
                 b.status = status;
-                if status == Status::Working {
+                let burning = if status == Status::Working {
+                    true
+                } else if def.kind == "furnace" {
+                    m.burn_tick()
+                } else {
+                    false
+                };
+                if burning {
                     b.busy = true;
-                    b.power_w = power.map_or(0.0, |p| p.use_w) * machines::overclock_power(def.tier, recipe.tier) as f32;
+                    b.power_w = if status == Status::Working {
+                        consume_steam(&mut b.steam, power.map_or(0.0, |p| p.steam_per_s as f64) / foundry_core::TICKS_PER_SECOND as f64);
+                        power.map_or(0.0, |p| p.use_w) * machines::overclock_power(def.tier, recipe.tier) as f32
+                    } else {
+                        idle_w
+                    };
                     // A burner heats the cells at its heat ports while it works.
                     if let Some(p) = power
                         && p.burn_w > 0.0
                     {
-                        let target = def.param("heat_temp", 800.0) as i16;
+                        let boosted = def.kind == "furnace"
+                            && crate::hot_metal::bellows_reaches_fire(bellows, b.at);
+                        let target = def.param("heat_temp", 800.0) as i16 + if boosted { 300 } else { 0 };
                         let step = (p.burn_w / 1000.0).clamp(1.0, 100.0) as i16;
                         for port in b.ports.iter().filter(|p| p.kind == PortKind::Heat) {
                             cells::heat_side(sim, port.tile, port.side, target, step);
@@ -1192,8 +1362,9 @@ impl Buildings {
                 }
             }
             Logic::Lab(lab) => {
-                if !has_power {
+                if !has_power || !steam_ready(b.steam, power.map_or(0.0, |p| p.steam_per_s as f64)) {
                     b.status = Status::NoPower;
+                    if has_power { b.steam_reason = Some("Needs steam from a connected bronze pipe".into()); }
                     lab.last = None;
                     return;
                 }
@@ -1201,9 +1372,11 @@ impl Buildings {
                 let st = progress.lab_tick(content, speed, &mut lab.kits);
                 let status = progress_link::lab_status(&st);
                 b.status = status;
+                b.steam_reason = None;
                 lab.last = Some(st);
                 if status == Status::Working {
                     b.busy = true;
+                    consume_steam(&mut b.steam, power.map_or(0.0, |p| p.steam_per_s as f64) / foundry_core::TICKS_PER_SECOND as f64);
                     b.power_w = power.map_or(0.0, |p| p.use_w);
                 } else {
                     b.power_w = idle_w;
@@ -1221,6 +1394,29 @@ impl Buildings {
                 b.status = if delivered { Status::Working } else { Status::Idle };
                 b.busy |= delivered;
             }
+            Logic::Passive if def.kind == "boiler" => {
+                match b.steam {
+                    SteamState::Boiler { fuel_units: 0, burn_ticks: 0, water, .. } if water > 0.0 => {
+                        b.status = Status::NoFuel;
+                    }
+                    SteamState::Boiler { water, .. } if water <= 0.0 => {
+                        b.status = Status::NoInput;
+                        b.steam_reason = Some("Waiting for water from a connected bronze pipe".into());
+                    }
+                    SteamState::Boiler { steam, .. } if steam >= crate::steam::TANK_CAPACITY => {
+                        b.status = Status::OutputFull;
+                        b.steam_reason = Some("Steam tank full".into());
+                    }
+                    SteamState::Boiler { .. } if b.temperature < 100 => {
+                        b.status = Status::Working;
+                        b.steam_reason = Some(format!("Heating water: {} °C / 100 °C", b.temperature));
+                    }
+                    _ => {
+                        b.status = Status::Working;
+                        b.steam_reason = Some("Making steam".into());
+                    }
+                }
+            }
             Logic::Storage(_) | Logic::Workbench | Logic::Passive => b.status = Status::Idle,
             Logic::Hopper(_) | Logic::Belt(_) => {}
         }
@@ -1231,6 +1427,8 @@ impl Buildings {
         let now = self.now;
         let Some(b) = self.at_index_mut(i) else { return };
         let def = content.factory.building_def(b.kind);
+        let next_push = b.next_push;
+        let mut bulk_outputs = Vec::new();
         match &mut b.logic {
             Logic::Machine(m) => {
                 let Some(r) = m.recipe else { return };
@@ -1254,6 +1452,10 @@ impl Buildings {
                             continue;
                         }
                         let want = m.outputs[j].min(PORT_CELLS_PER_TICK);
+                        if port.kind == PortKind::BulkOut && ph == Phase::Powder {
+                            bulk_outputs.push((j, *port, mat, want));
+                            break;
+                        }
                         let placed = cells::put_to_side(sim, port.tile, port.side, mat, want, None);
                         m.outputs[j] -= placed;
                         b.busy |= placed > 0;
@@ -1296,10 +1498,30 @@ impl Buildings {
             }
             _ => {}
         }
-        if now < b.next_push {
+        for (j, port, mat, want) in bulk_outputs {
+            let pushed = self.push_bulk(i, port, ItemRef::Material(mat), want, content);
+            let moved = pushed.map_or(0, |(n, _)| n);
+            let left = want - moved;
+            let placed = if left > 0 { cells::put_to_side(sim, port.tile, port.side, mat, left, None) } else { 0 };
+            if let Some(b) = self.at_index_mut(i) {
+                if let Logic::Machine(m) = &mut b.logic {
+                    m.outputs[j] -= moved + placed;
+                }
+                b.busy |= moved + placed > 0;
+                if pushed.is_none() && placed < left {
+                    b.blocked = true;
+                }
+            }
+            if let Some((_, dst)) = pushed {
+                self.wake_index(dst);
+            }
+        }
+        if now < next_push {
             return;
         }
-        let push_ports: Vec<PlacedPort> = b.ports.iter().filter(|p| p.kind == PortKind::PartOut).copied().collect();
+        let push_ports: Vec<PlacedPort> = self.at_index(i).into_iter().flat_map(|b| {
+            b.ports.iter().filter(|p| p.kind == PortKind::PartOut).copied()
+        }).collect();
         let mut woken = vec![];
         for port in push_ports {
             if let Some(j) = self.push_part(i, port, content) {
@@ -1490,7 +1712,11 @@ impl Buildings {
             inventory: None,
             progress: 0.0,
             power_w: b.power_w,
-            temperature: b.temperature,
+            // A recipe that needs heat shows the live heat-port reading in its window.
+            temperature: match &b.logic {
+                Logic::Machine(m) if m.recipe.is_some_and(|r| content.factory.recipe_def(r).min_temp.is_some()) => b.heat,
+                _ => b.temperature,
+            },
             max_temp: def.max_temp,
             hit_points: b.hit_points.ceil() as u32,
             max_hit_points: def.hit_points,
@@ -1536,6 +1762,9 @@ impl Buildings {
                         Status::TooCold => {
                             format!("Too cold: {} °C, needs {} °C", b.heat, recipe.min_temp.unwrap_or(0))
                         }
+                        Status::TooHot if def.kind == "mold" => crate::hot_metal::casting_freeze_point(content, recipe)
+                            .map(|freeze_at| format!("Cooling: {} °C; mold needs below {} °C", b.temperature, freeze_at))
+                            .unwrap_or_else(|| format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp)),
                         Status::TooHot => format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp),
                         Status::NoFuel => match fuel_hint(content, def) {
                             Some(f) => format!("No fuel: put {} in the fuel slot", content.materials.names[f.index()].to_lowercase()),
@@ -1570,7 +1799,29 @@ impl Buildings {
             }
             Logic::Belt(_) | Logic::Workbench | Logic::Passive => {}
         }
-        if b.status == Status::TooHot {
+        match b.steam {
+            SteamState::Boiler { fuel, fuel_units, burn_ticks, water, steam, .. } => {
+                v.fuel = Some(FuelView {
+                    material: fuel,
+                    units: fuel_units,
+                    capacity: 32,
+                    hint: content.material("coal").or_else(|| content.material("charcoal")),
+                    burning: burn_ticks as f32 / foundry_core::TICKS_PER_SECOND as f32,
+                });
+                if let (Some(water_id), Some(steam_id)) = (content.material("water"), content.material("steam")) {
+                    v.inputs.push(BufferView::new(content, ItemRef::Material(water_id), water.ceil() as u32, 200, 1));
+                    v.outputs.push(BufferView::new(content, ItemRef::Material(steam_id), steam.ceil() as u32, 200, 1));
+                }
+            }
+            SteamState::Pipe(tank) | SteamState::Machine(tank) => {
+                if let Some(material) = tank.material {
+                    v.inputs.push(BufferView::new(content, ItemRef::Material(material), tank.amount.ceil() as u32, tank.capacity as u32, 1));
+                }
+            }
+            SteamState::None => {}
+        }
+        if let Some(reason) = &b.steam_reason { v.reason = reason.clone(); }
+        if b.status == Status::TooHot && def.kind != "mold" {
             v.reason = format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp);
         }
         Some(v)
