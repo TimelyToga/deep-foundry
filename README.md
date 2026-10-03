@@ -72,7 +72,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 
 - Parts on belts, splitters and sorters.
 - A play-through test for Tier 1.
-- Building sprites (now buildings are blocks of their material with an outline).
+- Building sprites (now buildings are blocks of their material with an outline and a faint icon).
 - Blueprints, and ghosts that wait for items.
 - Power networks and electric machines (Tier 2 and later).
 - Deeper world layers, with more ores and hazards.

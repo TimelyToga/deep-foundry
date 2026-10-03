@@ -162,7 +162,7 @@ pub struct Building {
     /// Ticks in a row with nothing done.
     idle: u32,
     /// Something happened in this tick.
-    busy: bool,
+    pub(crate) busy: bool,
     /// An output port had no room in this tick.
     blocked: bool,
     /// An exhaust port had no room in this tick. The machine stops until it has room.
@@ -262,6 +262,9 @@ pub struct Buildings {
     /// Goes up when a building is placed or removed. Rooms check their walls again when it
     /// changes. Not saved.
     pub(crate) layout: u64,
+    /// The materials that a recipe uses (`digging::useful_materials`), made when a drill first
+    /// needs it. Not saved.
+    pub(crate) useful: Vec<bool>,
 }
 
 /// The saved form of `Buildings`. The tile maps, the workbench list and the counts of each
@@ -298,6 +301,7 @@ impl From<BuildingsSave> for Buildings {
             seed: s.seed,
             events: vec![],
             layout: 0,
+            useful: vec![],
         };
         for i in 0..b.slots.len() {
             let generation = b.slots[i].generation;
@@ -334,6 +338,7 @@ impl Default for Buildings {
             seed: 0x6275_696c_6469_6e67,
             events: vec![],
             layout: 0,
+            useful: vec![],
         }
     }
 }
@@ -1286,7 +1291,7 @@ impl Buildings {
     /// A bulk output feeds the powder input of the building on the other side of the port
     /// directly (a crate, a hopper, a machine), so powder need not land in one exact world cell
     /// first. `None`: no building there with a powder input facing this port.
-    fn push_bulk(&mut self, i: u32, port: PlacedPort, item: ItemRef, count: u32, content: &Content) -> Option<(u32, u32)> {
+    pub(crate) fn push_bulk(&mut self, i: u32, port: PlacedPort, item: ItemRef, count: u32, content: &Content) -> Option<(u32, u32)> {
         let ItemRef::Material(_) = item else { return None };
         let hub = self.hub.clone();
         let n_tile = neighbor_tile(port.tile, port.side);
@@ -1597,6 +1602,10 @@ impl Buildings {
     /// Output ports put cells into the world; part outputs give parts to neighbors.
     fn give_outputs(&mut self, i: u32, content: &Content, sim: &mut Simulation) {
         let now = self.now;
+        if self.at_index(i).is_some_and(|b| content.factory.building_def(b.kind).kind == "drill") {
+            crate::drill::give_outputs(self, i, content, sim);
+            return;
+        }
         let feeding = self.feeding_ports(i);
         let pour_room = self.pour_room(i, content);
         let mut pours = Vec::new();

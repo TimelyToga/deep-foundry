@@ -28,6 +28,8 @@ pub fn draw_under(p: &Painter, v: &View, frame: &FactoryFrame, b: &BuildView, at
     }
     if b.alt {
         alt_marks(p, v, frame, atlas);
+    } else {
+        building_icons(p, v, frame, atlas);
     }
     for r in &frame.remove_queue {
         p.rect(v.cell_rect(*r), CornerRadius::ZERO, Color32::from_rgba_unmultiplied(220, 60, 40, 40), Stroke::new(1.5, BAD), StrokeKind::Inside);
@@ -241,6 +243,21 @@ fn removal_ring(p: &Painter, v: &View, cells: CellRect, progress: f32) {
             })
             .collect();
         p.add(Shape::line(pts, Stroke::new(3.5, Color32::from_rgb(255, 170, 60))));
+    }
+}
+
+/// Normal view: each machine's own icon, faint, in its middle, so machines are easy to tell apart.
+fn building_icons(p: &Painter, v: &View, frame: &FactoryFrame, atlas: Option<&IconAtlas>) {
+    let Some(atlas) = atlas else { return };
+    for m in &frame.marks {
+        let Some(item) = m.icon else { continue };
+        let rect = v.cell_rect(m.rect);
+        let side = (rect.width().min(rect.height()) * 0.6).clamp(10.0, 44.0);
+        if side > rect.width().min(rect.height()) {
+            continue;
+        }
+        let r = Rect::from_center_size(rect.center(), vec2(side, side));
+        atlas.paint(p, item, r, Color32::from_white_alpha(150));
     }
 }
 

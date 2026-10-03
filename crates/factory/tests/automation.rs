@@ -112,8 +112,32 @@ fn a_drill_stops_when_nothing_is_left_in_reach() {
     let drill = f.place(kind(&c, "steam_drill"), TilePos::new(2, 10), 0, false, &mut sim).unwrap();
     let out = f.place(kind(&c, "crate"), TilePos::new(4, 11), 0, false, &mut sim).unwrap();
     run_with_steam(&mut f, &mut sim, &[drill], 600);
-    assert_eq!(f.buildings.inventory(out).unwrap().count(item(&c, "dirt")), 32);
+    // Dirt is waste: the drill throws it out to the left, not into the ore crate.
+    run(&mut f, &mut sim, 240);
+    assert_eq!(f.buildings.inventory(out).unwrap().count(item(&c, "dirt")), 0);
+    assert_eq!(sim.count_material(CellRect::new(-40, 0, 16, 96), mat(&c, "dirt")), 32);
     assert!(f.building_view(drill).unwrap().reason.contains("Nothing left to dig"), "{:?}", f.building_view(drill));
+}
+
+/// Dirt over a malachite vein: the ore goes into the crate on the right, the dirt out of the left
+/// port onto the ground.
+#[test]
+fn a_drill_sorts_ore_from_waste() {
+    let c = content();
+    let mut sim = world(&c, Some(96));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    fill(&mut sim, CellRect::new(16, 96, 32, 104), mat(&c, "dirt"), None);
+    fill(&mut sim, CellRect::new(16, 104, 32, 112), mat(&c, "malachite"), None);
+    fill(&mut sim, CellRect::new(16, 112, 32, 160), mat(&c, "bedrock"), None);
+    let drill = f.place(kind(&c, "steam_drill"), TilePos::new(2, 10), 0, false, &mut sim).unwrap();
+    let out = f.place(kind(&c, "crate"), TilePos::new(4, 11), 0, false, &mut sim).unwrap();
+    run_with_steam(&mut f, &mut sim, &[drill], 1800);
+    let inv = f.buildings.inventory(out).unwrap();
+    assert_eq!(inv.count(item(&c, "raw_malachite")), 128, "{:?}", inv.contents());
+    assert_eq!(inv.count(item(&c, "dirt")), 0);
+    run(&mut f, &mut sim, 240);
+    assert_eq!(sim.count_material(CellRect::new(-40, 0, 16, 96), mat(&c, "dirt")), 128);
 }
 
 /// An arm takes coal from a crate and puts it into a boiler's fuel.

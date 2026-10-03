@@ -438,14 +438,15 @@
     Building(
         id: "steam_drill",
         name: "Steam drill",
-        description: "Mines the ground under it, down to 6 tiles deep and as wide as the drill, and puts the dug material out of its port on the right (into a crate, a hopper, a belt or the ground). It digs stone and iron ore. Uses 3 steam per second.",
+        description: "Mines the ground under it, down to 6 tiles deep and as wide as the drill. Useful material (ore, coal, clay, sand) comes out of its port on the right, waste (dirt, stone) out of its port on the left: into a crate, a hopper, a belt or the ground. It digs stone and iron ore. Uses 3 steam per second.",
         kind: "drill",
         size: (2, 2),
         tier: 1,
         body: "bronze_block",
         max_temp: 400,
         ports: [
-            (kind: BulkOut, tile: (1, 1), side: Right),
+            (kind: BulkOut, tile: (1, 1), side: Right, name: Some("Ore")),
+            (kind: BulkOut, tile: (0, 1), side: Left, name: Some("Waste")),
             (kind: Pipe, tile: (0, 0), side: Left, name: Some("Steam in")),
         ],
         power: Some((tier: 0, steam_per_s: 3.0)),

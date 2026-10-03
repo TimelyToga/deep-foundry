@@ -752,7 +752,6 @@ fn setup_normal_screen(
         }
         UiState::Automation => {
             mouse = Some(lines::automation(h, sim, &content));
-            n.build.alt = true;
         }
         UiState::GuideWorkbench | UiState::GuideDone => {
             // The goals up to the workbench and the two ores are done.
