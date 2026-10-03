@@ -40,7 +40,8 @@ OPTIONS:
     --settings FILE          The settings file (default: settings.ron in the app data folder)
     --smoke-test             Play a fixed list of UI actions in the window (new game, paint, pause,
                              save, load, quit to menu, continue, delete) and quit; exit code 1 on a
-                             failure. Use it with --saves and an empty folder.
+                             failure. Use it with --saves and an empty folder. It uses the demo world
+                             unless --world is given.
     --screenshot OUT.png     Render one image with no window, save it, and quit
       --ticks N              Ticks to run before the screenshot (default 0)
       --size WxH             Image size in pixels (default 1600x900)
@@ -293,6 +294,7 @@ pub enum Parsed {
 
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
     let mut out = Args::default();
+    let mut world_given = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| it.next().ok_or_else(|| format!("{name} needs a value"));
@@ -307,6 +309,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 out.depth = d;
             }
             "--world" => {
+                world_given = true;
                 let v = value("--world")?;
                 if v == "gen" || v == "demo" {
                     out.generated = v == "gen";
@@ -400,6 +403,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--center" => out.center = Some(pair::<f64>(&value("--center")?, ',', "--center")?),
             other => return Err(format!("unknown option `{other}`")),
         }
+    }
+    // The smoke test plays a fixed script in the demo world (clay next to the start).
+    if out.smoke_test && !world_given {
+        out.generated = false;
     }
     Ok(Parsed::Run(Box::new(out)))
 }
