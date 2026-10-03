@@ -116,11 +116,13 @@
     Building(
         id: "bellows",
         name: "Bellows",
-        description: "Placed within 3 tiles of a fire, it blows air into the fire and raises its temperature by 300 °C.",
+        description: "Placed within 3 tiles of a campfire, it blows air into the fire and makes it 300 °C hotter. In the wall of a kiln, or right next to it, it makes the kiln fire 300 °C hotter: enough for copper and firebrick. Its air pipe is clay brick, so it does not burn.",
         kind: "bellows",
         size: (1, 1),
         tier: 0,
-        body: "wood_block",
+        // The air pipe into the fire (a tuyere) is clay brick: a wood body burns next to a hot kiln.
+        body: "clay_brick_block",
+        max_temp: 1200,
         category: Some("power"),
     ),
     Building(
@@ -430,7 +432,7 @@
             (kind: FluidOut, tile: (1, 0), side: Right, name: Some("Tap")),
             (kind: Pipe, tile: (0, 1), side: Left, name: Some("Steam in")),
         ],
-        crafts: ["crucible_smelting", "alloying", "glass_melting"],
+        crafts: ["crucible_smelting", "alloying", "glass_melting", "curing"],
         power: Some((tier: 0, steam_per_s: 3.0)),
         // With steam the furnace counts as this hot for the min_temp of its recipes.
         params: {"internal_heat": 1300.0, "buffer_crafts": 4.0},

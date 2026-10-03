@@ -154,6 +154,9 @@
     Recipe(id: "glass_vial", category: "casting_vial", inputs: [("molten_glass", 8)], outputs: [("glass_vial", 1)], time: 4.0),
 
     Recipe(id: "resin", category: "extracting", inputs: [("rubber_wood", 16)], outputs: [("resin", 8)], time: 5.0),
+    // Resin turns into rubber at 150 °C (also as cells in the world); the steam furnace does it
+    // in its buffer.
+    Recipe(id: "rubber", name: Some("Rubber"), category: "curing", inputs: [("resin", 16)], outputs: [("rubber", 16)], time: 4.0, min_temp: Some(150)),
     Recipe(id: "rubber_sheet", category: "pressing", inputs: [("rubber", 16)], outputs: [("rubber_sheet", 1)], time: 3.0),
 
     Recipe(id: "steam_kit", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("bronze_pipe_section", 1), ("glass_vial", 1)], outputs: [("steam_kit", 1)], time: 8.0),

@@ -151,7 +151,7 @@
         id: "t1_rubber",
         tier: 1,
         title: "Make rubber",
-        text: "Rubber trees grow in the woods far from the Hub: their trunks are rubber tree wood. A steam extractor turns rubber tree wood into resin. Heat resin to 150 °C to make rubber. A steam press makes rubber sheets.",
+        text: "Rubber trees grow in the woods far from the Hub: their trunks are rubber tree wood. A steam extractor turns rubber tree wood into resin: put a barrel under it. A steam furnace (recipe Rubber) turns resin into rubber; an arm moves the resin from the barrel into the furnace. A steam press makes rubber sheets from rubber.",
         condition: HaveItem("rubber_sheet", 10),
         reward_points: 2,
     ),
