@@ -449,7 +449,8 @@ impl Game {
             | UiState::KilnHole
             | UiState::SteamLine
             | UiState::Smelter
-            | UiState::Automation => {}
+            | UiState::Automation
+            | UiState::Cave => {}
             UiState::Pause | UiState::Save => {
                 self.pause();
                 if state == UiState::Save {

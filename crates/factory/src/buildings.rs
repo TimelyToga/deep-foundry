@@ -144,8 +144,11 @@ pub struct Building {
     /// 0 to 1: the part of the needed power that the building gets. The power network sets it.
     /// Buildings that do not use electric power ignore it.
     pub power_factor: f32,
-    /// Power use in the last tick (W).
+    /// Power use in the last tick (W). A battery: watts in (less than 0: out).
     pub power_w: f32,
+    /// A battery: the stored energy (J).
+    #[serde(default)]
+    pub charge_j: f64,
     pub status: Status,
     pub logic: Logic,
     /// Persisted boiler, pipe and steam-machine fluid state.
@@ -190,6 +193,7 @@ impl Building {
             lost_cells: 0,
             power_factor: 1.0,
             power_w: 0.0,
+            charge_j: 0.0,
             status: Status::Idle,
             logic: Logic::for_kind(def),
             steam: SteamState::for_kind(&def.kind, def.power.as_ref().is_some_and(|p| p.steam_per_s > 0.0)),
@@ -2061,6 +2065,16 @@ impl Buildings {
             room: None,
             power: self.power_info(content, id),
         };
+        if let Some(store) = def.power.as_ref().map(|p| p.store_j as f64).filter(|&s| s > 0.0) {
+            let kj = |j: f64| (j / 1000.0).round();
+            v.reason = match v.power.as_ref().is_some_and(|p| p.connected) {
+                false => "Not connected: put a copper cable behind its power port".to_string(),
+                true if b.power_w > 0.5 => format!("Charging: {} of {} kJ", kj(b.charge_j), kj(store)),
+                true if b.power_w < -0.5 => format!("Giving power: {} of {} kJ left", kj(b.charge_j), kj(store)),
+                true => format!("Stored: {} of {} kJ", kj(b.charge_j), kj(store)),
+            };
+            v.progress = (b.charge_j / store) as f32;
+        }
         match &b.logic {
             Logic::Machine(m) => {
                 v.fuel = m.fuel.map(|f| FuelView {

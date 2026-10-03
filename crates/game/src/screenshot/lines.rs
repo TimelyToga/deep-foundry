@@ -132,3 +132,37 @@ pub fn automation(host: &mut FactoryHost, sim: &mut Simulation, content: &Conten
     }
     TilePos::new(x + 4, b - 1).origin().offset(8, 8)
 }
+
+/// The cave under the start area (see `foundry_worldgen` `deep.rs`): the robot stands on its
+/// floor, with moss lanterns and a crystal lamp around it. Returns the robot's feet.
+pub fn cave(host: &mut FactoryHost, sim: &mut Simulation, content: &Content) -> CellPos {
+    for i in 0..content.factory.techs.len() {
+        host.factory.progress.debug_complete(content, TechId(i as u16));
+    }
+    let x = 300;
+    let solid = |sim: &Simulation, y: i32| crate::player::blocks(content, sim.cell(CellPos::new(x, y)).material);
+    // Down from the ground: rock, then the open cells of the cave, then its floor.
+    let ground = crate::factory_host::ground_top(sim, content, x);
+    let Some(ceiling) = (ground + 8..ground + 1200).find(|&y| !solid(sim, y)) else { return host.robot.center_cell() };
+    let floor = (ceiling..ceiling + 400).find(|&y| solid(sim, y)).unwrap_or(ceiling);
+    host.robot = crate::player::Robot::standing_at(CellPos::new(x, floor));
+    // Lamps on the floor: each stands on the first solid cell below its tile.
+    let lamps = [(-12, "moss_lantern"), (-5, "moss_lantern"), (6, "crystal_lamp"), (13, "moss_lantern")];
+    for (dx, id) in lamps {
+        let tx = x.div_euclid(TILE_SIZE) + dx;
+        // The highest floor cell under the tile's columns: the tile above it is open.
+        let floor_at = |cx: i32| {
+            let solid_at = |y: i32| crate::player::blocks(content, sim.cell(CellPos::new(cx, y)).material);
+            let open = (floor - 40..floor + 40).find(|&y| !solid_at(y))?;
+            (open..open + 80).find(|&y| solid_at(y))
+        };
+        let Some(top) = (tx * TILE_SIZE..(tx + 1) * TILE_SIZE).map(floor_at).collect::<Option<Vec<_>>>().and_then(|v| v.into_iter().min()) else { continue };
+        let kind = content.factory.building(id).expect("lamp");
+        let _ = host.factory.place(kind, TilePos::new(tx, top.div_euclid(TILE_SIZE) - 1), 0, false, sim);
+    }
+    for _ in 0..30 {
+        sim.tick();
+        host.tick(sim);
+    }
+    CellPos::new(x, floor)
+}

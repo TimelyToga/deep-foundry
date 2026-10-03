@@ -652,6 +652,25 @@ impl Player {
                 self.craft("electric_motor", 3)?;
                 self.build_at("electric_drill", TilePos::new(x - 20, b - 1), -16).map(|_| ())
             }),
+            "t1_deep_rock" => self.lab_research(plant, "steel_drill_head"),
+            "t2_gold" => {
+                // The robot finds gold in the deep rock (the world generator test checks that
+                // it is there): the scan is given.
+                let gold = self.host.factory.content.expect_material("native_gold");
+                self.host.factory.progress.discover_material(gold);
+                self.lab_research(plant, "gold")
+            }
+            "t2_circuits" => {
+                // Gold plates from a furnace and a mold (tests/automation.rs in foundry_factory checks
+                // that line); glass panes and rubber sheets from the Tier 1 lines.
+                for (id, n) in [("gold_plate", 2), ("glass_pane", 4), ("rubber_sheet", 4)] {
+                    self.give_item(id, n);
+                }
+                self.craft("gold_wire", 2).and_then(|_| self.craft("circuit", 4))
+            }
+            // On the last cable of the turbine's line (tile x + 20, row b - 5): the power port is
+            // the bottom tile of the battery.
+            "t2_battery" => self.lab_research(plant, "batteries").and_then(|_| self.build_at("battery", TilePos::new(x + 20, b - 6), 14).map(|_| ())),
             "t1_hub" => {
                 // The grind of the second repair (more of what the lines above make) is given.
                 for (id, n) in [("steel_plate", 100), ("copper_wire", 200), ("rubber_sheet", 20)] {

@@ -1217,6 +1217,9 @@ pub struct PowerFrame {
     pub production_w: f64,
     pub capacity_w: f64,
     pub consumption_w: f64,
+    /// Joules in the batteries, and the most they can hold.
+    pub stored_j: f64,
+    pub capacity_j: f64,
     /// (building type, count, watts now) for the generators and for the machines.
     pub producers: Vec<(BuildingKindId, u32, f64)>,
     pub consumers: Vec<(BuildingKindId, u32, f64)>,
@@ -1229,7 +1232,7 @@ impl FactoryHost {
     fn power_frame(&mut self) -> Option<PowerFrame> {
         let id = self.power_open?;
         let f = &self.factory;
-        let net = f.buildings.power_nets().iter().find(|n| n.generators.contains(&id) || n.consumers.contains(&id))?.clone();
+        let net = f.buildings.power_nets().iter().find(|n| n.generators.contains(&id) || n.consumers.contains(&id) || n.batteries.contains(&id))?.clone();
         if f.buildings.now().is_multiple_of(30) || self.power_history.is_empty() {
             self.power_history.push_back((net.used_w as f32, net.used_w.min(net.demand_w) as f32));
             while self.power_history.len() > 120 {
@@ -1254,7 +1257,9 @@ impl FactoryHost {
             satisfaction: net.satisfaction,
             production_w: net.used_w,
             capacity_w: net.supply_w,
-            consumption_w: net.used_w.min(net.demand_w),
+            consumption_w: net.demand_w * net.satisfaction as f64,
+            stored_j: net.stored_j,
+            capacity_j: net.capacity_j,
             producers: group(&net.generators),
             consumers: group(&net.consumers),
             history: self.power_history.iter().copied().collect(),
