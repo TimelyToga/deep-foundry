@@ -122,6 +122,8 @@ impl Buildings {
             }
             Logic::Storage(inv) => inv.contents().into_iter().map(|s| (s.item, s.count)).collect(),
             Logic::Hopper(h) => h.counts().into_iter().map(|(m, n)| (ItemRef::Material(m), n)).collect(),
+            // The parts on a belt tile, the front one first.
+            Logic::Belt(belt) => belt.parts.iter().map(|p| (ItemRef::Part(p.part), 1)).collect(),
             _ => vec![],
         }
     }
@@ -137,6 +139,16 @@ impl Buildings {
             Logic::Hopper(h) => {
                 let ItemRef::Material(m) = item else { return 0 };
                 take_cells(&mut h.cells, m, n)
+            }
+            Logic::Belt(belt) => {
+                let ItemRef::Part(p) = item else { return 0 };
+                match belt.parts.iter().position(|x| x.part == p) {
+                    Some(k) if n > 0 => {
+                        belt.parts.remove(k);
+                        1
+                    }
+                    _ => 0,
+                }
             }
             _ => 0,
         }

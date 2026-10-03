@@ -65,6 +65,14 @@ pub fn draw(painter: &Painter, frame: &FactoryFrame, s: &Scene) {
     for m in frame.marks.iter().filter(|m| !m.back) {
         outline(painter, &v, m);
     }
+    // Parts on belts: a small icon sitting on the belt.
+    if let Some(atlas) = s.atlas {
+        for (c, item) in &frame.belt_parts {
+            let center = v.pos(c.x as f64 + 0.5, c.y as f64 + 0.5);
+            let side = (5.0 * v.scale()).clamp(8.0, 40.0);
+            atlas.paint(painter, *item, Rect::from_center_size(center, vec2(side, side)), Color32::WHITE);
+        }
+    }
     for m in frame.marks.iter().filter(|m| m.status.is_problem()) {
         status_mark(painter, &v, m.rect, m.status);
     }

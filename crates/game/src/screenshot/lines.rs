@@ -84,12 +84,12 @@ fn steam(host: &mut FactoryHost, content: &Content, id: BuildingId) {
 
 /// A Tier 1 line with no player action: a steam drill over a malachite vein → crate → arm →
 /// steam furnace (charcoal from a hopper on it) → plate mold → crate → arm → steam assembler
-/// (bronze gears from the plates of another crate) → arm → crate.
+/// (bronze gears from the plates of another crate) → arm → belts → crate.
 pub fn automation(host: &mut FactoryHost, sim: &mut Simulation, content: &Content) -> CellPos {
     for i in 0..content.factory.techs.len() {
         host.factory.progress.debug_complete(content, TechId(i as u16));
     }
-    let (x, b) = site(host, sim, content, 16);
+    let (x, b) = site(host, sim, content, 19);
     // A malachite vein under the drill.
     let vein = content.expect_material("malachite");
     for cy in (b + 1) * TILE_SIZE..(b + 6) * TILE_SIZE {
@@ -109,13 +109,16 @@ pub fn automation(host: &mut FactoryHost, sim: &mut Simulation, content: &Conten
     place(host, sim, content, "arm", TilePos::new(x + 10, b));
     let assembler = place(host, sim, content, "steam_assembler", TilePos::new(x + 11, b - 1));
     place(host, sim, content, "arm", TilePos::new(x + 13, b));
-    place(host, sim, content, "crate", TilePos::new(x + 14, b));
+    for k in 14..17 {
+        place(host, sim, content, "wood_belt", TilePos::new(x + k, b));
+    }
+    place(host, sim, content, "crate", TilePos::new(x + 17, b));
     recipe(host, content, furnace, "copper_smelting");
     recipe(host, content, mold, "copper_plate");
     recipe(host, content, assembler, "bronze_gear");
     host.factory.buildings.insert(content, hopper, item(content, "charcoal"), 64);
-    host.factory.buildings.insert(content, plates, item(content, "bronze_plate"), 40);
-    for k in 0..60 * 40 {
+    host.factory.buildings.insert(content, plates, item(content, "bronze_plate"), 80);
+    for k in 0..60 * 30 {
         if k % 300 == 0 {
             for id in [drill, furnace, assembler] {
                 steam(host, content, id);

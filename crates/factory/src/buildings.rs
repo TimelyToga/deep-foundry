@@ -426,6 +426,11 @@ fn accept_room(logic: &Logic, content: &Content, item: ItemRef, hub: &HubRule) -
             }
             _ => 0,
         },
+        // A part goes on at the start of a belt tile, when there is room there.
+        Logic::Belt(belt) => match item {
+            ItemRef::Part(_) => belt.has_room_at_start() as u32,
+            ItemRef::Material(_) => 0,
+        },
         _ => 0,
     }
 }
@@ -478,6 +483,10 @@ fn accept(logic: &mut Logic, content: &Content, item: ItemRef, n: u32, hub: &Hub
             ItemRef::Material(m) => (0..n).take_while(|_| h.push(m)).count() as u32,
             ItemRef::Part(_) => 0,
         },
+        Logic::Belt(belt) => match item {
+            ItemRef::Part(p) => belt.push_start(p) as u32,
+            ItemRef::Material(_) => 0,
+        },
         _ => 0,
     }
 }
@@ -506,7 +515,17 @@ pub(crate) fn take_contents(logic: &mut Logic, content: &Content) -> Vec<Stack> 
                 .filter(|s| s.count > 0)
                 .collect()
         }
-        Logic::Passive | Logic::Workbench | Logic::Belt(_) | Logic::Arm(_) => vec![],
+        Logic::Belt(belt) => {
+            let mut out: Vec<Stack> = vec![];
+            for p in belt.parts.drain(..) {
+                match out.iter_mut().find(|s| s.item == ItemRef::Part(p.part)) {
+                    Some(s) => s.count += 1,
+                    None => out.push(Stack { item: ItemRef::Part(p.part), count: 1 }),
+                }
+            }
+            out
+        }
+        Logic::Passive | Logic::Workbench | Logic::Arm(_) => vec![],
     }
 }
 
@@ -1251,7 +1270,7 @@ impl Buildings {
         let (me, dst) = two_mut(&mut self.slots, i as usize, nid.index as usize)?;
         let their_port =
             dst.ports.iter().find(|p| p.kind == PortKind::PartIn && p.tile == n_tile && p.side == opposite(port.side)).copied();
-        if their_port.is_none() && !matches!(dst.logic, Logic::Storage(_)) {
+        if their_port.is_none() && !matches!(dst.logic, Logic::Storage(_) | Logic::Belt(_)) {
             return None;
         }
         let my_def = content.factory.building_def(me.kind);
@@ -1786,7 +1805,8 @@ impl Buildings {
             if steps == 0 {
                 // Not a step tick. A belt with powder on it stays awake for the next step.
                 let r = b.cell_rect();
-                let loaded = (r.x0..r.x1).any(|x| phase(content, sim.cell(CellPos::new(x, r.y0 - 1)).material) == Phase::Powder);
+                let parts = matches!(&b.logic, Logic::Belt(belt) if !belt.parts.is_empty());
+                let loaded = parts || (r.x0..r.x1).any(|x| phase(content, sim.cell(CellPos::new(x, r.y0 - 1)).material) == Phase::Powder);
                 if loaded && let Some(b) = self.at_index_mut(i) {
                     b.busy = true;
                 }
@@ -1805,6 +1825,7 @@ impl Buildings {
             let mut moved = 0;
             for _ in 0..steps {
                 moved += move_belt_cells(sim, content, r, dir);
+                moved += self.move_belt_parts(i, content) as u32;
             }
             let b = self.at_index_mut(i).expect("belt exists");
             b.busy |= moved > 0;
@@ -1822,6 +1843,43 @@ impl Buildings {
                 }
             }
         }
+    }
+
+    /// One step of the parts on belt `i`: the front part goes on to the next belt or into the
+    /// building at the end of the belt (a crate, the Hub, a lab, or a machine with a part input
+    /// facing the belt) when it reaches the end; the others move up, a gap apart.
+    /// Returns true if a part moved.
+    fn move_belt_parts(&mut self, i: u32, content: &Content) -> bool {
+        let Some(b) = self.at_index(i) else { return false };
+        let Logic::Belt(belt) = &b.logic else { return false };
+        if belt.parts.is_empty() {
+            return false;
+        }
+        let end = (TILE_SIZE - 1) as u8;
+        let dir = belt_direction(b.transform);
+        let mut handed = false;
+        if let Some(front) = belt.parts.first().copied().filter(|p| p.pos >= end) {
+            let side = if dir > 0 { Side::Right } else { Side::Left };
+            let next = neighbor_tile(b.at, side);
+            if let Some(&nid) = self.front.get(&next)
+                && nid.index != i
+            {
+                let item = ItemRef::Part(front.part);
+                let takes = self.get(nid).is_some_and(|n| match &n.logic {
+                    Logic::Belt(_) | Logic::Storage(_) | Logic::Hub(_) | Logic::Lab(_) => true,
+                    Logic::Machine(_) => n.ports.iter().any(|q| q.kind == PortKind::PartIn && q.tile == next && q.side == opposite(side)),
+                    _ => false,
+                });
+                if takes && self.room_for(content, nid, item) > 0 && self.insert(content, nid, item, 1) == 1 {
+                    handed = true;
+                }
+            }
+        }
+        let Some(Logic::Belt(belt)) = self.at_index_mut(i).map(|b| &mut b.logic) else { return false };
+        if handed {
+            belt.parts.remove(0);
+        }
+        belt.advance(end) || handed
     }
 
     /// Decide if the building sleeps after this tick.

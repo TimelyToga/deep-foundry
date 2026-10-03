@@ -44,7 +44,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - A hover box shows what is under the mouse.
 - **Factory**
   - Hand crafting and a workbench.
-  - Crates, barrels, hoppers and belts.
+  - Crates, barrels, hoppers and belts. Belts move powder and parts.
   - Room machines: kiln, coke oven and blast furnace.
   - Crucible, bellows and casting molds: the crucible pours into a mold, and the mold puts the plates into a crate.
   - Stamp mill and sluice.
@@ -70,7 +70,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 
 ## Planned features
 
-- Parts on belts, splitters and sorters.
+- Splitters, sorters and belt lifts.
 - A play-through test for Tier 1.
 - Building sprites (now buildings are blocks of their material with an outline and a faint icon).
 - Blueprints, and ghosts that wait for items.
@@ -85,7 +85,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 | ![The start in a generated world](docs/screenshots/world_gen.jpg) | ![A kiln room that fires clay bricks](docs/screenshots/kiln.jpg) |
 | The start, with the guide | A kiln room that fires clay bricks |
 | ![The smelting site](docs/screenshots/smelter.jpg) | ![An automated line](docs/screenshots/automation.jpg) |
-| Tier 0: a crucible on a campfire pours copper into a mold | Tier 1: a steam drill, arms, a steam furnace, a mold and a gear assembler |
+| Tier 0: a crucible on a campfire pours copper into a mold | Tier 1: a steam drill, arms, a steam furnace, a mold, a gear assembler and gears on a belt |
 | ![A steam crusher](docs/screenshots/steam_line.jpg) | ![The robot's animations](tools/sprites/robot_preview.png) |
 | A steam crusher at work | The robot's animations |
 
