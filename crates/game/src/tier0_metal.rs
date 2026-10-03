@@ -46,7 +46,11 @@ impl Player {
         self.apply(FactoryCommand::PickToCursor(p));
         self.apply(FactoryCommand::Place(Placement::new(kind, tile, 0)));
         self.apply(FactoryCommand::ClearCursor);
-        self.building_on(tile)
+        let layer = self.content.factory.building_def(kind).layer;
+        self.host
+            .factory
+            .buildings
+            .at_tile(tile, layer)
             .filter(|id| self.host.factory.buildings.get(*id).is_some_and(|b| b.kind == kind))
             .ok_or_else(|| format!("cannot place {part} at {tile:?}; notices: {:?}", self.host.frame(&self.sim, 0).notices))
     }
@@ -83,7 +87,7 @@ impl Player {
     }
 
     /// Clear loose powder and leaves (not building cells) in the cells `x0..x1`, `y0..y1`.
-    fn clear_area(&mut self, x0: i32, x1: i32, y0: i32, y1: i32) {
+    pub(super) fn clear_area(&mut self, x0: i32, x1: i32, y0: i32, y1: i32) {
         let leaves = self.content.expect_material("leaves");
         for y in y0..y1 {
             for x in x0..x1 {
@@ -176,7 +180,7 @@ impl Player {
     }
 
     /// Click the tank of a material with a building window open: the material goes in.
-    fn click_tank(&mut self, material: &str) {
+    pub(super) fn click_tank(&mut self, material: &str) {
         self.sync();
         if let Some(t) = self.tank_of(material) {
             self.ui(&[UiAction::ClickSlot { slot: SlotRef::Tank(t), click: SlotClick::CTRL_LEFT }]);
@@ -192,7 +196,7 @@ impl Player {
     }
 
     /// Choose the recipe of the open building.
-    fn choose(&mut self, id: BuildingId, recipe: &str) -> Result<(), String> {
+    pub(super) fn choose(&mut self, id: BuildingId, recipe: &str) -> Result<(), String> {
         let r = self.content.factory.recipe(recipe).ok_or(format!("no recipe {recipe}"))?;
         if self.host.factory.building_view(id).is_some_and(|v| v.recipe == Some(r)) {
             return Ok(());
@@ -298,7 +302,7 @@ impl Player {
     }
 
     /// How many of an item a storage building holds.
-    fn stored(&self, id: BuildingId, item: &str) -> u32 {
+    pub(super) fn stored(&self, id: BuildingId, item: &str) -> u32 {
         let it = self.content.item(item).unwrap();
         self.host.factory.buildings.inventory(id).map_or(0, |inv| inv.count(it))
     }

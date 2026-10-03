@@ -22,6 +22,8 @@ use std::time::Instant;
 mod ore_guide;
 #[path = "tier0_metal.rs"]
 mod metal;
+#[path = "tier1_lines.rs"]
+mod tier1;
 
 struct Player {
     host: FactoryHost,

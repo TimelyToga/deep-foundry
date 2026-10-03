@@ -1305,6 +1305,11 @@ impl Buildings {
         if !port_allows(my_def, &port, item) || !port_allows(their_def, &their_port, item) {
             return None;
         }
+        if matches!(dst.steam, SteamState::Boiler { .. }) {
+            // A boiler: the fuel slot (see `insert`).
+            let _ = hub;
+            return Some((self.insert(content, nid, item, count), nid.index));
+        }
         // A storage, a hopper, a machine or the Hub with a powder input facing this port.
         Some((accept(&mut dst.logic, content, item, count, &hub), nid.index))
     }

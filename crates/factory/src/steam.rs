@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 pub const TANK_CAPACITY: f64 = 200.0;
 const PIPE_FLOW_PER_TICK: f64 = 0.5;
 const BOILER_STEAM_PER_SECOND: f64 = 6.0;
+/// Seconds that one unit of fuel burns in a boiler (one coal every 4 seconds).
+const FUEL_SECONDS: u32 = 4;
+/// Units of steam from one unit of water: a boiler at full speed uses 2 water per second.
+const STEAM_PER_WATER: f64 = 3.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct FluidTank {
@@ -209,7 +213,7 @@ impl Buildings {
             {
                 if *burn_ticks == 0 {
                     *fuel_units -= 1;
-                    *burn_ticks = foundry_core::TICKS_PER_SECOND;
+                    *burn_ticks = FUEL_SECONDS * foundry_core::TICKS_PER_SECOND;
                 }
                 *burn_ticks = burn_ticks.saturating_sub(1);
                 // Heat the boiler's actual body cells while fuel burns.
@@ -240,8 +244,8 @@ impl Buildings {
                         BOILER_STEAM_PER_SECOND / foundry_core::TICKS_PER_SECOND as f64;
                     let produced = fraction.floor();
                     if produced > 0.0 {
-                        let amount = produced.min(*water_tank).min(TANK_CAPACITY - *steam_tank);
-                        *water_tank -= amount;
+                        let amount = produced.min(*water_tank * STEAM_PER_WATER).min(TANK_CAPACITY - *steam_tank);
+                        *water_tank -= amount / STEAM_PER_WATER;
                         *steam_tank += amount;
                         *fraction -= amount;
                     }
