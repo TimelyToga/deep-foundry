@@ -343,3 +343,23 @@ fn an_arm_with_a_filter_moves_only_that_part() {
     let inv = f.buildings.inventory(to).unwrap();
     assert_eq!((inv.count(item(&c, "tin_plate")), inv.count(item(&c, "bronze_gear"))), (5, 0));
 }
+
+/// Raw gold from the deep and charcoal from a hopper → steam furnace → plate mold: gold plates.
+#[test]
+fn a_steam_furnace_smelts_gold_into_plates() {
+    let c = content();
+    let mut sim = world(&c, Some(96));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let furnace = f.place(kind(&c, "steam_furnace"), TilePos::new(6, 10), 0, false, &mut sim).unwrap();
+    let hopper = f.place(kind(&c, "hopper"), TilePos::new(6, 9), 0, false, &mut sim).unwrap();
+    let mold = f.place(kind(&c, "plate_mold"), TilePos::new(8, 11), 0, false, &mut sim).unwrap();
+    let plates = f.place(kind(&c, "crate"), TilePos::new(9, 11), 0, false, &mut sim).unwrap();
+    f.set_recipe(furnace, c.factory.recipe("gold_smelting")).unwrap();
+    f.set_recipe(mold, c.factory.recipe("gold_plate")).unwrap();
+    f.buildings.insert(&c, hopper, item(&c, "raw_gold"), 32);
+    f.buildings.insert(&c, hopper, item(&c, "charcoal"), 8);
+    run_with_steam(&mut f, &mut sim, &[furnace], 60 * 60);
+    let made = f.buildings.inventory(plates).unwrap().count(item(&c, "gold_plate"));
+    assert_eq!(made, 2, "furnace {:?}; mold {:?}", f.building_view(furnace), f.building_view(mold));
+}

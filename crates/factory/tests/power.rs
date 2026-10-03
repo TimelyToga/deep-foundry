@@ -97,3 +97,36 @@ fn too_little_power_slows_every_machine() {
     assert!((net.satisfaction - 12000.0 / 14400.0).abs() < 0.01, "{net:?}");
     assert!((f.buildings.get(a).unwrap().power_factor - net.satisfaction).abs() < 0.01);
 }
+
+/// A battery fills while the turbine makes more than the machines use, and powers a macerator
+/// when the turbine has no steam.
+#[test]
+fn a_battery_stores_power_and_gives_it_back() {
+    let (c, mut sim, mut f, turbine) = setup(11);
+    let mac = f.place(kind(&c, "macerator"), TilePos::new(8, 10), 0, false, &mut sim).unwrap();
+    // The battery's power port is its bottom tile (10, 11), on the cable.
+    let battery = f.place(kind(&c, "battery"), TilePos::new(10, 10), 0, false, &mut sim).unwrap();
+    // The macerator has no recipe: the turbine's power goes into the battery (5 kW).
+    for _ in 0..10 {
+        give_steam(&mut f, turbine);
+        run(&mut f, &mut sim, 60);
+    }
+    let charge = f.buildings.get(battery).unwrap().charge_j;
+    assert!((40_000.0..=50_001.0).contains(&charge), "{charge} J after 10 s at 5 kW");
+    let net = f.buildings.power_nets()[0].clone();
+    assert_eq!(net.batteries, vec![battery]);
+    assert!(f.building_view(battery).unwrap().reason.starts_with("Charging"), "{:?}", f.building_view(battery));
+    // No steam now; the macerator works on battery power.
+    if let Some(b) = f.buildings.get_mut(turbine)
+        && let SteamState::Machine(t) = &mut b.steam
+    {
+        t.amount = 0.0;
+    }
+    f.set_recipe(mac, c.factory.recipe("crushed_malachite")).unwrap();
+    f.buildings.insert(&c, mac, item(&c, "raw_malachite"), 32);
+    run(&mut f, &mut sim, 300);
+    let v = f.building_view(mac).unwrap();
+    assert_ne!(v.status, Status::NoPower, "{v:?}");
+    assert!(v.outputs[0].count > 0 || count_all(&sim, mat(&c, "crushed_malachite")) > 0, "{v:?}");
+    assert!(f.buildings.get(battery).unwrap().charge_j < charge, "the battery gave energy");
+}

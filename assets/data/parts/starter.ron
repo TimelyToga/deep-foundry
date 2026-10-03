@@ -22,4 +22,7 @@
     Part(id: "rubber_sheet", name: "Rubber sheet", description: "16 units of rubber. Insulation and belts.", category: "intermediate", material: Some("rubber"), units: 16, icon: Some("sheet")),
     Part(id: "electric_motor", name: "Electric motor", description: "Steel, copper wire and a gear. Electric machines need motors.", category: "intermediate", material: Some("steel_block"), units: 16, icon: Some("gear")),
     Part(id: "steam_kit", name: "Steam research kit", description: "Research for Tier 1 technologies.", category: "research", stack: 200, icon: Some("kit")),
+    Part(id: "gold_plate", name: "Gold plate", description: "16 units of gold. Gold does not rust; it is good for electric contacts.", category: "intermediate", material: Some("gold_block"), units: 16, icon: Some("plate")),
+    Part(id: "gold_wire", name: "Gold wire", description: "4 units of gold. For circuits.", category: "intermediate", stack: 200, material: Some("gold_block"), units: 4, icon: Some("wire")),
+    Part(id: "circuit", name: "Circuit", description: "Gold wire on a glass pane, with rubber insulation. Batteries need circuits.", category: "intermediate", material: Some("glass"), units: 16, icon: Some("circuit")),
 ]

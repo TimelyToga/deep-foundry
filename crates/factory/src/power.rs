@@ -10,6 +10,9 @@
 //! - Each tick, each network compares what its generators can make with what its machines want.
 //!   Every machine on the network gets the same part of its power (`Building::power_factor`, 0 to
 //!   1): its speed is that part of its full speed. A machine on no network gets nothing.
+//! - A battery (`power.store_j`) stores the power that the generators can make but the machines
+//!   do not use, up to `rate_w` watts (a building parameter). When the generators make too
+//!   little, the batteries give their stored energy, also up to `rate_w` each.
 //! - The networks are made again when buildings are placed or removed (`Buildings::layout`).
 
 use crate::buildings::{Buildings, Logic};
@@ -26,6 +29,12 @@ pub struct PowerNet {
     pub id: u32,
     pub generators: Vec<BuildingId>,
     pub consumers: Vec<BuildingId>,
+    pub batteries: Vec<BuildingId>,
+    /// Joules in the batteries, and the most they can hold.
+    pub stored_j: f64,
+    pub capacity_j: f64,
+    /// Watts into the batteries in the last tick (less than 0: out of the batteries).
+    pub battery_w: f64,
     /// Watts the generators could make in the last tick, watts the machines wanted, and watts
     /// the generators gave.
     pub supply_w: f64,
@@ -52,7 +61,17 @@ fn is_generator(content: &Content, b: &crate::Building) -> bool {
 
 /// True for a building that uses electric power.
 pub fn is_consumer(content: &Content, b: &crate::Building) -> bool {
-    content.factory.building_def(b.kind).power.as_ref().is_some_and(|p| p.produce_w <= 0.0 && (p.tier > 0 || p.use_w > 0.0))
+    content.factory.building_def(b.kind).power.as_ref().is_some_and(|p| p.produce_w <= 0.0 && p.store_j <= 0.0 && (p.tier > 0 || p.use_w > 0.0))
+}
+
+/// True for a battery.
+pub fn is_battery(content: &Content, b: &crate::Building) -> bool {
+    content.factory.building_def(b.kind).power.as_ref().is_some_and(|p| p.store_j > 0.0)
+}
+
+/// The most watts a battery takes or gives.
+fn battery_rate(content: &Content, b: &crate::Building) -> f64 {
+    content.factory.building_def(b.kind).param("rate_w", 5000.0) as f64
 }
 
 impl Buildings {
@@ -93,7 +112,8 @@ impl Buildings {
                 continue;
             }
             let generator = is_generator(content, b);
-            if !generator && !is_consumer(content, b) {
+            let battery = is_battery(content, b);
+            if !generator && !battery && !is_consumer(content, b) {
                 continue;
             }
             let joined: BTreeSet<usize> = b.ports.iter().filter(|p| p.kind == PortKind::Power).filter_map(|p| net_of.get(&p.tile).copied()).collect();
@@ -102,6 +122,8 @@ impl Buildings {
             let net = &mut nets[n];
             if generator {
                 net.generators.push(id);
+            } else if battery {
+                net.batteries.push(id);
             } else {
                 net.consumers.push(id);
             }
@@ -150,14 +172,40 @@ impl Buildings {
                 };
                 demand += if wants_work(b) { p.use_w as f64 * over } else { p.idle_w as f64 };
             }
-            let factor = if demand <= 0.0 { 1.0 } else { (supply / demand).min(1.0) } as f32;
+            // Batteries: they take what the generators can make and the machines do not use,
+            // and give energy when the generators make too little.
+            let dt = 1.0 / TICKS_PER_SECOND as f64;
+            let mut battery_w = 0.0;
+            let (mut stored, mut capacity) = (0.0, 0.0);
+            for &id in &net.batteries {
+                let Some(b) = self.get(id) else { continue };
+                let store = content.factory.building_def(b.kind).power.as_ref().map_or(0.0, |p| p.store_j as f64);
+                let rate = battery_rate(content, b);
+                let w = if supply >= demand {
+                    (supply - demand - battery_w).min(rate).min((store - b.charge_j) / dt).max(0.0)
+                } else {
+                    -(demand - supply + battery_w).min(rate).min(b.charge_j / dt).max(0.0)
+                };
+                battery_w += w;
+                let b = self.get_mut(id).expect("battery");
+                b.charge_j = (b.charge_j + w * dt).clamp(0.0, store);
+                b.power_w = w as f32;
+                stored += b.charge_j;
+                capacity += store;
+            }
+            net.stored_j = stored;
+            net.capacity_j = capacity;
+            net.battery_w = battery_w;
+            // Discharging batteries add to the supply of the machines.
+            let given = supply - battery_w.min(0.0);
+            let factor = if demand <= 0.0 { 1.0 } else { (given / demand).min(1.0) } as f32;
             for &c in &net.consumers {
                 powered.insert(c.index);
                 factors.push((c, factor));
             }
             // The generators give the power the machines use, each its share, and turbines use
             // steam for it.
-            let used = demand.min(supply);
+            let used = (demand + battery_w.max(0.0)).min(supply);
             for (g, cap) in caps {
                 let share = if supply > 0.0 { cap / supply * used } else { 0.0 };
                 let Some(b) = self.get_mut(g) else { continue };
@@ -202,17 +250,24 @@ impl Buildings {
         let b = self.get(id)?;
         let p = content.factory.building_def(b.kind).power.as_ref()?;
         let generator = p.produce_w > 0.0;
-        if !generator && !is_consumer(content, b) {
+        let battery = is_battery(content, b);
+        if !generator && !battery && !is_consumer(content, b) {
             return None;
         }
         let over = match &b.logic {
             Logic::Machine(m) => m.recipe.map_or(1.0, |r| crate::machines::overclock_power(content.factory.building_def(b.kind).tier, content.factory.recipe_def(r).tier)),
             _ => 1.0,
         };
-        let net = self.power.nets.iter().find(|n| n.generators.contains(&id) || n.consumers.contains(&id));
+        let net = self.power.nets.iter().find(|n| n.generators.contains(&id) || n.consumers.contains(&id) || n.batteries.contains(&id));
         Some(crate::views::PowerInfo {
             tier: p.tier,
-            max_w: if generator { p.produce_w } else { p.use_w * over as f32 },
+            max_w: if generator {
+                p.produce_w
+            } else if battery {
+                battery_rate(content, b) as f32
+            } else {
+                p.use_w * over as f32
+            },
             connected: net.is_some(),
             satisfaction: net.map_or(0.0, |n| n.satisfaction),
         })

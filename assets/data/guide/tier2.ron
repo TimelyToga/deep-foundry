@@ -65,4 +65,28 @@
         condition: Build("electric_drill", 1),
         reward_points: 2,
     ),
+    Goal(
+        id: "t2_gold",
+        tier: 2,
+        title: "Find gold",
+        text: "Dig down into the granite, more than 1700 cells (about 210 tiles) down. Look for native gold: small deposits in the rock, and rich deposits in the walls of deep caves. Dig it with the left mouse button, or point at it and hold {key:scan}. Then research Gold.",
+        condition: Research("gold"),
+        reward_points: 3,
+    ),
+    Goal(
+        id: "t2_circuits",
+        tier: 2,
+        title: "Make circuits",
+        text: "Smelt raw gold in a furnace (16 raw gold and 4 charcoal) and cast gold plates in a plate mold. Draw the plates into gold wire. A circuit needs 2 gold wires, a glass pane and a rubber sheet.",
+        condition: HaveItem("circuit", 4),
+        reward_points: 2,
+    ),
+    Goal(
+        id: "t2_battery",
+        tier: 2,
+        title: "Store power",
+        text: "Research Batteries and build a battery with a copper cable behind its power port. It stores the power your turbines can make but your machines do not use, and gives it back when they need more. Open the power window to see how full it is.",
+        condition: Build("battery", 1),
+        reward_points: 2,
+    ),
 ]

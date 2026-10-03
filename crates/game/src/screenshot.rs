@@ -225,7 +225,8 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             | UiState::KilnHole
             | UiState::SteamLine
             | UiState::Smelter
-            | UiState::Automation => {
+            | UiState::Automation
+            | UiState::Cave => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
@@ -752,6 +753,9 @@ fn setup_normal_screen(
         }
         UiState::Automation => {
             mouse = Some(lines::automation(h, sim, &content));
+        }
+        UiState::Cave => {
+            mouse = Some(lines::cave(h, sim, &content));
         }
         UiState::GuideWorkbench | UiState::GuideDone => {
             // The goals up to the workbench and the two ores are done.

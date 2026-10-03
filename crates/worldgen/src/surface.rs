@@ -70,7 +70,8 @@ pub(crate) mod sd {
     pub const SED: usize = 41;
     pub const SED_WARP: usize = 42;
     pub const DECOR: usize = 37;
-    pub const COUNT: usize = 43;
+    pub const DEEP: usize = 43;
+    pub const COUNT: usize = 44;
 }
 
 /// The seeds of one world, made from the world seed.

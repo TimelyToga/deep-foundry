@@ -19,6 +19,8 @@
 //!   then deep rock (granite, then basalt) and bedrock at the bottom. `chunk.rs` fills the cells:
 //!   caves, ore veins, limestone bands, coal seams, gravel and sand pockets, water pockets and
 //!   methane pockets.
+//! - Deep features (`deep.rs`): caverns with glow moss and ore deposits in their walls, crystal
+//!   geodes, gold deposits and lava chambers. A fixed cave lies under the start area.
 //! - Trees are made in `trees.rs`.
 //!
 //! # Stable at the start
@@ -132,6 +134,13 @@ pub(crate) struct Mats {
     pub basalt: u16,
     pub bedrock: u16,
     pub methane: u16,
+    pub obsidian: u16,
+    pub lava: u16,
+    /// The temperature of new lava cells (°C): lava below its freezing point turns to stone.
+    pub lava_temp: i16,
+    pub glow_moss: u16,
+    pub glow_crystal: u16,
+    pub native_gold: u16,
 }
 
 impl Mats {
@@ -164,6 +173,12 @@ impl Mats {
             basalt: id("basalt"),
             bedrock: id("bedrock"),
             methane: content.material("methane").map_or(0, |m| m.0),
+            obsidian: id("obsidian"),
+            lava: id("lava"),
+            lava_temp: content.material("lava").map_or(1200, |m| content.materials.temperature[m.index()]),
+            glow_moss: id("glow_moss"),
+            glow_crystal: id("glow_crystal"),
+            native_gold: id("native_gold"),
         }
     }
 }

@@ -31,6 +31,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - Saves keep only the chunks that changed.
   - A world generator makes the surface, biomes, trees, lakes, ore veins and caves.
   - The start area has woods, clay, copper ore, two tin ore beds, coal, and shallow iron ore and limestone for Tier 1, with free flat ground right of the Hub to build on.
+  - The deep: caverns lit by glow moss (some with a lake and a rich ore deposit in a wall), crystal geodes and gold in the granite (from 1800 cells down), and lava chambers in the basalt (from 3600 cells down). The first cave is about 40 tiles under the flat ground right of the Hub.
 - **The robot**
   - Walk, jump and fly with a jetpack.
   - Dig material into tanks.
@@ -50,7 +51,8 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - Stamp mill and sluice.
   - Boiler, pipes and steam machines.
   - Automation (Tier 1): arms that move items between buildings (with a filter), the steam assembler, the steam furnace, the steam drill, the steam blower for the blast furnace, iron crates.
-  - Electric power (Tier 2): steam turbines, copper cables and power networks; the macerator, electric furnace, electric assembler, electric drill and fast arm. Too little power slows every machine on the network.
+  - Electric power (Tier 2): steam turbines, copper cables and power networks; the macerator, electric furnace, electric assembler, electric drill and fast arm. Too little power slows every machine on the network. Batteries store power.
+  - The deep: moss lanterns and crystal lamps light caves; steel and hard drill heads dig granite and basalt; gold smelts into plates and wire for circuits; batteries need circuits.
   - Factories keep running when you walk away.
 - **Progression**
   - Research in labs.
@@ -74,7 +76,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 - Belt lifts.
 - Building sprites (now buildings are blocks of their material with an outline and a faint icon).
 - Blueprints, and ghosts that wait for items.
-- Batteries; MV machines (Tier 3 and later).
+- MV machines (Tier 3 and later).
 - Deeper world layers, with more ores and hazards.
 - Sound.
 
@@ -88,6 +90,8 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 | Tier 0: a crucible on a campfire pours copper into a mold | Tier 1: a steam drill, arms, a steam furnace, a mold, a gear assembler and gears on a belt |
 | ![A steam crusher](docs/screenshots/steam_line.jpg) | ![The robot's animations](tools/sprites/robot_preview.png) |
 | A steam crusher at work | The robot's animations |
+| ![The cave under the start area](docs/screenshots/cave.jpg) | |
+| The cave under the start area: glow moss, two moss lanterns and a crystal lamp | |
 
 ## Run
 

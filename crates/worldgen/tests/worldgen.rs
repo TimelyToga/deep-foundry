@@ -175,6 +175,8 @@ fn no_seams_at_chunk_borders() {
     for (name, a) in [
         ("surface", Area::new(&wg, seed, -24, sy - 3, 48, 6)),
         ("upper stone", Area::new(&wg, seed, -10, sy + 12, 20, 16)),
+        // The cave under the start area (see `deep.rs`).
+        ("start cave", Area::new(&wg, seed, 2, sy + 3, 6, 4)),
     ] {
         // Neighbor cells differ about as often across a chunk border as inside a chunk.
         let (mut border, mut border_n, mut inside, mut inside_n) = (0usize, 0usize, 0usize, 0usize);
@@ -458,4 +460,44 @@ fn the_world_is_stable_in_the_tundra_and_at_its_borders() {
         }
     }
     assert!(bad.is_empty(), "{bad:?}");
+}
+
+/// The deep world has caverns with glow moss, crystal geodes, lava chambers and gold, and the
+/// start area has a cave under the building place right of the Hub.
+#[test]
+fn the_deep_has_caves_crystals_lava_and_gold() {
+    let c = content();
+    let wg = source();
+    let s = *wg.world_settings();
+    let seed = 1;
+    let sy = s.surface_y / CHUNK_SIZE;
+    let ids = ["glow_moss", "glow_crystal", "lava", "native_gold"];
+    let mats: Vec<u16> = ids.iter().map(|id| c.expect_material(id).0).collect();
+    let lava = mats[2];
+    let mut count = [0usize; 4];
+    let mut first: [Option<(i32, i32)>; 4] = [None; 4];
+    // A band 4096 cells wide, from the surface down to 7000 cells, every second chunk column.
+    for cy in sy..sy + 7000 / CHUNK_SIZE {
+        for cx in (-32..32).step_by(2) {
+            let (m, t) = chunk(&wg, seed, ChunkPos::new(cx, cy));
+            for (i, (&v, &temp)) in m.iter().zip(&t).enumerate() {
+                if let Some(k) = mats.iter().position(|&w| w == v) {
+                    count[k] += 1;
+                    first[k].get_or_insert((cx * CHUNK_SIZE + i as i32 % CHUNK_SIZE, cy * CHUNK_SIZE + i as i32 / CHUNK_SIZE));
+                    // Lava starts hot, else it would turn to stone at once.
+                    assert!(v != lava || temp > 900, "lava at {temp} °C");
+                }
+            }
+        }
+    }
+    println!("{ids:?}: {count:?}, first cells {first:?}");
+    for (id, n) in ids.iter().zip(count) {
+        assert!(n > 200, "only {n} cells of {id} in the deep band");
+    }
+    // The start cave: open cells about 330 cells under the surface level right of the Hub, with
+    // glow moss.
+    let a = Area::new(&wg, seed, 2, sy + 3, 6, 4);
+    let open = (240..360).filter(|&x| a.at(x, s.surface_y + 330) == 0).count();
+    assert!(open > 60, "only {open} open cells across the start cave");
+    assert!(a.count(MaterialId(mats[0])) > 100, "glow moss in the start cave");
 }

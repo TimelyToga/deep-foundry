@@ -15,6 +15,9 @@ use crate::{Mats, OPEN, POWDER, SURFACE_LAYER, UPPER_STONE_END, WorldGen, trees}
 use foundry_core::{CHUNK_SIZE, local_index};
 use foundry_sim::ChunkCells;
 
+#[path = "deep.rs"]
+mod deep;
+
 /// A chunk whose lowest row is this far above the surface level is all air.
 const SKY_CLEAR: i32 = surface::MAX_RISE + trees::MAX_HEIGHT + 8;
 /// The deepest soil below the ground (dunes, lake beds), in cells.
@@ -646,6 +649,7 @@ impl<'a, 'b> Fill<'a, 'b> {
             }
         }
         self.pockets();
+        self.deep();
     }
 
     /// True for a cell of soil or rock (not air, water or ice on water).
@@ -839,6 +843,12 @@ impl<'a, 'b> Fill<'a, 'b> {
                     if v != 0 {
                         *o = t;
                     }
+                }
+            }
+            // Lava of a deep lava chamber is hot (else it would be stone at once).
+            for (o, &v) in temp.iter_mut().zip(src) {
+                if v == m.lava && v != m.stone {
+                    *o = m.lava_temp;
                 }
             }
         }

@@ -33,7 +33,9 @@ OPTIONS:
                              campfire (a campfire window: raw bricks, wood fuel, clay bricks),
                              steam-line (a functioning boiler, bronze pipes and steam crusher),
                              smelter (the Tier 0 crucible site), automation (a Tier 1 line with
-                             a steam drill, arms, a steam furnace, a mold and an assembler)
+                             a steam drill, arms, a steam furnace, a mold and an assembler),
+                             cave (the robot and lamps in the cave under the start area; give
+                             --center 300,1354 with the generated world)
     --mode MODE              The mode of a world that --ui-state starts: sandbox (default) or
                              normal (the robot, the factory and the Hub)
     --ui-scale S             Size of the UI, 0.75 to 2 (default: the settings file, else 1)
@@ -158,6 +160,8 @@ pub enum UiState {
     Smelter,
     /// Normal mode: a Tier 1 automated line (steam drill, arms, steam furnace, mold, assembler).
     Automation,
+    /// Normal mode: the robot in the cave under the start area, with lamps (use --center).
+    Cave,
 }
 
 impl UiState {
@@ -191,6 +195,7 @@ impl UiState {
             "steam-line" => UiState::SteamLine,
             "smelter" => UiState::Smelter,
             "automation" => UiState::Automation,
+            "cave" => UiState::Cave,
             _ => return None,
         })
     }
@@ -223,6 +228,7 @@ impl UiState {
                 | UiState::SteamLine
                 | UiState::Smelter
                 | UiState::Automation
+                | UiState::Cave
         )
     }
 }

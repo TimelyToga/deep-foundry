@@ -180,6 +180,14 @@
         reward_points: 1,
     ),
     Goal(
+        id: "t1_deep_rock",
+        tier: 1,
+        title: "Dig into the deep rock",
+        text: "Research the Steel drill head. Then the robot digs granite: the deep rock from 1800 cells (225 tiles) down. Deep caves have glow moss, and the granite has gold and crystal geodes. Moss lanterns (glow moss and wood) light your tunnels.",
+        condition: Research("steel_drill_head"),
+        reward_points: 2,
+    ),
+    Goal(
         id: "t1_hub",
         tier: 1,
         title: "Repair the Hub power core",
