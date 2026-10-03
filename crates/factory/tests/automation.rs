@@ -279,3 +279,43 @@ fn a_mold_puts_plates_onto_a_belt() {
     run(&mut f, &mut sim, 60 * 30);
     assert_eq!(f.buildings.inventory(to).unwrap().count(item(&c, "tin_plate")), 2, "{:?}", f.building_view(mold));
 }
+
+/// A sorter under a hopper: the material the player put in first goes out of its right side into
+/// a crate, the rest out of its left side.
+#[test]
+fn a_sorter_sends_one_material_right_and_the_rest_left() {
+    let c = content();
+    let mut sim = world(&c, Some(96));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let hopper = f.place(kind(&c, "hopper"), TilePos::new(5, 10), 0, false, &mut sim).unwrap();
+    let sorter = f.place(kind(&c, "sorter"), TilePos::new(5, 11), 0, false, &mut sim).unwrap();
+    let right = f.place(kind(&c, "crate"), TilePos::new(6, 11), 0, false, &mut sim).unwrap();
+    let left = f.place(kind(&c, "crate"), TilePos::new(4, 11), 0, false, &mut sim).unwrap();
+    // The player clicks the malachite tank on the open sorter: it sorts out malachite.
+    f.player.insert(&c, item(&c, "raw_malachite"), 1);
+    assert_eq!(f.insert_from_player(sorter, item(&c, "raw_malachite"), 1), 1);
+    assert!(f.building_view(sorter).unwrap().reason.starts_with("Sorts out Raw malachite"));
+    f.buildings.insert(&c, hopper, item(&c, "raw_malachite"), 20);
+    f.buildings.insert(&c, hopper, item(&c, "dirt"), 20);
+    run(&mut f, &mut sim, 600);
+    assert_eq!(f.buildings.inventory(right).unwrap().count(item(&c, "raw_malachite")), 21);
+    assert_eq!(f.buildings.inventory(right).unwrap().count(item(&c, "dirt")), 0);
+    assert_eq!(f.buildings.inventory(left).unwrap().count(item(&c, "dirt")), 20, "the dirt went left");
+}
+
+/// A splitter sends powder to its left and right sides in turn.
+#[test]
+fn a_splitter_alternates() {
+    let c = content();
+    let mut sim = world(&c, Some(96));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let splitter = f.place(kind(&c, "splitter"), TilePos::new(5, 11), 0, false, &mut sim).unwrap();
+    let right = f.place(kind(&c, "crate"), TilePos::new(6, 11), 0, false, &mut sim).unwrap();
+    let left = f.place(kind(&c, "crate"), TilePos::new(4, 11), 0, false, &mut sim).unwrap();
+    f.buildings.insert(&c, splitter, item(&c, "sand"), 20);
+    run(&mut f, &mut sim, 300);
+    assert_eq!(f.buildings.inventory(right).unwrap().count(item(&c, "sand")), 10);
+    assert_eq!(f.buildings.inventory(left).unwrap().count(item(&c, "sand")), 10);
+}

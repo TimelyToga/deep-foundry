@@ -44,7 +44,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - A hover box shows what is under the mouse.
 - **Factory**
   - Hand crafting and a workbench.
-  - Crates, barrels, hoppers and belts. Belts move powder and parts.
+  - Crates, barrels, hoppers and belts. Belts move powder and parts. Sorters and splitters route powder.
   - Room machines: kiln, coke oven and blast furnace.
   - Crucible, bellows and casting molds: the crucible pours into a mold, and the mold puts the plates into a crate.
   - Stamp mill and sluice.
@@ -71,10 +71,10 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 
 ## Planned features
 
-- Splitters, sorters and belt lifts.
+- Belt lifts and item filters for arms.
 - Building sprites (now buildings are blocks of their material with an outline and a faint icon).
 - Blueprints, and ghosts that wait for items.
-- The power network window with real data; batteries; MV machines (Tier 3 and later).
+- Batteries; MV machines (Tier 3 and later).
 - Deeper world layers, with more ores and hazards.
 - Sound.
 

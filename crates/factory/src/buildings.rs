@@ -75,7 +75,8 @@ impl Logic {
                 Logic::Storage(inv)
             }
             // A drill keeps what it digs in a hopper buffer and gives it out like a hopper.
-            "hopper" | "drill" => Logic::Hopper(Hopper::new(def.param("capacity", 64.0).max(1.0) as u32)),
+            // A sorter and a splitter keep their cells in a hopper buffer too.
+            "hopper" | "drill" | "sorter" | "splitter" => Logic::Hopper(Hopper::new(def.param("capacity", 64.0).max(1.0) as u32)),
             "belt" => Logic::Belt(Belt::default()),
             "hub" => Logic::Hub(Inventory::mixed(def.param("slots", 16.0).max(0.0) as usize, capacity, TankRule::Any)),
             "lab" => Logic::Lab(Lab::new(def.param("kit_buffer", 10.0) as u32)),
@@ -168,7 +169,7 @@ pub struct Building {
     /// An exhaust port had no room in this tick. The machine stops until it has room.
     exhaust_blocked: bool,
     pub(crate) next_pull: u64,
-    next_push: u64,
+    pub(crate) next_push: u64,
     /// The room of a room machine controller (see `rooms`). `None` for other buildings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room: Option<Box<crate::rooms::RoomState>>,
@@ -806,6 +807,14 @@ impl Buildings {
             }
             _ => accept(&mut b.logic, content, item, count, &hub),
         };
+        // A sorter sorts out the first material that the player (or an arm) puts in.
+        if n > 0
+            && content.factory.building_def(b.kind).kind == "sorter"
+            && let (Logic::Hopper(h), ItemRef::Material(m)) = (&mut b.logic, item)
+            && h.sort.is_none()
+        {
+            h.sort = Some(m);
+        }
         if n > 0 {
             self.wake(id);
         }
@@ -1328,10 +1337,14 @@ impl Buildings {
         let (me, dst) = two_mut(&mut self.slots, i as usize, nid.index as usize)?;
         let their_port = dst.ports.iter().find(|p| {
             p.kind == PortKind::BulkIn && p.tile == n_tile && p.side == opposite(port.side)
-        }).copied()?;
+        }).copied();
+        // A storage (a crate) next to the port takes the powder from any side.
+        if their_port.is_none() && !matches!(dst.logic, Logic::Storage(_)) {
+            return None;
+        }
         let my_def = content.factory.building_def(me.kind);
         let their_def = content.factory.building_def(dst.kind);
-        if !port_allows(my_def, &port, item) || !port_allows(their_def, &their_port, item) {
+        if !port_allows(my_def, &port, item) || their_port.is_some_and(|tp| !port_allows(their_def, &tp, item)) {
             return None;
         }
         if matches!(dst.steam, SteamState::Boiler { .. }) {
@@ -1636,9 +1649,26 @@ impl Buildings {
     /// Output ports put cells into the world; part outputs give parts to neighbors.
     fn give_outputs(&mut self, i: u32, content: &Content, sim: &mut Simulation) {
         let now = self.now;
-        if self.at_index(i).is_some_and(|b| content.factory.building_def(b.kind).kind == "drill") {
-            crate::drill::give_outputs(self, i, content, sim);
-            return;
+        match self.at_index(i).map(|b| content.factory.building_def(b.kind).kind.as_str()) {
+            Some("drill") => {
+                crate::drill::give_outputs(self, i, content, sim);
+                return;
+            }
+            Some("sorter") => {
+                // The chosen material (the hopper filter) to the main output, the rest to "Rest".
+                let filter = match self.at_index(i).map(|b| &b.logic) {
+                    Some(Logic::Hopper(h)) => h.sort,
+                    _ => None,
+                };
+                crate::drill::sort_out(self, i, content, sim, "Rest", false, |m, _| Some(m) == filter);
+                return;
+            }
+            Some("splitter") => {
+                // Left and right in turn.
+                crate::drill::sort_out(self, i, content, sim, "Left", false, |_, n| n.is_multiple_of(2));
+                return;
+            }
+            _ => {}
         }
         let feeding = self.feeding_ports(i);
         let pour_room = self.pour_room(i, content);
@@ -1729,7 +1759,8 @@ impl Buildings {
                         released += 1;
                     }
                 }
-                b.busy |= released > 0;
+                // With cells left it stays awake: its output steps come only in some ticks.
+                b.busy |= released > 0 || !h.cells.is_empty();
                 if def.kind == "drill" {
                     // The drill sets its own status when it digs (see `drill`).
                     if b.blocked && released == 0 && !h.cells.is_empty() {
@@ -2095,6 +2126,12 @@ impl Buildings {
                     .collect();
                 if b.status == Status::NoInput {
                     v.reason = "Empty".into();
+                }
+                if def.kind == "sorter" {
+                    v.reason = match h.sort {
+                        Some(m) => format!("Sorts out {}: right side; the rest: left side", content.materials.names[m.index()]),
+                        None => "Click a tank: that material goes out of the right side".into(),
+                    };
                 }
             }
             Logic::Lab(lab) => {

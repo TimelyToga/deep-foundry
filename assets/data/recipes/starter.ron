@@ -68,6 +68,8 @@
     Recipe(id: "steam_assembler", category: "assembling", hand: true, inputs: [("bronze_plate", 8), ("bronze_gear", 4), ("bronze_pipe_section", 2)], outputs: [("steam_assembler", 1)], time: 5.0),
     Recipe(id: "steam_furnace", category: "assembling", hand: true, inputs: [("bronze_plate", 6), ("clay_brick", 12), ("bronze_pipe_section", 2)], outputs: [("steam_furnace", 1)], time: 5.0),
     Recipe(id: "steam_drill", category: "assembling", hand: true, inputs: [("bronze_plate", 10), ("bronze_gear", 6), ("bronze_pipe_section", 2)], outputs: [("steam_drill", 1)], time: 5.0),
+    Recipe(id: "sorter", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("bronze_gear", 1), ("copper_wire", 2)], outputs: [("sorter", 1)], time: 2.0),
+    Recipe(id: "splitter", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("bronze_gear", 1)], outputs: [("splitter", 1)], time: 2.0),
     Recipe(id: "iron_crate", category: "assembling", hand: true, inputs: [("steel_plate", 4)], outputs: [("iron_crate", 1)], time: 2.0),
     Recipe(id: "copper_wire", category: "wire_drawing", hand: true, inputs: [("copper_plate", 1)], outputs: [("copper_wire", 4)], time: 1.0),
     Recipe(id: "iron_belt", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("bronze_gear", 1)], outputs: [("iron_belt", 2)], time: 1.0),
