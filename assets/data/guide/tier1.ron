@@ -79,7 +79,7 @@
         id: "t1_coke_oven",
         tier: 1,
         title: "Build a coke oven",
-        text: "Build a closed room from firebrick walls with a coke oven controller and a coke oven hatch. Coal that is heated with no air turns into coke. The oven also makes creosote (a liquid) and coal gas.",
+        text: "Research Ore processing, then Coke ovens and blast furnaces. Build a closed room from firebrick walls with a coke oven controller and a coke oven hatch. Firebrick: a kiln with bellows in its wall gets hot enough to fire raw firebrick. Coal that is heated with no air turns into coke. The oven also makes creosote (a liquid) and coal gas.",
         condition: Build("coke_oven_controller", 1),
         reward_points: 2,
     ),
