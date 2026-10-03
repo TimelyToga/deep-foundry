@@ -68,12 +68,12 @@
     Tech(
         id: "iron_logistics",
         name: "Iron logistics",
-        description: "Iron belts move twice as fast as wood belts and do not burn.",
+        description: "Iron belts move twice as fast as wood belts and do not burn. Sorters and splitters route powder.",
         tier: 1,
         requires: ["steam_power"],
         kits: [("bronze_kit", 1)],
         units: 20,
-        unlocks: ["iron_belt", "iron_crate"],
+        unlocks: ["iron_belt", "iron_crate", "sorter", "splitter"],
     ),
     Tech(
         id: "ore_processing",

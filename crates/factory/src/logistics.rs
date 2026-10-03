@@ -21,11 +21,15 @@ pub struct Hopper {
     pub capacity: u32,
     /// Only this material goes in. `None`: every powder.
     pub filter: Option<MaterialId>,
+    /// A sorter: the material that goes out of its main output (the first material the player
+    /// puts in). `None` for other buildings.
+    #[serde(default)]
+    pub sort: Option<MaterialId>,
 }
 
 impl Hopper {
     pub fn new(capacity: u32) -> Self {
-        Self { cells: VecDeque::new(), capacity, filter: None }
+        Self { cells: VecDeque::new(), capacity, filter: None, sort: None }
     }
 
     pub fn is_full(&self) -> bool {

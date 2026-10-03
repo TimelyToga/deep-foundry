@@ -109,22 +109,41 @@ pub(crate) fn give_outputs(b: &mut Buildings, i: u32, content: &Content, sim: &m
     if b.useful.is_empty() {
         b.useful = crate::digging::useful_materials(content);
     }
+    let useful = b.useful.clone();
+    sort_out(b, i, content, sim, "Waste", true, |m, _| useful.get(m.index()).copied().unwrap_or(true));
+}
+
+/// Give the cells of the hopper buffer of building `i` out of its two powder outputs, up to
+/// "rate" cells per second: cells for which `main(material, n)` is true (`n`: cells given before
+/// in this tick plus the building's count) go out of the main output, the others out of the
+/// output named `other`. A full output does not stop the other one. With `throw`, cells for the
+/// other output fly away when nothing stands there (a drill's waste).
+pub(crate) fn sort_out(
+    b: &mut Buildings,
+    i: u32,
+    content: &Content,
+    sim: &mut Simulation,
+    other: &str,
+    throw: bool,
+    main: impl Fn(MaterialId, u64) -> bool,
+) {
     let now = b.now;
     let Some(d) = b.at_index(i) else { return };
     let def = content.factory.building_def(d.kind);
     let n = steps_in_tick(now, def.param("rate", 16.0));
-    let is_waste = |p: &PlacedPort| p.def.and_then(|k| def.ports[k as usize].name.as_deref()) == Some("Waste");
+    let is_other = |p: &PlacedPort| p.def.and_then(|k| def.ports[k as usize].name.as_deref()) == Some(other);
     let outs: Vec<PlacedPort> = d.ports.iter().filter(|p| p.kind == PortKind::BulkOut).copied().collect();
-    let main = outs.iter().find(|p| !is_waste(p)).copied();
-    let waste = outs.iter().find(|p| is_waste(p)).copied().or(main);
-    let (mut given, mut blocked) = (0, [false, false]);
+    let main_port = outs.iter().find(|p| !is_other(p)).copied();
+    let other_port = outs.iter().find(|p| is_other(p)).copied().or(main_port);
+    let count = d.next_push;
+    let (mut given, mut blocked) = (0u32, [false, false]);
     let mut k = 0;
     while given < n {
         let Some(Logic::Hopper(h)) = b.at_index(i).map(|d| &d.logic) else { return };
         let Some(&m) = h.cells.get(k) else { break };
-        let useful = b.useful.get(m.index()).copied().unwrap_or(true);
-        let slot = if useful { 0 } else { 1 };
-        let Some(port) = (if useful { main } else { waste }) else { break };
+        let is_main = main(m, count + given as u64);
+        let slot = if is_main { 0 } else { 1 };
+        let Some(port) = (if is_main { main_port } else { other_port }) else { break };
         if blocked[slot] {
             k += 1;
             continue;
@@ -138,7 +157,7 @@ pub(crate) fn give_outputs(b: &mut Buildings, i: u32, content: &Content, sim: &m
             Some(_) => false,
             // No building at the waste port: throw the waste away, so it lands 15 to 30 cells
             // off and does not pile up in front of the port.
-            None if !useful && port.side != foundry_content::Side::Down => {
+            None if throw && !is_main && port.side != foundry_content::Side::Down => {
                 throw_waste(sim, port, m, now as u32 ^ (given << 8));
                 true
             }
@@ -155,11 +174,15 @@ pub(crate) fn give_outputs(b: &mut Buildings, i: u32, content: &Content, sim: &m
         }
     }
     if let Some(d) = b.at_index_mut(i) {
-        d.busy |= given > 0;
+        // With cells left it stays awake for the next output step.
+        d.busy |= given > 0 || matches!(&d.logic, Logic::Hopper(h) if !h.cells.is_empty());
+        d.next_push = count + given as u64;
         let full = matches!(&d.logic, Logic::Hopper(h) if h.is_full());
         if full && given == 0 {
             d.status = crate::Status::OutputBlocked;
-            d.steam_reason = Some("Output blocked: no room for what it dug".into());
+            d.steam_reason = Some("Output blocked: no room at its outputs".into());
+        } else if given > 0 && !throw {
+            d.status = crate::Status::Working;
         }
     }
 }
