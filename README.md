@@ -12,9 +12,9 @@ Written in Rust with wgpu and egui.
 
 ## Overview
 
-You are a small robot at a broken Hub. You dig material into your tanks, craft your first tools and buildings, and repair the Hub stage by stage. Each tier opens new machines: fire and clay first, then bronze, then steam.
+You are a small robot at a broken Hub. You dig material into your tanks, craft your first tools and buildings, and repair the Hub stage by stage. Each tier opens new machines: fire and clay first, then bronze, then steam and automation.
 
-The machines work with the real cells of the world. A kiln is a room of brick walls with a real fire inside. The room temperature comes from the burning cells. Ore falls into a hopper, moves on a belt and is washed with real water.
+The machines work with the real cells of the world. A kiln is a room of brick walls with a real fire inside. The room temperature comes from the burning cells. A crucible on a campfire smelts ore and pours the molten metal into a mold. Ore falls into a hopper, moves on a belt and is washed with real water. In Tier 1, steam drills, arms, steam furnaces and assemblers run whole production lines with no work from you.
 
 ## Features
 
@@ -30,6 +30,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - Chunks are made when you need them and dropped when you leave.
   - Saves keep only the chunks that changed.
   - A world generator makes the surface, biomes, trees, lakes, ore veins and caves.
+  - The start area has woods, clay, copper ore, two tin ore beds, coal, and shallow iron ore and limestone for Tier 1, with free flat ground right of the Hub to build on.
 - **The robot**
   - Walk, jump and fly with a jetpack.
   - Dig material into tanks.
@@ -45,14 +46,17 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - Hand crafting and a workbench.
   - Crates, barrels, hoppers and belts.
   - Room machines: kiln, coke oven and blast furnace.
-  - Crucible, bellows and casting molds.
+  - Crucible, bellows and casting molds: the crucible pours into a mold, and the mold puts the plates into a crate.
   - Stamp mill and sluice.
   - Boiler, pipes and steam machines.
+  - Automation (Tier 1): arms that move items between buildings, the steam assembler, the steam furnace, the steam drill, the steam blower for the blast furnace, iron crates.
+  - Factories keep running when you walk away.
 - **Progression**
   - Research in labs.
   - Hub repair stages and milestones.
   - Material discovery.
   - A guide that always shows the next goal.
+  - Every Tier 0 goal, up to the first Hub repair, has a test that plays it with real player input in the generated world.
 - **Interface**
   - Factorio-style windows: character, crafting, buildings and research.
   - Pause, save and load menus.
@@ -66,12 +70,12 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 
 ## Planned features
 
-- Scripted play-through tests for smelting, so that the bronze and stamp mill goals can be checked.
-- Factories that keep running when the player is far away.
+- Parts on belts, splitters and sorters.
+- A play-through test for Tier 1.
+- Building sprites (now buildings are blocks of their material with an outline).
 - Blueprints, and ghosts that wait for items.
 - Power networks and electric machines (Tier 2 and later).
 - Deeper world layers, with more ores and hazards.
-- Guide texts written for the generated world.
 - Sound.
 
 ## Screenshots
@@ -80,6 +84,8 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 |---|---|
 | ![The start in a generated world](docs/screenshots/world_gen.jpg) | ![A kiln room that fires clay bricks](docs/screenshots/kiln.jpg) |
 | The start, with the guide | A kiln room that fires clay bricks |
+| ![The smelting site](docs/screenshots/smelter.jpg) | ![An automated line](docs/screenshots/automation.jpg) |
+| Tier 0: a crucible on a campfire pours copper into a mold | Tier 1: a steam drill, arms, a steam furnace, a mold and a gear assembler |
 | ![A steam crusher](docs/screenshots/steam_line.jpg) | ![The robot's animations](tools/sprites/robot_preview.png) |
 | A steam crusher at work | The robot's animations |
 
@@ -93,10 +99,10 @@ cd deep-foundry
 cargo run --release -p deep_foundry
 ```
 
-Start a new game with the world generator in place of the demo world:
+New games use the world generator. The small demo world (a test world) is still there:
 
 ```
-cargo run --release -p deep_foundry -- --world gen
+cargo run --release -p deep_foundry -- --world demo
 ```
 
 Default keys (by key position; change them in Settings > Controls):
@@ -120,7 +126,7 @@ Default keys (by key position; change them in Settings > Controls):
 Tests:
 
 ```
-cargo test --workspace --release
+cargo test --workspace
 cargo run --release -p foundry_headless -- test
 ```
 
