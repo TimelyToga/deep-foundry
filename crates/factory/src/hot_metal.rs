@@ -4,6 +4,10 @@ use foundry_content::{Content, Recipe};
 use foundry_core::{CellPos, CellRect, MaterialId, TilePos};
 use foundry_sim::Simulation;
 
+/// The part of the difference to the mold body that the metal in a mold loses in one tick.
+/// Tin poured at 372 °C into a 20 °C mold is below its freezing point (222 °C) after about 2 s.
+pub(crate) const METAL_COOLING: f32 = 0.004;
+
 /// Bellows can feed a nearby fire. The fire and its heat still live in simulation cells.
 pub(crate) fn bellows_reaches_fire(bellows: &[TilePos], fire: TilePos) -> bool {
     bellows

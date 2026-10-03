@@ -505,12 +505,15 @@ impl<'a> Ctx<'a> {
                 blob(-300 + jit(3, 20.0), 14, 30, 10, m.malachite),
                 blob(330 + jit(4, 20.0), 15, 26, 9, m.malachite),
                 blob(-470 + jit(6, 20.0), 16, 24, 8, m.malachite),
-                blob(62, 8, 34, 6, m.clay),
-                blob(-170 + jit(7, 10.0), 9, 22, 6, m.clay),
+                // The ground right of the Hub (to x = 170) has no ore: it is the first
+                // building place.
+                blob(-165 + jit(7, 6.0), 10, 44, 9, m.clay),
+                blob(410 + jit(12, 6.0), 10, 34, 8, m.clay),
                 // Sand at the surface left of the Hub, for the first goal of the guide.
                 blob(-78 + jit(5, 6.0), 2, 26, 7, m.sand),
-                // A tin ore bed (cassiterite in gravel) right of the Hub, besides the river.
-                Blob { alt: m.gravel, ..blob(190 + jit(8, 10.0), 9, 36, 8, m.cassiterite) },
+                // Tin ore beds (cassiterite in gravel) right of the building place and left of the
+                // malachite.
+                Blob { alt: m.gravel, ..blob(232 + jit(8, 6.0), 9, 34, 8, m.cassiterite) },
                 Blob { alt: m.gravel, ..blob(-525 + jit(9, 6.0), 10, 26, 7, m.cassiterite) },
                 // Tier 1: iron ore and limestone under the surface, past the river and left of
                 // the malachite.
@@ -701,8 +704,8 @@ impl<'a> Ctx<'a> {
         match biome {
             Biome::Temperate => {
                 let forest = (0.25 + 0.6 * self.n(sd::FOREST, x, 1100) as f32).clamp(0.05, 0.85);
-                // Groups of trees on both sides of the Hub.
-                if (160..480).contains(&x.abs()) { forest.max(0.8) } else { forest }
+                // Woods on both sides of the Hub: plenty of wood for Tier 0.
+                if (160..900).contains(&x.abs()) { forest.max(0.95) } else { forest }
             }
             Biome::Tundra => (0.2 + 0.3 * self.n(sd::FOREST, x, 900) as f32).clamp(0.0, 0.45),
             Biome::Desert => 0.0,

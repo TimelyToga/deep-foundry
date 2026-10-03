@@ -83,7 +83,8 @@ pub(crate) fn in_slot(ctx: &Ctx, k: i32) -> Option<Tree> {
                 2..8 => 36 + r(8, 18),
                 _ => 54 + r(8, 16),
             };
-            let half = if height > 50 { 2 } else { 1 };
+            // Thick trunks: wood is the first fuel and building material.
+            let half = if height > 50 { 3 } else if height > 36 { 2 } else { 1 };
             Tree { x, base, height, kind: Kind::Broad, half, crown: (9 + height / 4).min(REACH - 2), h }
         }
     })

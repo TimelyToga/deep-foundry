@@ -19,29 +19,69 @@ pub(super) fn process(player: &mut Player, wash: bool) -> Result<(), String> {
 
 fn crush_ore(player: &mut Player) -> Result<(), String> {
     player.dig("malachite", |p| p.count("raw_malachite") >= 16)?;
-    player.dig("wood", |p| p.count("wood") >= 30)?;
+    player.dig("wood", |p| p.count("wood") >= 40)?;
     player.walk_to(player.start.x)?;
     player.craft("stamp_mill", 1)?;
-    let kind = player
-        .content
-        .factory
-        .building("stamp_mill")
-        .ok_or("no stamp mill")?;
-    let before = player.host.factory.buildings.count_of(kind);
+    player.craft("crate", 1)?;
     player.place("stamp_mill")?;
-    if player.host.factory.buildings.count_of(kind) <= before {
-        return Err("the stamp mill was not placed".into());
-    }
     let stamp = find_building(player, "stamp_mill")?;
-    run_machine(
-        player,
-        stamp,
-        "crushed_malachite",
-        "raw_malachite",
-        None,
-        "crushed_malachite",
-        16,
-    )
+    // A crate at the output port collects the crushed ore (its powder input is on its left).
+    let out = player
+        .host
+        .factory
+        .buildings
+        .get(stamp)
+        .and_then(|b| b.ports.iter().find(|p| p.kind == foundry_content::PortKind::BulkOut).copied())
+        .ok_or("the stamp mill has no output port")?;
+    let at = foundry_factory::geometry::neighbor_tile(out.tile, out.side);
+    let crate_ = player.place_at("crate", at)?;
+    let recipe = player.content.factory.recipe("crushed_malachite").ok_or("no recipe")?;
+    player.open_id(stamp)?;
+    player.ui(&[UiAction::SetRecipe { building: stamp, recipe: Some(recipe) }]);
+    player.sync();
+    let tank = tank_index(player, "raw_malachite")?;
+    player.ui(&[UiAction::ClickSlot { slot: SlotRef::Tank(tank), click: SlotClick::CTRL_LEFT }]);
+    let crushed = player.content.item("crushed_malachite").unwrap();
+    for _ in 0..240 {
+        if player.host.factory.buildings.inventory(crate_).is_some_and(|inv| inv.count(crushed) >= 16) {
+            break;
+        }
+        player.ticks(30);
+    }
+    player.open_id(crate_)?;
+    for index in 0..8 {
+        player.ui(&[UiAction::ClickSlot { slot: SlotRef::Building { building: crate_, group: BuildingSlots::Input, index }, click: SlotClick::SHIFT_LEFT }]);
+    }
+    if player.count("crushed_malachite") >= 16 {
+        Ok(())
+    } else {
+        Err(format!("the stamp mill made {} crushed malachite: {:?}", player.count("crushed_malachite"), player.host.factory.building_view(stamp)))
+    }
+}
+
+/// A crate at the output port of a machine for `item`, when that port faces right and has
+/// nothing in front of it (the crate's powder input is on its left): placed now if needed.
+fn output_crate(player: &mut Player, id: BuildingId, item: ItemRef) -> Result<Option<BuildingId>, String> {
+    let b = player.host.factory.buildings.get(id).ok_or("no machine")?;
+    let def = player.content.factory.building_def(b.kind);
+    let port = b.ports.iter().find(|p| {
+        p.kind == foundry_content::PortKind::BulkOut
+            && p.side == foundry_content::Side::Right
+            && p.def.is_none_or(|i| def.ports[i as usize].filter.is_empty() || def.ports[i as usize].filter.contains(&item))
+    });
+    let Some(port) = port.copied() else { return Ok(None) };
+    let at = foundry_factory::geometry::neighbor_tile(port.tile, port.side);
+    if let Some(existing) = player.host.factory.buildings.at_tile(at, foundry_content::Layer::Front) {
+        return Ok(player.host.factory.buildings.inventory(existing).map(|_| existing));
+    }
+    player.dig("wood", |p| p.count("wood") >= 8)?;
+    player.craft("crate", 1)?;
+    player.place_at("crate", at).map(Some)
+}
+
+fn tank_index(player: &Player, material: &str) -> Result<usize, String> {
+    let m = ItemRef::Material(player.content.expect_material(material));
+    player.normal.frame.inventory.tanks.iter().position(|t| t.item == Some(m)).ok_or_else(|| format!("no {material} in the player's tanks"))
 }
 
 fn wash_ore(player: &mut Player) -> Result<(), String> {
@@ -120,7 +160,7 @@ fn run_machine(
         },
         UiAction::ClickSlot {
             slot: SlotRef::Tank(input_tank),
-            click: SlotClick::LEFT,
+            click: SlotClick::CTRL_LEFT,
         },
     ]);
     if let Some(extra_name) = extra_input {
@@ -135,11 +175,13 @@ fn run_machine(
             .ok_or_else(|| format!("no {extra_name} in the player's tanks"))?;
         player.ui(&[UiAction::ClickSlot {
             slot: SlotRef::Tank(tank),
-            click: SlotClick::LEFT,
+            click: SlotClick::CTRL_LEFT,
         }]);
     }
 
     let output = player.content.expect_material(output_name);
+    let crate_ = output_crate(player, id, ItemRef::Material(output))?;
+    let in_crate = |player: &Player| crate_.and_then(|c| player.host.factory.buildings.inventory(c)).map_or(0, |inv| inv.count(ItemRef::Material(output)));
     let mut made = 0;
     for _ in 0..240 {
         if let Some(view) = player.host.factory.building_view(id) {
@@ -147,12 +189,20 @@ fn run_machine(
                 .outputs
                 .iter()
                 .find(|slot| slot.item == ItemRef::Material(output))
-                .map_or(0, |slot| slot.count);
+                .map_or(0, |slot| slot.count)
+                + in_crate(player);
             if made >= needed {
                 break;
             }
         }
         player.ticks(30);
+    }
+    if let Some(c) = crate_ {
+        player.open_id(c)?;
+        for index in 0..8 {
+            player.ui(&[UiAction::ClickSlot { slot: SlotRef::Building { building: c, group: BuildingSlots::Input, index }, click: SlotClick::SHIFT_LEFT }]);
+        }
+        player.open_id(id)?;
     }
     if made < needed {
         return Err(format!(

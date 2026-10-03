@@ -20,6 +20,8 @@ fn generated_player(seed: u64) -> Player {
         start,
         normal: NormalMode::new(),
         tick: 0,
+        smelter: None,
+        site: None,
     };
     player.ticks(30);
     player

@@ -12,7 +12,10 @@
         heat_capacity: 0.7,
         conductivity: 0.1,
         broken_into: Some("dirt"),
-        burn: Some((ignite_at: 250, fire_temp: 600, chance: 0.03, into: Some("dirt"), smoke: Some("smoke"), smoke_chance: 0.1)),
+        // Green grass smoulders: it burns only where something hotter than 400 °C touches it, and
+        // its own fire (350 °C) is too cold to light the next grass cell. So a campfire on a
+        // meadow does not set the whole meadow (and the wood buildings on it) on fire.
+        burn: Some((ignite_at: 400, fire_temp: 350, chance: 0.02, into: Some("dirt"), smoke: Some("smoke"), smoke_chance: 0.1)),
         tags: ["flammable", "organic"],
         note: Some("Spreading onto nearby dirt in light needs a coded behavior. See requests/content-data.md."),
     ),

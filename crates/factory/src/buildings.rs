@@ -146,6 +146,10 @@ pub struct Building {
     /// Persisted boiler, pipe and steam-machine fluid state.
     #[serde(default)]
     pub steam: SteamState,
+    /// The temperature of the metal in a mold (°C). It cools toward the mold body; the mold casts
+    /// when it is below the freezing point of the metal.
+    #[serde(default)]
+    pub metal_temp: i16,
     /// More useful text for a steam-starved machine than the generic power status.
     #[serde(skip)]
     pub steam_reason: Option<String>,
@@ -185,6 +189,7 @@ impl Building {
             logic: Logic::for_kind(def),
             steam: SteamState::for_kind(&def.kind, def.power.as_ref().is_some_and(|p| p.steam_per_s > 0.0)),
             steam_reason: None,
+            metal_temp: foundry_core::DEFAULT_TEMPERATURE,
             timer: None,
             idle: 0,
             busy: false,
@@ -1167,8 +1172,11 @@ impl Buildings {
             if taken > 0
                 && let Some(temperature) = hot_mold_input
             {
-                crate::hot_metal::prime_mold(sim, def.body, b.cell_rect(), temperature);
-                b.temperature = b.temperature.max(temperature);
+                // The metal is hot; the mold body warms only a little (a small mass of metal in a
+                // large clay mold).
+                b.metal_temp = b.metal_temp.max(temperature);
+                let warm = b.temperature.saturating_add(temperature.saturating_sub(b.temperature) / 10);
+                crate::hot_metal::prime_mold(sim, def.body, b.cell_rect(), warm);
             }
             if taken > 0 {
                 b.busy = true;
@@ -1271,6 +1279,56 @@ impl Buildings {
         Some((accept(&mut dst.logic, content, item, count, &hub), nid.index))
     }
 
+    /// Pour up to `n` units of molten `mat` from the tap `port` of building `i` straight into the
+    /// building under the outflow (a mold). The metal there is `temperature` hot. A few falling
+    /// drops are drawn. Returns the units moved.
+    #[allow(clippy::too_many_arguments)]
+    fn pour_into(&mut self, i: u32, port: PlacedPort, mat: MaterialId, n: u32, temperature: i16, content: &Content, sim: &mut Simulation) -> u32 {
+        let hub = self.hub.clone();
+        let outside = neighbor_tile(port.tile, port.side);
+        let below = neighbor_tile(outside, Side::Down);
+        let Some(&nid) = self.front.get(&below) else { return 0 };
+        let Some((_, dst)) = two_mut(&mut self.slots, i as usize, nid.index as usize) else { return 0 };
+        let moved = accept(&mut dst.logic, content, ItemRef::Material(mat), n, &hub);
+        if moved > 0 {
+            dst.metal_temp = dst.metal_temp.max(temperature);
+            let r = tiles_to_cells(outside, (1, 1));
+            let x = if port.side == Side::Right { r.x0 } else { r.x1 - 1 } as f64;
+            for k in 0..moved.min(2) {
+                sim.spawn_visual((x + 0.5 + k as f64, r.y0 as f64 + 3.0), (0.0, 0.5), mat, 12, false);
+            }
+            self.wake_index(nid.index);
+        }
+        moved
+    }
+
+    /// For each liquid output of building `i` with a building right under its outflow that has a
+    /// liquid input on its top there (a mold under a crucible tap): how many units that building
+    /// still takes of the output's material (the room of its recipe input).
+    fn pour_room(&self, i: u32, content: &Content) -> Vec<(PlacedPort, u32)> {
+        let Some(b) = self.at_index(i) else { return vec![] };
+        let Logic::Machine(m) = &b.logic else { return vec![] };
+        let Some(recipe) = m.recipe.map(|r| content.factory.recipe_def(r)) else { return vec![] };
+        let mut out = vec![];
+        for p in b.ports.iter().filter(|p| p.kind == PortKind::FluidOut && matches!(p.side, Side::Left | Side::Right)) {
+            let below = neighbor_tile(neighbor_tile(p.tile, p.side), Side::Down);
+            let Some(dst) = self.front.get(&below).and_then(|id| self.get(*id)) else { continue };
+            if !dst.ports.iter().any(|q| q.kind == PortKind::FluidIn && q.tile == below && q.side == Side::Up) {
+                continue;
+            }
+            let room = recipe
+                .outputs
+                .iter()
+                .find_map(|s| match s.item {
+                    ItemRef::Material(_) => Some(accept_room(&dst.logic, content, s.item, &self.hub)),
+                    ItemRef::Part(_) => None,
+                })
+                .unwrap_or(0);
+            out.push((*p, room));
+        }
+        out
+    }
+
     /// The powder outputs of building `i` that face a powder input of the building next to them.
     fn feeding_ports(&self, i: u32) -> Vec<PlacedPort> {
         let Some(b) = self.at_index(i) else { return vec![] };
@@ -1362,15 +1420,24 @@ impl Buildings {
                     return;
                 };
                 let recipe = content.factory.recipe_def(r);
-                if def.kind == "mold"
-                    && m.inputs.iter().zip(&recipe.inputs).all(|(have, need)| *have >= need.count)
-                    && let Some(freeze_at) = crate::hot_metal::casting_freeze_point(content, recipe)
-                    && b.temperature >= freeze_at
-                {
-                    b.heat = b.temperature;
-                    b.status = Status::TooHot;
-                    b.power_w = idle_w;
-                    return;
+                if def.kind == "mold" {
+                    // The metal in the mold cools toward the temperature of the mold body.
+                    if b.metal_temp > b.temperature {
+                        let step = ((b.metal_temp - b.temperature) as f32 * crate::hot_metal::METAL_COOLING).ceil() as i16;
+                        b.metal_temp -= step.max(1);
+                    } else {
+                        b.metal_temp = b.temperature;
+                    }
+                    if m.inputs.iter().zip(&recipe.inputs).all(|(have, need)| *have >= need.count)
+                        && let Some(freeze_at) = crate::hot_metal::casting_freeze_point(content, recipe)
+                        && b.metal_temp >= freeze_at
+                    {
+                        b.heat = b.metal_temp;
+                        b.status = Status::TooHot;
+                        b.power_w = idle_w;
+                        b.busy = true;
+                        return;
+                    }
                 }
                 if b.exhaust_blocked {
                     b.status = Status::OutputBlocked;
@@ -1486,6 +1553,8 @@ impl Buildings {
     fn give_outputs(&mut self, i: u32, content: &Content, sim: &mut Simulation) {
         let now = self.now;
         let feeding = self.feeding_ports(i);
+        let pour_room = self.pour_room(i, content);
+        let mut pours = Vec::new();
         let mut hopper_steps = 0;
         let Some(b) = self.at_index_mut(i) else { return };
         let def = content.factory.building_def(b.kind);
@@ -1514,16 +1583,27 @@ impl Buildings {
                             continue;
                         }
                         let want = m.outputs[j].min(PORT_CELLS_PER_TICK);
-                        if port.kind == PortKind::BulkOut && ph == Phase::Powder {
-                            bulk_outputs.push((j, *port, mat, want));
-                            break;
-                        }
                         // Molten output of a hot recipe (the crucible tap) leaves 150 °C above its
                         // freezing point (at most the heat of the machine), so it stays liquid long
                         // enough to reach a mold, and the mold can cool soon after.
                         let hot = recipe.min_temp.and(content.materials.freeze[mat.index()]).map(|f| {
                             f.at.saturating_add(150).min(b.heat).max(content.materials.temperature[mat.index()])
                         });
+                        if port.kind == PortKind::FluidOut
+                            && let Some(&(_, room)) = pour_room.iter().find(|(p, _)| p == port)
+                        {
+                            // A mold under the tap: the metal goes straight into it (it would freeze
+                            // on the cold mold top), as much as it has room for.
+                            let n = want.min(room);
+                            if n > 0 {
+                                pours.push((j, *port, mat, n, hot.unwrap_or(content.materials.temperature[mat.index()])));
+                            }
+                            break;
+                        }
+                        if port.kind == PortKind::BulkOut && ph == Phase::Powder {
+                            bulk_outputs.push((j, *port, mat, want));
+                            break;
+                        }
                         let placed = cells::put_to_side(sim, port.tile, port.side, mat, want, hot);
                         m.outputs[j] -= placed;
                         b.busy |= placed > 0;
@@ -1574,6 +1654,15 @@ impl Buildings {
         }
         if hopper_steps > 0 {
             self.hopper_to_neighbor(i, &feeding, hopper_steps, content);
+        }
+        for (j, port, mat, n, temperature) in pours {
+            let moved = self.pour_into(i, port, mat, n, temperature, content, sim);
+            if let Some(b) = self.at_index_mut(i)
+                && let Logic::Machine(m) = &mut b.logic
+            {
+                m.outputs[j] -= moved;
+                b.busy |= moved > 0;
+            }
         }
         for (j, port, mat, want) in bulk_outputs {
             let pushed = self.push_bulk(i, port, ItemRef::Material(mat), want, content);
@@ -1846,7 +1935,7 @@ impl Buildings {
                             format!("Too cold: {} °C, needs {} °C", b.heat, recipe.min_temp.unwrap_or(0))
                         }
                         Status::TooHot if def.kind == "mold" => crate::hot_metal::casting_freeze_point(content, recipe)
-                            .map(|freeze_at| format!("Cooling: {} °C; mold needs below {} °C", b.temperature, freeze_at))
+                            .map(|freeze_at| format!("Cooling: the metal is {} °C; it casts below {} °C", b.metal_temp, freeze_at))
                             .unwrap_or_else(|| format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp)),
                         Status::TooHot => format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp),
                         Status::NoFuel => match fuel_hint(content, def) {
