@@ -11,7 +11,7 @@
         description: "A harder drill head. Lets you dig into stone and go down into the upper stone layer.",
         tier: 1,
         requires: ["research"],
-        kits: [("bronze_kit", 2)],
+        kits: [("bronze_kit", 1)],
         units: 10,
         effects: [("dig_hardness", 1.0)],
     ),
@@ -20,9 +20,9 @@
         name: "Steam power",
         description: "Boilers make steam. Steam machines take it from pipes.",
         tier: 1,
-        requires: ["bronze_drill_head"],
+        requires: ["research"],
         kits: [("bronze_kit", 1)],
-        units: 20,
+        units: 10,
         unlocks: ["small_boiler", "bronze_pipe_section", "bronze_pipe"],
     ),
     Tech(
@@ -32,7 +32,7 @@
         tier: 1,
         requires: ["steam_power"],
         kits: [("bronze_kit", 1)],
-        units: 30,
+        units: 15,
         unlocks: ["steam_crusher", "steam_wire_drawer", "steam_extractor", "steam_press", "steam_lab", "copper_wire"],
     ),
     Tech(
@@ -42,7 +42,7 @@
         tier: 1,
         requires: ["steam_power"],
         kits: [("bronze_kit", 1)],
-        units: 20,
+        units: 10,
         unlocks: ["arm", "steam_assembler"],
     ),
     Tech(
@@ -52,7 +52,7 @@
         tier: 1,
         requires: ["steam_machines_1"],
         kits: [("bronze_kit", 1)],
-        units: 30,
+        units: 15,
         unlocks: ["steam_furnace"],
     ),
     Tech(
@@ -62,7 +62,7 @@
         tier: 1,
         requires: ["steam_machines_1", "bronze_drill_head"],
         kits: [("bronze_kit", 1)],
-        units: 30,
+        units: 15,
         unlocks: ["steam_drill"],
     ),
     Tech(

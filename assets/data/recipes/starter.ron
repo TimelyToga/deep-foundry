@@ -57,7 +57,7 @@
     // --- Tier 1: gated by technologies (see tech/starter.ron) ---
     Recipe(id: "small_boiler", category: "assembling", hand: true, inputs: [("bronze_plate", 10), ("clay_brick", 8), ("bronze_pipe_section", 2)], outputs: [("small_boiler", 1)], time: 5.0),
     Recipe(id: "bronze_pipe_section", category: "assembling", hand: true, inputs: [("bronze_plate", 3)], outputs: [("bronze_pipe_section", 1)], time: 2.0),
-    Recipe(id: "bronze_pipe", category: "hand", inputs: [("bronze_pipe_section", 1)], outputs: [("bronze_pipe", 1)], time: 0.5),
+    Recipe(id: "bronze_pipe", category: "hand", inputs: [("bronze_pipe_section", 1)], outputs: [("bronze_pipe", 2)], time: 0.5),
     Recipe(id: "steam_crusher", category: "assembling", hand: true, inputs: [("bronze_plate", 8), ("bronze_gear", 4), ("bronze_pipe_section", 2)], outputs: [("steam_crusher", 1)], time: 5.0),
     Recipe(id: "steam_wire_drawer", category: "assembling", hand: true, inputs: [("bronze_plate", 6), ("bronze_gear", 2), ("bronze_pipe_section", 1)], outputs: [("steam_wire_drawer", 1)], time: 5.0),
     Recipe(id: "steam_extractor", category: "assembling", hand: true, inputs: [("bronze_plate", 6), ("bronze_pipe_section", 2)], outputs: [("steam_extractor", 1)], time: 5.0),
