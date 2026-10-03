@@ -15,7 +15,7 @@
         id: "t1_boiler",
         tier: 1,
         title: "Make steam",
-        text: "Research Steam power and craft a small boiler. Put fuel in its top input: coal, coke, charcoal or wood. Water: place bronze pipes from its water port (left) into a lake or a river. A pipe in water takes the water in. Do not let a hot boiler run dry: cold water in a dry, hot boiler makes it explode.",
+        text: "Research Steam power and craft a small boiler. Put fuel in its top input: coal, coke, charcoal or wood. Water: a bronze pipe in water takes the water in. Place pipes from the water port of the boiler (left) into a lake or a river; or dig a pool next to the boiler, click your water tank to choose it, spray the water into the pool with the right mouse button, and put one pipe in it. Do not let a hot boiler run dry: cold water in a dry, hot boiler makes it explode.",
         condition: Build("small_boiler", 1),
         reward_points: 2,
     ),
