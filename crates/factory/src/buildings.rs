@@ -2145,11 +2145,12 @@ impl Buildings {
                 }
             }
             Logic::Arm(arm) => {
+                let only = arm.filter.map(|f| format!(" (only {})", content.item_name(f.item()))).unwrap_or_default();
                 v.reason = match b.status {
-                    Status::Working => format!("Moving items ({} so far)", arm.moved),
+                    Status::Working => format!("Moving items{only} ({} so far)", arm.moved),
                     Status::NoPower => "Needs steam".into(),
                     _ if self.arm_ends(id.index).is_none() => "Needs a building on both sides".into(),
-                    _ => "Waiting: nothing to move, or no room on the other side".into(),
+                    _ => format!("Waiting{only}: nothing to move, or no room on the other side. Click an item: it moves only that item"),
                 };
             }
             Logic::Belt(_) | Logic::Workbench | Logic::Passive => {}

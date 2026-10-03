@@ -389,7 +389,7 @@
     Building(
         id: "arm",
         name: "Arm",
-        description: "Moves items from the building on its left to the building on its right (turn it to change the direction). It takes products out of machines, stacks out of crates and powder out of hoppers, and puts them into machines, crates, hoppers, labs, boilers and the Hub. It takes only what the other building has room for.",
+        description: "Moves items from the building on its left to the building on its right (turn it to change the direction). It takes products out of machines, stacks out of crates and powder out of hoppers, and puts them into machines, crates, hoppers, labs, boilers and the Hub. It takes only what the other building has room for. Open it and click an item: it moves only that item (click it again: everything).",
         kind: "arm",
         size: (1, 1),
         tier: 1,

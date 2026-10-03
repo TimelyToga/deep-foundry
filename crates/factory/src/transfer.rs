@@ -184,6 +184,18 @@ impl Factory {
             return Ok(0);
         }
         let content = self.content.clone();
+        // An arm: the clicked item is the only item it moves now (click it again: everything).
+        if let Some(b) = self.buildings.get_mut(id)
+            && let Logic::Arm(arm) = &mut b.logic
+        {
+            let f = crate::arms::ArmFilter::of(item);
+            arm.filter = if arm.filter == Some(f) { None } else { Some(f) };
+            self.buildings.wake(id);
+            return Err(match arm_filter_name(&content, self.buildings.get(id)) {
+                Some(f) => format!("The arm moves only {f} now (click it again: everything)"),
+                None => "The arm moves everything now".to_string(),
+            });
+        }
         let room = self.buildings.room_for(&content, id, item);
         let taken = self.buildings.insert(&content, id, item, n.min(room));
         if taken == 0 {
@@ -193,6 +205,7 @@ impl Factory {
     }
 
     /// Why building `id` does not take an item: a message for the player.
+    /// (An arm takes no items; a click sets its filter, see `give_to_building`.)
     pub fn refusal(&self, id: BuildingId, item: ItemRef) -> String {
         let content = &self.content;
         let Some(b) = self.buildings.get(id) else { return String::new() };
@@ -212,6 +225,14 @@ impl Factory {
             (Logic::Hub(_), _) => format!("The Hub has all the {what} that the repair stages need"),
             _ => format!("{name} does not take {what}"),
         }
+    }
+}
+
+/// The name of the item an arm moves, if it has a filter.
+fn arm_filter_name(content: &foundry_content::Content, b: Option<&crate::Building>) -> Option<String> {
+    match b.map(|b| &b.logic) {
+        Some(Logic::Arm(arm)) => arm.filter.map(|f| content.item_name(f.item()).to_string()),
+        _ => None,
     }
 }
 

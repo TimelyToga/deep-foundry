@@ -319,3 +319,27 @@ fn a_splitter_alternates() {
     assert_eq!(f.buildings.inventory(right).unwrap().count(item(&c, "sand")), 10);
     assert_eq!(f.buildings.inventory(left).unwrap().count(item(&c, "sand")), 10);
 }
+
+/// An arm with a filter: the player clicks a part on the open arm, and the arm moves only that
+/// part from a crate with two kinds of parts.
+#[test]
+fn an_arm_with_a_filter_moves_only_that_part() {
+    let c = content();
+    let mut sim = world(&c, Some(96));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let from = f.place(kind(&c, "crate"), TilePos::new(3, 11), 0, false, &mut sim).unwrap();
+    let arm = f.place(kind(&c, "arm"), TilePos::new(4, 11), 0, false, &mut sim).unwrap();
+    let to = f.place(kind(&c, "crate"), TilePos::new(5, 11), 0, false, &mut sim).unwrap();
+    f.buildings.insert(&c, from, item(&c, "bronze_gear"), 5);
+    f.buildings.insert(&c, from, item(&c, "tin_plate"), 5);
+    // A click with a tin plate on the arm sets its filter (no plate goes in).
+    f.player.insert(&c, item(&c, "tin_plate"), 1);
+    let slot = f.player.slots.iter().position(|s| s.is_some()).unwrap();
+    let msg = f.parts_to_building(slot, foundry_factory::Click::Left, arm).unwrap_err();
+    assert!(msg.contains("moves only Tin plate"), "{msg}");
+    assert_eq!(f.player.count(item(&c, "tin_plate")), 1);
+    run(&mut f, &mut sim, 600);
+    let inv = f.buildings.inventory(to).unwrap();
+    assert_eq!((inv.count(item(&c, "tin_plate")), inv.count(item(&c, "bronze_gear"))), (5, 0));
+}
