@@ -97,7 +97,7 @@
         tier: 0,
         body: "clay_brick_block",
         max_temp: 1200,
-        crafts: ["kiln"],
+        crafts: ["kiln", "glass_melting"],
         // A room controller (see foundry_factory rooms): at most 24 tiles inside. The fuel slot
         // holds 400 units; the fuel burns as cells in the room. Each inside tile adds 8 to the
         // speed: a kiln fires many bricks at once, and a bigger kiln fires more.
@@ -419,7 +419,7 @@
     Building(
         id: "steam_furnace",
         name: "Steam furnace",
-        description: "Smelts ore with charcoal or coke, and melts copper and tin plates into bronze, with no fire: steam heats it to 1300 °C. Feed it from a hopper or a belt on its top, or with arms. Its tap pours into a mold right of it. Uses 3 steam per second.",
+        description: "Smelts ore with charcoal or coke, melts copper and tin plates into bronze, and melts sand and ash into glass, with no fire: steam heats it to 1300 °C. Feed it from a hopper or a belt on its top, or with arms. Its tap pours into a mold right of it. Uses 3 steam per second.",
         kind: "crafter",
         size: (2, 2),
         tier: 1,
@@ -430,7 +430,7 @@
             (kind: FluidOut, tile: (1, 0), side: Right, name: Some("Tap")),
             (kind: Pipe, tile: (0, 1), side: Left, name: Some("Steam in")),
         ],
-        crafts: ["crucible_smelting", "alloying"],
+        crafts: ["crucible_smelting", "alloying", "glass_melting"],
         power: Some((tier: 0, steam_per_s: 3.0)),
         // With steam the furnace counts as this hot for the min_temp of its recipes.
         params: {"internal_heat": 1300.0, "buffer_crafts": 4.0},
@@ -550,10 +550,14 @@
         ports: [
             (kind: FluidIn, tile: (0, 0), side: Up, name: Some("Pig iron in")),
             (kind: FluidOut, tile: (1, 2), side: Down, name: Some("Steel tap")),
+            (kind: BulkOut, tile: (1, 1), side: Right, name: Some("Slag"), filter: ["crushed_slag"]),
             (kind: Exhaust, tile: (1, 0), side: Up),
             (kind: Pipe, tile: (0, 1), side: Left, name: Some("Steam in")),
         ],
         crafts: ["steel_converting"],
         power: Some((tier: 0, steam_per_s: 3.0)),
+        // The air that the steam blows through the molten iron burns its carbon: that keeps it
+        // hot (°C) while it gets steam.
+        params: {"internal_heat": 1600.0},
     ),
 ]

@@ -543,6 +543,13 @@ fn heat_reading(sim: &Simulation, ports: &[PlacedPort], body: i16) -> i16 {
     if n == 0 { body } else { (sum / n) as i16 }
 }
 
+/// The tile that a tap pours into: under the tile outside a side tap, or the tile right under a
+/// tap that points down.
+fn pour_target(port: PlacedPort) -> TilePos {
+    let outside = neighbor_tile(port.tile, port.side);
+    if port.side == Side::Down { outside } else { neighbor_tile(outside, Side::Down) }
+}
+
 /// The belt direction: +1 right, -1 left.
 pub fn belt_direction(t: Transform) -> i32 {
     if t.side(Side::Right) == Side::Left { -1 } else { 1 }
@@ -1304,16 +1311,18 @@ impl Buildings {
     fn pour_into(&mut self, i: u32, port: PlacedPort, mat: MaterialId, n: u32, temperature: i16, content: &Content, sim: &mut Simulation) -> u32 {
         let hub = self.hub.clone();
         let outside = neighbor_tile(port.tile, port.side);
-        let below = neighbor_tile(outside, Side::Down);
+        let below = pour_target(port);
         let Some(&nid) = self.front.get(&below) else { return 0 };
         let Some((_, dst)) = two_mut(&mut self.slots, i as usize, nid.index as usize) else { return 0 };
         let moved = accept(&mut dst.logic, content, ItemRef::Material(mat), n, &hub);
         if moved > 0 {
             dst.metal_temp = dst.metal_temp.max(temperature);
-            let r = tiles_to_cells(outside, (1, 1));
-            let x = if port.side == Side::Right { r.x0 } else { r.x1 - 1 } as f64;
-            for k in 0..moved.min(2) {
-                sim.spawn_visual((x + 0.5 + k as f64, r.y0 as f64 + 3.0), (0.0, 0.5), mat, 12, false);
+            if port.side != Side::Down {
+                let r = tiles_to_cells(outside, (1, 1));
+                let x = if port.side == Side::Right { r.x0 } else { r.x1 - 1 } as f64;
+                for k in 0..moved.min(2) {
+                    sim.spawn_visual((x + 0.5 + k as f64, r.y0 as f64 + 3.0), (0.0, 0.5), mat, 12, false);
+                }
             }
             self.wake_index(nid.index);
         }
@@ -1328,8 +1337,8 @@ impl Buildings {
         let Logic::Machine(m) = &b.logic else { return vec![] };
         let Some(recipe) = m.recipe.map(|r| content.factory.recipe_def(r)) else { return vec![] };
         let mut out = vec![];
-        for p in b.ports.iter().filter(|p| p.kind == PortKind::FluidOut && matches!(p.side, Side::Left | Side::Right)) {
-            let below = neighbor_tile(neighbor_tile(p.tile, p.side), Side::Down);
+        for p in b.ports.iter().filter(|p| p.kind == PortKind::FluidOut && p.side != Side::Up) {
+            let below = pour_target(*p);
             let Some(dst) = self.front.get(&below).and_then(|id| self.get(*id)) else { continue };
             if !dst.ports.iter().any(|q| q.kind == PortKind::FluidIn && q.tile == below && q.side == Side::Up) {
                 continue;

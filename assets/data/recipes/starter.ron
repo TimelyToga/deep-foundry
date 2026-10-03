@@ -134,7 +134,7 @@
         category: "steel_converting",
         inputs: [("molten_pig_iron", 64)],
         outputs: [("molten_steel", 60)],
-        byproducts: [(item: "slag_block", count: 4, chance: 1.0)],
+        byproducts: [(item: "crushed_slag", count: 4, chance: 1.0)],
         time: 10.0,
         min_temp: Some(1500),
     ),
@@ -144,7 +144,7 @@
     Recipe(id: "vial_mold", category: "hand", inputs: [("clay_brick", 4)], outputs: [("vial_mold", 1)], time: 1.0),
     Recipe(
         id: "molten_glass",
-        category: "kiln",
+        category: "glass_melting",
         inputs: [("sand", 16), ("ash", 4)],
         outputs: [("molten_glass", 16)],
         time: 10.0,

@@ -41,6 +41,8 @@ pub(crate) struct Tree {
     /// Radius of the crown.
     crown: i32,
     h: u32,
+    /// A rubber tree: its trunk and branches are rubber tree wood (resin for rubber, Tier 1).
+    rubber: bool,
 }
 
 /// An ellipse of leaves.
@@ -74,7 +76,7 @@ pub(crate) fn in_slot(ctx: &Ctx, k: i32) -> Option<Tree> {
     Some(match col.biome {
         Biome::Tundra => {
             let height = 40 + r(8, 36);
-            Tree { x, base, height, kind: Kind::Conifer, half: 1, crown: 9 + height / 8, h }
+            Tree { x, base, height, kind: Kind::Conifer, half: 1, crown: 9 + height / 8, h, rubber: false }
         }
         _ => {
             // Most trees are of middle size; some are small and some are tall.
@@ -85,7 +87,9 @@ pub(crate) fn in_slot(ctx: &Ctx, k: i32) -> Option<Tree> {
             };
             // Thick trunks: wood is the first fuel and building material.
             let half = if height > 50 { 3 } else if height > 36 { 2 } else { 1 };
-            Tree { x, base, height, kind: Kind::Broad, half, crown: (9 + height / 4).min(REACH - 2), h }
+            // One broad tree in 5 is a rubber tree, from 600 cells away from the Hub on.
+            let rubber = x.abs() > 600 && (h >> 4) % 5 == 0;
+            Tree { x, base, height, kind: Kind::Broad, half, crown: (9 + height / 4).min(REACH - 2), h, rubber }
         }
     })
 }
@@ -125,6 +129,7 @@ impl Tree {
             Kind::Conifer => self.base - self.height,
         };
         let c = self.crown as f32;
+        let wood = if self.rubber { m.rubber_wood } else { m.wood };
         for y in y_lo..y_hi {
             let row = &mut grid[((y - y0) as usize) * GW..((y - y0) as usize + 1) * GW];
             // Leaves: a span of columns for each part of the crown in this row.
@@ -172,7 +177,7 @@ impl Tree {
                             if (x_lo..x_hi).contains(&x) {
                                 let i = (x - xl) as usize;
                                 if row[i] == 0 || row[i] == m.leaves {
-                                    row[i] = m.wood;
+                                    row[i] = wood;
                                 }
                             }
                         }
@@ -186,7 +191,7 @@ impl Tree {
                 for x in (self.x - half).max(x_lo)..=(self.x + half).min(x_hi - 1) {
                     let i = (x - xl) as usize;
                     if row[i] != m.water && (y <= self.base || row[i] != 0) {
-                        row[i] = m.wood;
+                        row[i] = wood;
                     }
                 }
             }
@@ -256,7 +261,7 @@ impl Decor {
                 }
                 let i = ((y - y0) as usize) * GW + (x - xl) as usize;
                 if self.boulder {
-                    if grid[i] != m.water && grid[i] != m.wood && grid[i] != m.leaves {
+                    if grid[i] != m.water && grid[i] != m.wood && grid[i] != m.rubber_wood && grid[i] != m.leaves {
                         grid[i] = m.stone;
                     }
                 } else if grid[i] == 0 && hash2(self.h ^ 0xb005, x, y) % 100 >= 12 {
