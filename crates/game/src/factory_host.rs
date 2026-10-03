@@ -191,6 +191,9 @@ pub enum FactoryCommand {
     /// Open the window of the building at this cell.
     OpenAt(CellPos),
     CloseBuilding,
+    /// Open the power network window of the network that this building is on.
+    OpenPower(BuildingId),
+    ClosePower,
     /// Which windows are open, so the host sends their views.
     Windows { research: bool, guide: bool },
     SetHotbar { index: usize, item: Option<ItemRef> },
@@ -306,6 +309,8 @@ pub struct FactoryFrame {
     pub marks: Vec<BuildingMark>,
     /// Parts riding the belts in the view: the cell under the middle of the part, and the part.
     pub belt_parts: Vec<(CellPos, ItemRef)>,
+    /// The open power network window.
+    pub power: Option<PowerFrame>,
     /// The building placed last and its cells (for tests; later for the build animation).
     pub last_placed: Option<(BuildingKindId, CellRect)>,
     /// Name tags over buildings in the view (the Hub and its next repair stage).
@@ -413,6 +418,10 @@ pub struct FactoryHost {
     taps: Taps,
     /// The building whose window is open.
     open: Option<BuildingId>,
+    /// The power network window: a building on that network.
+    power_open: Option<BuildingId>,
+    /// Production and consumption of the open power network (W), one sample each 30 ticks.
+    power_history: std::collections::VecDeque<(f32, f32)>,
     research_open: bool,
     guide_open: bool,
     /// Send the guide in the next frame.
@@ -459,6 +468,8 @@ impl FactoryHost {
             input: PlayerInput::default(),
             taps: Taps::default(),
             open: None,
+            power_open: None,
+            power_history: Default::default(),
             research_open: false,
             guide_open: false,
             guide_due: true,
@@ -682,6 +693,11 @@ impl FactoryHost {
                 }
             }
             FactoryCommand::CloseBuilding => self.open = None,
+            FactoryCommand::OpenPower(id) => {
+                self.power_open = Some(id);
+                self.power_history.clear();
+            }
+            FactoryCommand::ClosePower => self.power_open = None,
             FactoryCommand::Windows { research, guide } => {
                 self.research_open = research;
                 if guide && !self.guide_open {
@@ -1069,6 +1085,7 @@ impl FactoryHost {
             let size = if g.rotation & 1 == 1 { (def.size.1, def.size.0) } else { def.size };
             GhostView { request: g, size, error, ports: self.factory.ghost_ports(g.kind, g.at, g.rotation, g.flip) }
         });
+        let power = self.power_frame();
         let f = &self.factory;
         let hover = self.building_at(self.input.aim).and_then(|id| {
             let b = f.buildings.get(id)?;
@@ -1178,6 +1195,7 @@ impl FactoryHost {
             hover,
             marks,
             belt_parts,
+            power,
             last_placed: self.last_placed,
             labels,
             drag_stop: self.drag_stop.clone(),
@@ -1188,6 +1206,59 @@ impl FactoryHost {
             dig_list: f.dig_list(),
             notices: std::mem::take(&mut self.notices),
         }
+    }
+}
+
+/// The open power network, for its window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PowerFrame {
+    pub id: u32,
+    pub satisfaction: f32,
+    pub production_w: f64,
+    pub capacity_w: f64,
+    pub consumption_w: f64,
+    /// (building type, count, watts now) for the generators and for the machines.
+    pub producers: Vec<(BuildingKindId, u32, f64)>,
+    pub consumers: Vec<(BuildingKindId, u32, f64)>,
+    /// Production and consumption over time (W), oldest first.
+    pub history: Vec<(f32, f32)>,
+}
+
+impl FactoryHost {
+    /// The power network window: the network of the building it was opened on.
+    fn power_frame(&mut self) -> Option<PowerFrame> {
+        let id = self.power_open?;
+        let f = &self.factory;
+        let net = f.buildings.power_nets().iter().find(|n| n.generators.contains(&id) || n.consumers.contains(&id))?.clone();
+        if f.buildings.now().is_multiple_of(30) || self.power_history.is_empty() {
+            self.power_history.push_back((net.used_w as f32, net.used_w.min(net.demand_w) as f32));
+            while self.power_history.len() > 120 {
+                self.power_history.pop_front();
+            }
+        }
+        let group = |ids: &[BuildingId]| {
+            let mut out: Vec<(BuildingKindId, u32, f64)> = vec![];
+            for b in ids.iter().filter_map(|i| f.buildings.get(*i)) {
+                match out.iter_mut().find(|e| e.0 == b.kind) {
+                    Some(e) => {
+                        e.1 += 1;
+                        e.2 += b.power_w as f64;
+                    }
+                    None => out.push((b.kind, 1, b.power_w as f64)),
+                }
+            }
+            out
+        };
+        Some(PowerFrame {
+            id: net.id,
+            satisfaction: net.satisfaction,
+            production_w: net.used_w,
+            capacity_w: net.supply_w,
+            consumption_w: net.used_w.min(net.demand_w),
+            producers: group(&net.generators),
+            consumers: group(&net.consumers),
+            history: self.power_history.iter().copied().collect(),
+        })
     }
 }
 

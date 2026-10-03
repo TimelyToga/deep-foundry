@@ -537,3 +537,38 @@ fn reactions_near_the_robot_are_discovered() {
     let notices = g.frame().notices;
     assert!(notices.iter().any(|n| n.starts_with("Discovered a reaction")), "{notices:?}");
 }
+
+/// The power network window: a turbine with steam, cables and a macerator; the window of the
+/// network shows the turbine as a producer and the macerator as a user.
+#[test]
+fn the_power_window_shows_the_network() {
+    let mut g = Game::new();
+    let c = g.content.clone();
+    for i in 0..c.factory.techs.len() {
+        g.host.factory.progress.debug_complete(&c, foundry_core::TechId(i as u16));
+    }
+    let k = |id: &str| c.factory.building(id).unwrap();
+    let at = g.free_place(k("steam_turbine"));
+    let place = |g: &mut Game, id: &str, t: TilePos| g.host.factory.place(k(id), t, 0, false, &mut g.sim).unwrap();
+    let turbine = place(&mut g, "steam_turbine", at);
+    for dx in 1..4 {
+        place(&mut g, "copper_cable", TilePos::new(at.x + dx, at.y + 1));
+    }
+    let mac = place(&mut g, "macerator", TilePos::new(at.x + 3, at.y));
+    g.host.factory.set_recipe(mac, c.factory.recipe("crushed_malachite")).unwrap();
+    g.host.factory.buildings.insert(&c, mac, ItemRef::Material(c.expect_material("raw_malachite")), 32);
+    if let Some(b) = g.host.factory.buildings.get_mut(turbine)
+        && let foundry_factory::steam::SteamState::Machine(t) = &mut b.steam
+    {
+        t.add(c.expect_material("steam"), 200.0);
+    }
+    g.apply(FactoryCommand::OpenPower(mac));
+    g.ticks(30);
+    let p = g.frame().power.expect("the power window has data");
+    assert_eq!(p.producers.iter().map(|e| e.1).sum::<u32>(), 1);
+    assert_eq!(p.consumers.iter().map(|e| (e.0, e.1)).collect::<Vec<_>>(), vec![(k("macerator"), 1)]);
+    assert!(p.production_w > 0.0, "{p:?}");
+    assert!((p.satisfaction - 1.0).abs() < 0.001);
+    g.apply(FactoryCommand::ClosePower);
+    assert!(g.frame().power.is_none());
+}

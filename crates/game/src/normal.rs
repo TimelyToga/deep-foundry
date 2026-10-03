@@ -374,6 +374,8 @@ impl NormalMode {
             UiAction::SetRecipe { building, recipe } => out.push(FactoryCommand::SetRecipe { building, recipe }.into()),
             UiAction::StartResearch(t) => out.push(FactoryCommand::StartResearch(t).into()),
             UiAction::CloseWindow(WindowKind::Building) => out.push(FactoryCommand::CloseBuilding.into()),
+            UiAction::OpenPowerNetwork(id) => out.push(FactoryCommand::OpenPower(id).into()),
+            UiAction::CloseWindow(WindowKind::PowerNetwork) => out.push(FactoryCommand::ClosePower.into()),
             UiAction::EmptyTank(i) => out.push(FactoryCommand::EmptyTank(i).into()),
             UiAction::SetKeep { material, keep } => out.push(FactoryCommand::SetKeep { material, keep }.into()),
             _ => return false,
@@ -386,6 +388,7 @@ impl NormalMode {
         let f = &self.frame;
         let content = model.content.clone();
         model.sandbox = None;
+        model.power = f.power.as_ref().map(power_view);
         let pl = &mut model.player;
         pl.hull = 100.0;
         pl.hull_max = 100.0;
@@ -542,6 +545,43 @@ pub(crate) fn tech_entry(t: &TechView) -> TechEntry {
         _ => false,
     };
     TechEntry { id: t.id, state, progress: t.progress, reasons: t.reasons.clone(), queue_position: t.queue_position, can_queue }
+}
+
+/// The UI power network window from the factory frame.
+fn power_view(p: &crate::factory_host::PowerFrame) -> foundry_ui::PowerNetworkView {
+    use foundry_ui::graph::TimeSeries;
+    use foundry_ui::{PowerEntry, PowerWarning};
+    // The same samples for every time range (the history is short for now).
+    let series = |v: Vec<f32>| TimeSeries { ranges: [v.clone(), v.clone(), v.clone(), v.clone(), v] };
+    let entry = |&(kind, count, watts): &(foundry_core::BuildingKindId, u32, f64)| PowerEntry {
+        kind,
+        count,
+        watts,
+        history: series(vec![watts as f32]),
+    };
+    let mut warnings = vec![];
+    if p.producers.is_empty() {
+        warnings.push(PowerWarning::NoGenerators);
+    } else if p.satisfaction < 0.999 {
+        warnings.push(PowerWarning::NotEnoughPower);
+    }
+    foundry_ui::PowerNetworkView {
+        id: p.id,
+        voltage: foundry_ui::Voltage::Lv,
+        satisfaction: p.satisfaction,
+        production_w: p.production_w,
+        capacity_w: p.capacity_w,
+        consumption_w: p.consumption_w,
+        stored_j: 0.0,
+        storage_capacity_j: 0.0,
+        amps: 0.0,
+        limit_amps: 0.0,
+        producers: p.producers.iter().map(entry).collect(),
+        consumers: p.consumers.iter().map(entry).collect(),
+        production_history: series(p.history.iter().map(|h| h.0).collect()),
+        consumption_history: series(p.history.iter().map(|h| h.1).collect()),
+        warnings,
+    }
 }
 
 /// The UI building window from the factory building view.
