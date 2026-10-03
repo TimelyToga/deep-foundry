@@ -39,6 +39,9 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 
 - 2026-10-03: Tier 1 automation (plan step 3): arm (arms.rs), steam assembler, steam furnace (param internal_heat), steam drill (drill.rs; sorts ore from waste, throws waste), iron crate, steam blower; bellows/blowers blow rooms (rooms::blow_bellows); bellows body clay brick. Line tests in crates/factory/tests/automation.rs (gears, copper from a drill, steel, glass, rubber). Tier 1 guide rewritten. Far factories (step 4) were already done by Codex (factory_activity.rs: one anchor per chunk with a building). Overlay: building outlines, faint machine icons, arm arrows. Screenshots: --ui-state smelter, automation.
 
+- 2026-10-03: parts ride belts (logistics::BeltPart); steam drill sorts ore from waste; boiler fuel 4 s per unit, 3 steam per water; steam furnace has 2 top inputs. Game tests: `a_steam_furnace_runs_on_a_boiler_with_water_from_a_sprayed_pool` (tier1_lines.rs) and `tier1_goals_can_be_done` (tier1_play.rs, ~22 s; shortcuts: Tier 0 parts given, steam put into machine tanks, big Hub-2 amounts given). 552 tests pass.
+- Next ideas: Tier 2 (LV power: turbine, cables, power network, electric machines); building sprites; splitters/sorters; blueprints.
+
 ## Plan (2026-10-03, lead works alone while the user is away)
 1. Tier 0 complete in the real game: crucible on a campfire smelts tin, tap pours into a plate mold, bellows, copper, bronze, gears, stamp mill + sluice, lab, kits, Hub repair. Remove every `waits_for`; tier0 test scripts for each goal.
 2. Generated world is the default for new games. More early resources in the start area (shallow iron ore and limestone, more clay, coal). Guide texts for the generated world.
