@@ -615,6 +615,11 @@ impl Buildings {
         self.now
     }
 
+    /// A number that changes when a building is placed or removed (not saved: 0 after a load).
+    pub fn layout(&self) -> u64 {
+        self.layout
+    }
+
     /// How many buildings of a type are placed.
     pub fn count_of(&self, kind: BuildingKindId) -> u32 {
         self.kind_counts.get(&kind).copied().unwrap_or(0)
