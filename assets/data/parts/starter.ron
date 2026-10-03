@@ -20,5 +20,6 @@
     Part(id: "glass_pane", name: "Glass pane", description: "16 units of glass. Labs and windows.", category: "intermediate", material: Some("glass"), units: 16, icon: Some("pane")),
     Part(id: "glass_vial", name: "Glass vial", description: "8 units of glass. Research kits need vials.", category: "intermediate", material: Some("glass"), units: 8, icon: Some("vial")),
     Part(id: "rubber_sheet", name: "Rubber sheet", description: "16 units of rubber. Insulation and belts.", category: "intermediate", material: Some("rubber"), units: 16, icon: Some("sheet")),
+    Part(id: "electric_motor", name: "Electric motor", description: "Steel, copper wire and a gear. Electric machines need motors.", category: "intermediate", material: Some("steel_block"), units: 16, icon: Some("gear")),
     Part(id: "steam_kit", name: "Steam research kit", description: "Research for Tier 1 technologies.", category: "research", stack: 200, icon: Some("kit")),
 ]

@@ -67,8 +67,8 @@
     Recipe(id: "crushed_cassiterite", category: "crushing", inputs: [("raw_cassiterite", 16)], outputs: [("crushed_cassiterite", 16)], byproducts: [(item: "tin_dust", count: 2, chance: 0.1)], time: 4.0),
     Recipe(id: "crushed_magnetite", category: "crushing", inputs: [("raw_magnetite", 16)], outputs: [("crushed_magnetite", 16)], time: 4.0),
     Recipe(id: "crushed_limestone", category: "crushing", inputs: [("raw_limestone", 16)], outputs: [("crushed_limestone", 16)], time: 4.0),
-    Recipe(id: "smelt_cassiterite", name: Some("Tin from crushed cassiterite"), category: "smelting", inputs: [("crushed_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 14)], time: 6.0, min_temp: Some(900)),
-    Recipe(id: "smelt_malachite", name: Some("Copper from crushed malachite"), category: "smelting", inputs: [("crushed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 14)], time: 6.0, min_temp: Some(1100)),
+    Recipe(id: "smelt_cassiterite", name: Some("Tin from crushed cassiterite"), category: "crucible_smelting", inputs: [("crushed_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 14)], time: 6.0, min_temp: Some(900)),
+    Recipe(id: "smelt_malachite", name: Some("Copper from crushed malachite"), category: "crucible_smelting", inputs: [("crushed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 14)], time: 6.0, min_temp: Some(1100)),
 
     // Power
     Recipe(id: "campfire", category: "hand", inputs: [("wood", 10)], outputs: [("campfire", 1)], time: 1.0),

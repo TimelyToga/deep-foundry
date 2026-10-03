@@ -72,6 +72,11 @@ fn overclocking_is_faster_and_uses_more_power() {
     let mut sim = world(&c, Some(GROUND));
     let mut f = Factory::new(c.clone());
     let id = f.place(kind(&c, "test_press_mk2"), TilePos::new(4, 10), 0, false, &mut sim).unwrap();
+    // A generator and cables to the power port (tile 4, 11) of the press.
+    let generator = f.place(kind(&c, "test_generator"), TilePos::new(2, 11), 0, false, &mut sim).unwrap();
+    for x in 2..5 {
+        f.place(kind(&c, "test_cable"), TilePos::new(x, 11), 0, false, &mut sim).unwrap();
+    }
     f.set_recipe(id, c.factory.recipe("test_press_sand")).unwrap();
     f.buildings.insert(&c, id, item(&c, "sand"), 8);
     run(&mut f, &mut sim, 29);
@@ -80,12 +85,13 @@ fn overclocking_is_faster_and_uses_more_power() {
     assert_eq!(v.power_w, 400.0, "tier 1 machine, tier 0 recipe: 4 × 100 W");
     run(&mut f, &mut sim, 1);
     assert_eq!(f.building_view(id).unwrap().outputs[0].count, 4, "2 × speed: 30 ticks");
-    // Without power it stops.
+    // Without power it stops: the generator is gone.
     f.buildings.insert(&c, id, item(&c, "sand"), 8);
-    f.buildings.set_power_factor(id, 0.0);
+    f.remove(generator, &mut sim).unwrap();
     run(&mut f, &mut sim, 5);
     let v = f.building_view(id).unwrap();
-    assert_eq!((v.status, v.reason.as_str()), (Status::NoPower, "No power"));
+    assert_eq!(v.status, Status::NoPower);
+    assert!(v.reason.starts_with("No power: put a copper cable"), "{}", v.reason);
     assert_eq!(v.power_w, 5.0);
 }
 

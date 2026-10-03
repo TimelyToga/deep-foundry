@@ -38,10 +38,20 @@ pub(crate) fn drill_tick(b: &mut Buildings, i: u32, content: &Content, sim: &mut
         }
         return false;
     }
+    let electric = crate::power::is_consumer(content, d);
+    if electric && d.power_factor <= 0.0 {
+        if let Some(d) = b.at_index_mut(i) {
+            d.status = crate::Status::NoPower;
+            d.steam_reason = Some("Needs power from a connected cable".into());
+        }
+        return false;
+    }
     if now < d.next_pull {
         // Between two digs: keep running.
         return true;
     }
+    // With part of its power an electric drill digs slower.
+    let period = if electric { (period as f32 / d.power_factor.max(0.05)).round() as u64 } else { period };
     let r = d.cell_rect();
     let depth = def.param("depth", 6.0).max(1.0) as i32 * foundry_core::TILE_SIZE;
     let hardness = def.param("hardness", 60.0) as u8;

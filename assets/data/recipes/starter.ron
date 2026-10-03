@@ -160,4 +160,14 @@
     Recipe(id: "rubber_sheet", category: "pressing", inputs: [("rubber", 16)], outputs: [("rubber_sheet", 1)], time: 3.0),
 
     Recipe(id: "steam_kit", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("bronze_pipe_section", 1), ("glass_vial", 1)], outputs: [("steam_kit", 1)], time: 8.0),
+
+    // --- Tier 2: LV ---
+    Recipe(id: "electric_motor", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("copper_wire", 8), ("bronze_gear", 1)], outputs: [("electric_motor", 1)], time: 3.0),
+    Recipe(id: "steam_turbine", category: "assembling", hand: true, inputs: [("bronze_plate", 10), ("steel_plate", 6), ("bronze_pipe_section", 4), ("copper_wire", 20)], outputs: [("steam_turbine", 1)], time: 5.0),
+    Recipe(id: "copper_cable", category: "hand", inputs: [("copper_wire", 2), ("rubber_sheet", 1)], outputs: [("copper_cable", 4)], time: 0.5),
+    Recipe(id: "macerator", category: "assembling", hand: true, inputs: [("steel_plate", 6), ("electric_motor", 2), ("copper_wire", 8)], outputs: [("macerator", 1)], time: 5.0),
+    Recipe(id: "electric_furnace", category: "assembling", hand: true, inputs: [("steel_plate", 8), ("firebrick", 8), ("electric_motor", 1), ("copper_wire", 16)], outputs: [("electric_furnace", 1)], time: 5.0),
+    Recipe(id: "electric_assembler", category: "assembling", hand: true, inputs: [("steel_plate", 6), ("electric_motor", 2), ("copper_wire", 8)], outputs: [("electric_assembler", 1)], time: 5.0),
+    Recipe(id: "electric_drill", category: "assembling", hand: true, inputs: [("steel_plate", 10), ("electric_motor", 3), ("bronze_gear", 4)], outputs: [("electric_drill", 1)], time: 5.0),
+    Recipe(id: "fast_arm", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("electric_motor", 1), ("copper_wire", 2)], outputs: [("fast_arm", 1)], time: 2.0),
 ]

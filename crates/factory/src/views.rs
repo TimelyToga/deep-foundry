@@ -104,4 +104,19 @@ pub struct BuildingView {
     pub ports: Vec<PortView>,
     /// The room of a room machine controller. `Factory::building_view` fills it.
     pub room: Option<crate::rooms::RoomView>,
+    /// Electric power: for a building that uses or makes it.
+    pub power: Option<PowerInfo>,
+}
+
+/// The electric power of a building, for its window.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PowerInfo {
+    /// The voltage tier (1: LV).
+    pub tier: u8,
+    /// Watts at full speed (a machine) or the most it makes (a generator).
+    pub max_w: f32,
+    /// On a network with a cable at its power port.
+    pub connected: bool,
+    /// The part of their power the machines of its network get (0 to 1).
+    pub satisfaction: f32,
 }
