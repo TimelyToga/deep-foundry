@@ -304,6 +304,8 @@ pub struct FactoryFrame {
     pub ghost: Option<GhostView>,
     pub hover: Option<HoverBuilding>,
     pub marks: Vec<BuildingMark>,
+    /// Parts riding the belts in the view: the cell under the middle of the part, and the part.
+    pub belt_parts: Vec<(CellPos, ItemRef)>,
     /// The building placed last and its cells (for tests; later for the build animation).
     pub last_placed: Option<(BuildingKindId, CellRect)>,
     /// Name tags over buildings in the view (the Hub and its next repair stage).
@@ -1111,6 +1113,23 @@ impl FactoryHost {
                 BuildingMark { rect: b.cell_rect(), status: b.status, output, belt, arm, back: b.layer == foundry_content::Layer::Back, icon }
             })
             .collect();
+        let belt_parts = f
+            .buildings
+            .iter()
+            .filter(|(_, b)| !b.cell_rect().intersect(&view).is_empty())
+            .flat_map(|(_, b)| {
+                let foundry_factory::Logic::Belt(belt) = &b.logic else { return vec![] };
+                let dir = foundry_factory::buildings::belt_direction(b.transform);
+                let r = b.cell_rect();
+                belt.parts
+                    .iter()
+                    .map(|p| {
+                        let x = if dir > 0 { r.x0 + p.pos as i32 } else { r.x1 - 1 - p.pos as i32 };
+                        (CellPos::new(x, r.y0 - 3), ItemRef::Part(p.part))
+                    })
+                    .collect()
+            })
+            .collect();
         // The hole or the wrong wall block of a room: a red mark on that tile.
         for (_, b) in f.buildings.iter() {
             let tile = b.room.as_deref().and_then(|r| r.problem.as_ref()).and_then(|p| p.tile());
@@ -1158,6 +1177,7 @@ impl FactoryHost {
             ghost,
             hover,
             marks,
+            belt_parts,
             last_placed: self.last_placed,
             labels,
             drag_stop: self.drag_stop.clone(),

@@ -10,7 +10,7 @@
 //! - workbench: `reach` in tiles (default 6); `speed` is the hand crafting speed near it
 
 use crate::progress_link::{KitBuffer, LabStatus};
-use foundry_core::{MaterialId, TICKS_PER_SECOND};
+use foundry_core::{MaterialId, PartId, TICKS_PER_SECOND};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -58,11 +58,58 @@ impl Hopper {
     }
 }
 
-/// A belt. It moves the powder that rests on its top.
+/// A belt. It moves the powder that rests on its top, and parts that ride on it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Belt {
     /// Belt steps in a row that moved nothing.
     pub idle_steps: u32,
+    /// Parts on this belt tile, the front one first (see `BeltPart`).
+    #[serde(default)]
+    pub parts: Vec<BeltPart>,
+}
+
+/// A part on a belt tile. `pos` is the distance in cells from the end where parts come in
+/// (0 to `TILE_SIZE - 1`); at the other end the belt gives the part on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeltPart {
+    pub part: PartId,
+    pub pos: u8,
+}
+
+/// Parts on one belt tile, at most.
+pub const BELT_PARTS: usize = 4;
+/// Cells between two parts on a belt, at least.
+pub const PART_GAP: u8 = 2;
+
+impl Belt {
+    /// True if a part can go on at the start of the tile.
+    pub fn has_room_at_start(&self) -> bool {
+        self.parts.len() < BELT_PARTS && self.parts.iter().all(|p| p.pos >= PART_GAP)
+    }
+
+    /// Put a part on at the start. Returns false if there is no room.
+    pub fn push_start(&mut self, part: PartId) -> bool {
+        if !self.has_room_at_start() {
+            return false;
+        }
+        self.parts.push(BeltPart { part, pos: 0 });
+        true
+    }
+
+    /// Move the parts one cell forward, keeping the gap. The front part stops at the end.
+    /// Returns true if a part moved.
+    pub fn advance(&mut self, end: u8) -> bool {
+        let mut moved = false;
+        let mut limit = end;
+        for p in &mut self.parts {
+            if p.pos < limit {
+                p.pos += 1;
+                moved = true;
+            }
+            limit = p.pos.saturating_sub(PART_GAP);
+        }
+        moved
+    }
 }
 
 /// A lab: a small buffer of research kits.

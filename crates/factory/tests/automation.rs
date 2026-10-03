@@ -235,3 +235,47 @@ fn a_rubber_line_makes_rubber_sheets() {
         f.building_view(press)
     );
 }
+
+/// crate → arm → 5 wood belts → crate: the parts ride the belts and go into the crate at the end.
+#[test]
+fn parts_ride_belts_into_a_crate() {
+    let c = content();
+    let mut sim = world(&c, Some(96));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let from = f.place(kind(&c, "crate"), TilePos::new(2, 11), 0, false, &mut sim).unwrap();
+    f.place(kind(&c, "arm"), TilePos::new(3, 11), 0, false, &mut sim).unwrap();
+    let belts: Vec<_> = (4..9).map(|x| f.place(kind(&c, "wood_belt"), TilePos::new(x, 11), 0, false, &mut sim).unwrap()).collect();
+    let to = f.place(kind(&c, "crate"), TilePos::new(9, 11), 0, false, &mut sim).unwrap();
+    assert_eq!(f.buildings.insert(&c, from, item(&c, "bronze_gear"), 12), 12);
+    run(&mut f, &mut sim, 60 * 3);
+    // Some gears are on the way, on the belts.
+    let riding: usize = belts
+        .iter()
+        .map(|id| match &f.buildings.get(*id).unwrap().logic {
+            foundry_factory::Logic::Belt(b) => b.parts.len(),
+            _ => 0,
+        })
+        .sum();
+    assert!(riding > 0, "parts ride the belts");
+    run(&mut f, &mut sim, 60 * 10);
+    assert_eq!(f.buildings.inventory(to).unwrap().count(item(&c, "bronze_gear")), 12);
+}
+
+/// A mold puts its plates onto a belt at its part output; the belt takes them to a crate.
+#[test]
+fn a_mold_puts_plates_onto_a_belt() {
+    let c = content();
+    let mut sim = world(&c, Some(96));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let mold = f.place(kind(&c, "plate_mold"), TilePos::new(3, 11), 0, false, &mut sim).unwrap();
+    for x in 4..7 {
+        f.place(kind(&c, "wood_belt"), TilePos::new(x, 11), 0, false, &mut sim).unwrap();
+    }
+    let to = f.place(kind(&c, "crate"), TilePos::new(7, 11), 0, false, &mut sim).unwrap();
+    f.set_recipe(mold, c.factory.recipe("tin_plate")).unwrap();
+    f.buildings.insert(&c, mold, item(&c, "molten_tin"), 32);
+    run(&mut f, &mut sim, 60 * 30);
+    assert_eq!(f.buildings.inventory(to).unwrap().count(item(&c, "tin_plate")), 2, "{:?}", f.building_view(mold));
+}
