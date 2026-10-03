@@ -47,8 +47,9 @@
     Recipe(id: "copper_smelting", name: Some("Molten copper (raw ore)"), category: "crucible_smelting", inputs: [("raw_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 16)], time: 10.0, min_temp: Some(1100)),
     Recipe(id: "copper_smelting_crushed", name: Some("Molten copper (crushed ore)"), category: "crucible_smelting", inputs: [("crushed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 20)], time: 10.0, min_temp: Some(1100)),
     Recipe(id: "copper_smelting_washed", name: Some("Molten copper (washed ore)"), category: "crucible_smelting", inputs: [("washed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 24)], time: 10.0, min_temp: Some(1100)),
-    Recipe(id: "bronze_gear", category: "hand", inputs: [("bronze_plate", 2)], outputs: [("bronze_gear", 1)], time: 2.0),
-    Recipe(id: "bronze_kit", category: "hand", inputs: [("bronze_gear", 1), ("tin_plate", 1), ("raw_clay_brick", 1)], outputs: [("bronze_kit", 2)], time: 5.0),
+    // Gears and kits: by hand, at a workbench, or in a steam assembler.
+    Recipe(id: "bronze_gear", category: "assembling", hand: true, inputs: [("bronze_plate", 2)], outputs: [("bronze_gear", 1)], time: 2.0),
+    Recipe(id: "bronze_kit", category: "assembling", hand: true, inputs: [("bronze_gear", 1), ("tin_plate", 1), ("raw_clay_brick", 1)], outputs: [("bronze_kit", 2)], time: 5.0),
     // Bronze: melt 3 copper plates and 1 tin plate together in the crucible (64 units: 4 plates).
     Recipe(id: "bronze_alloy", name: Some("Molten bronze"), category: "alloying", inputs: [("copper_plate", 3), ("tin_plate", 1)], outputs: [("molten_bronze", 64)], time: 4.0, min_temp: Some(1000)),
     Recipe(id: "bronze_plate", category: "casting_plate", inputs: [("molten_bronze", 16)], outputs: [("bronze_plate", 1)], time: 8.0),
@@ -62,6 +63,12 @@
     Recipe(id: "steam_extractor", category: "assembling", hand: true, inputs: [("bronze_plate", 6), ("bronze_pipe_section", 2)], outputs: [("steam_extractor", 1)], time: 5.0),
     Recipe(id: "steam_press", category: "assembling", hand: true, inputs: [("bronze_plate", 8), ("bronze_gear", 4)], outputs: [("steam_press", 1)], time: 5.0),
     Recipe(id: "steam_lab", category: "assembling", hand: true, inputs: [("bronze_plate", 10), ("glass_pane", 4), ("bronze_pipe_section", 2)], outputs: [("steam_lab", 1)], time: 5.0),
+    // Tier 1 automation.
+    Recipe(id: "arm", category: "assembling", hand: true, inputs: [("bronze_plate", 2), ("bronze_gear", 2)], outputs: [("arm", 1)], time: 2.0),
+    Recipe(id: "steam_assembler", category: "assembling", hand: true, inputs: [("bronze_plate", 8), ("bronze_gear", 4), ("bronze_pipe_section", 2)], outputs: [("steam_assembler", 1)], time: 5.0),
+    Recipe(id: "steam_furnace", category: "assembling", hand: true, inputs: [("bronze_plate", 6), ("clay_brick", 12), ("bronze_pipe_section", 2)], outputs: [("steam_furnace", 1)], time: 5.0),
+    Recipe(id: "steam_drill", category: "assembling", hand: true, inputs: [("bronze_plate", 10), ("bronze_gear", 6), ("bronze_pipe_section", 2)], outputs: [("steam_drill", 1)], time: 5.0),
+    Recipe(id: "iron_crate", category: "assembling", hand: true, inputs: [("steel_plate", 4)], outputs: [("iron_crate", 1)], time: 2.0),
     Recipe(id: "copper_wire", category: "wire_drawing", hand: true, inputs: [("copper_plate", 1)], outputs: [("copper_wire", 4)], time: 1.0),
     Recipe(id: "iron_belt", category: "assembling", hand: true, inputs: [("steel_plate", 1), ("bronze_gear", 1)], outputs: [("iron_belt", 2)], time: 1.0),
 
@@ -97,6 +104,7 @@
         min_temp: Some(600),
     ),
 
+    Recipe(id: "steam_blower", category: "assembling", hand: true, inputs: [("firebrick", 4), ("bronze_plate", 4), ("bronze_pipe_section", 1)], outputs: [("steam_blower", 1)], time: 3.0),
     Recipe(id: "blast_furnace_controller", category: "hand", inputs: [("firebrick", 8), ("wood", 2)], outputs: [("blast_furnace_controller", 1)], time: 3.0),
     Recipe(id: "blast_furnace_hatch", category: "hand", inputs: [("firebrick", 4), ("wood", 2)], outputs: [("blast_furnace_hatch", 1)], time: 1.5),
     Recipe(
