@@ -279,6 +279,7 @@ pub(crate) fn work(b: &mut Building, content: &Content, def: &BuildingDef, seed:
 pub fn tick(content: &Content, buildings: &mut Buildings, sim: &mut Simulation) {
     let now = buildings.now;
     let layout = buildings.layout;
+    blow_bellows(content, buildings);
     for i in 0..buildings.slots.len() as u32 {
         let Some(room) = buildings.at_index(i).and_then(|b| b.room.as_deref()) else { continue };
         let id = buildings.id_of(i);
@@ -402,5 +403,39 @@ impl Buildings {
         room.blast = temperature.max(0);
         room.blast_until = now + BLAST_HOLD;
         true
+    }
+}
+
+/// Extra fire temperature that bellows give a room (°C).
+pub const BELLOWS_BLAST: i16 = 300;
+
+/// Bellows in the wall of a valid room, or right next to it, blow air into its fire: they set the
+/// blast of the room now and then (it holds for `BLAST_HOLD` ticks).
+fn blow_bellows(content: &Content, buildings: &mut Buildings) {
+    if !buildings.now.is_multiple_of(BLAST_HOLD / 2) {
+        return;
+    }
+    let bellows: Vec<(BuildingId, TilePos, f64)> = buildings
+        .iter()
+        .filter(|(_, b)| content.factory.building_def(b.kind).kind == "bellows")
+        .map(|(id, b)| (id, b.at, content.factory.building_def(b.kind).power.as_ref().map_or(0.0, |p| p.steam_per_s as f64)))
+        .collect();
+    let hold = BLAST_HOLD / 2;
+    for (id, at, steam_use) in bellows {
+        let tiles = [at, TilePos::new(at.x - 1, at.y), TilePos::new(at.x + 1, at.y), TilePos::new(at.x, at.y - 1), TilePos::new(at.x, at.y + 1)];
+        let Some(controller) = tiles.iter().find_map(|t| buildings.room_at(*t)) else { continue };
+        // A steam blower blows only while it gets steam (it uses it for the time the blast holds).
+        if steam_use > 0.0 {
+            let Some(b) = buildings.get_mut(id) else { continue };
+            let need = steam_use * hold as f64 / foundry_core::TICKS_PER_SECOND as f64;
+            let has = matches!(b.steam, crate::steam::SteamState::Machine(t) if t.amount >= need);
+            b.status = if has { crate::Status::Working } else { crate::Status::NoPower };
+            b.steam_reason = (!has).then(|| "Needs steam from a connected bronze pipe".to_string());
+            if !has {
+                continue;
+            }
+            crate::steam::consume_steam(&mut b.steam, need);
+        }
+        buildings.set_blast(controller, BELLOWS_BLAST);
     }
 }

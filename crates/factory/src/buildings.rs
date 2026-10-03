@@ -54,6 +54,8 @@ pub enum Logic {
     /// Holds deliveries until the progression system takes them.
     Hub(Inventory),
     Lab(Lab),
+    /// Moves items from the building behind it to the building in front of it (see `arms`).
+    Arm(crate::arms::Arm),
 }
 
 impl Logic {
@@ -72,10 +74,12 @@ impl Logic {
                 inv.takes = TankRule::Liquid;
                 Logic::Storage(inv)
             }
-            "hopper" => Logic::Hopper(Hopper::new(def.param("capacity", 64.0).max(1.0) as u32)),
+            // A drill keeps what it digs in a hopper buffer and gives it out like a hopper.
+            "hopper" | "drill" => Logic::Hopper(Hopper::new(def.param("capacity", 64.0).max(1.0) as u32)),
             "belt" => Logic::Belt(Belt::default()),
             "hub" => Logic::Hub(Inventory::mixed(def.param("slots", 16.0).max(0.0) as usize, capacity, TankRule::Any)),
             "lab" => Logic::Lab(Lab::new(def.param("kit_buffer", 10.0) as u32)),
+            "arm" => Logic::Arm(crate::arms::Arm::default()),
             _ if !def.crafts.is_empty() => {
                 let m = Machine::new(def.param("buffer_crafts", 2.0) as u32);
                 // A crafter with the param "fuel_capacity" has a fuel slot (the campfire).
@@ -163,7 +167,7 @@ pub struct Building {
     blocked: bool,
     /// An exhaust port had no room in this tick. The machine stops until it has room.
     exhaust_blocked: bool,
-    next_pull: u64,
+    pub(crate) next_pull: u64,
     next_push: u64,
     /// The room of a room machine controller (see `rooms`). `None` for other buildings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -497,7 +501,7 @@ pub(crate) fn take_contents(logic: &mut Logic, content: &Content) -> Vec<Stack> 
                 .filter(|s| s.count > 0)
                 .collect()
         }
-        Logic::Passive | Logic::Workbench | Logic::Belt(_) => vec![],
+        Logic::Passive | Logic::Workbench | Logic::Belt(_) | Logic::Arm(_) => vec![],
     }
 }
 
@@ -1074,6 +1078,20 @@ impl Buildings {
             self.work(i, content, sim, progress, &bellows);
         }
         for &i in &list {
+            if self.at_index(i).is_some_and(|b| content.factory.building_def(b.kind).kind == "drill") && crate::drill::drill_tick(self, i, content, sim)
+                && let Some(b) = self.at_index_mut(i)
+            {
+                b.busy = true;
+            }
+        }
+        for &i in &list {
+            if matches!(self.at_index(i).map(|b| &b.logic), Some(Logic::Arm(_))) && self.arm_tick(i, content)
+                && let Some(b) = self.at_index_mut(i)
+            {
+                b.busy = true;
+            }
+        }
+        for &i in &list {
             self.give_outputs(i, content, sim);
         }
         self.move_belts(&list, content, sim);
@@ -1444,7 +1462,15 @@ impl Buildings {
                     b.power_w = idle_w;
                     return;
                 }
-                let heat = if recipe.min_temp.is_some() { heat_reading(sim, &b.ports, b.temperature) } else { b.temperature };
+                let internal = def.param("internal_heat", 0.0);
+                let heat = if internal > 0.0 {
+                    // A steam furnace: steam heats it.
+                    if steam_ready(b.steam, power.map_or(0.0, |p| p.steam_per_s as f64)) { internal as i16 } else { b.temperature }
+                } else if recipe.min_temp.is_some() {
+                    heat_reading(sim, &b.ports, b.temperature)
+                } else {
+                    b.temperature
+                };
                 b.heat = heat;
                 let cond = Conditions {
                     speed: def.speed as f64 * machines::overclock_speed(def.tier, recipe.tier) * power_scale,
@@ -1545,7 +1571,7 @@ impl Buildings {
                 }
             }
             Logic::Storage(_) | Logic::Workbench | Logic::Passive => b.status = Status::Idle,
-            Logic::Hopper(_) | Logic::Belt(_) => {}
+            Logic::Hopper(_) | Logic::Belt(_) | Logic::Arm(_) => {}
         }
     }
 
@@ -1801,7 +1827,7 @@ impl Buildings {
                     }
                 }
             }
-            Logic::Hopper(_) | Logic::Belt(_) => (!b.busy && b.idle >= 2).then_some(Some(poll)),
+            Logic::Hopper(_) | Logic::Belt(_) | Logic::Arm(_) => (!b.busy && b.idle >= 2).then_some(Some(poll)),
             Logic::Hub(_) | Logic::Lab(_) => {
                 (!b.busy && b.status != Status::Working && b.idle >= 2).then_some(Some(poll))
             }
@@ -1968,6 +1994,14 @@ impl Buildings {
                 if let Some(st) = &lab.last {
                     v.reason = progress_link::lab_reason(content, st);
                 }
+            }
+            Logic::Arm(arm) => {
+                v.reason = match b.status {
+                    Status::Working => format!("Moving items ({} so far)", arm.moved),
+                    Status::NoPower => "Needs steam".into(),
+                    _ if self.arm_ends(id.index).is_none() => "Needs a building on both sides".into(),
+                    _ => "Waiting: nothing to move, or no room on the other side".into(),
+                };
             }
             Logic::Belt(_) | Logic::Workbench | Logic::Passive => {}
         }

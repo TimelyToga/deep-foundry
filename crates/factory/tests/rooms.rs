@@ -425,3 +425,38 @@ fn a_blast_furnace_makes_pig_iron_and_slag_with_a_blast() {
     assert_eq!(f.buildings.inventory(high).unwrap().count(slag), 16);
     assert!(hottest >= 1400);
 }
+
+/// A steam blower in the wall of a blast furnace blows air into its fire on its own: no
+/// `set_blast` call from the test. The fire gets hot enough for pig iron. (Wood bellows would
+/// burn in a 1400 °C wall.)
+#[test]
+fn a_steam_blower_in_the_wall_blows_the_blast_furnace() {
+    let (c, mut sim, mut f) = setup();
+    let mut plan = furnace_plan("blast_furnace_controller", "blast_furnace_hatch");
+    plan.gaps.push(TilePos::new(4, 7));
+    let id = plan.build(&mut f, &mut sim);
+    let blower = f.place(kind(&c, "steam_blower"), TilePos::new(4, 7), 0, false, &mut sim).unwrap();
+    let low = f.place(kind(&c, "barrel"), TilePos::new(8, 7), 0, false, &mut sim).unwrap();
+    f.place(kind(&c, "barrel"), TilePos::new(8, 6), 0, false, &mut sim).unwrap();
+    f.set_recipe(id, c.factory.recipe("pig_iron_smelting")).unwrap();
+    for (it, n) in [("crushed_magnetite", 64), ("coke", 32 + 800), ("crushed_limestone", 16)] {
+        f.buildings.insert(&c, id, item(&c, it), n);
+    }
+    run(&mut f, &mut sim, 1);
+    assert!(f.buildings.room(id).unwrap().is_valid(), "{:?}", f.buildings.room(id).unwrap().problem);
+    let iron = item(&c, "molten_pig_iron");
+    let steam = mat(&c, "steam");
+    let (mut ticks, mut hottest) = (0, 0);
+    while ticks < 60 * 75 && f.buildings.inventory(low).unwrap().count(iron) < 14 {
+        if let Some(b) = f.buildings.get_mut(blower)
+            && let foundry_factory::steam::SteamState::Machine(t) = &mut b.steam
+        {
+            t.add(steam, 200.0);
+        }
+        let (t, h) = run_until(&mut f, &mut sim, id, 600, |f, _| f.buildings.inventory(low).unwrap().count(iron) >= 14);
+        ticks += t;
+        hottest = hottest.max(h);
+    }
+    println!("blower blast furnace: iron after {ticks} ticks, hottest {hottest} °C");
+    assert!(f.buildings.inventory(low).unwrap().count(iron) >= 14, "{:?}", f.building_view(id));
+}

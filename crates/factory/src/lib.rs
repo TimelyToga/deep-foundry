@@ -17,10 +17,12 @@
 //! - The scan tool calls [`Factory::scan`]. The game calls [`Factory::observe_reaction`] for each
 //!   reaction event of the simulation.
 
+pub mod arms;
 pub mod buildings;
 pub mod cells;
 pub mod crafting;
 pub mod digging;
+pub mod drill;
 pub mod geometry;
 pub mod inventory;
 mod hot_metal;
