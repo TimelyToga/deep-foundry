@@ -1498,7 +1498,14 @@ impl Buildings {
                 let burning = if status == Status::Working {
                     true
                 } else if def.kind == "furnace" {
-                    m.burn_tick()
+                    let burns = m.burn_tick();
+                    if burns && matches!(status, Status::NoInput | Status::NoRecipe) {
+                        // A campfire with fuel and nothing to fire heats what is above it: that is
+                        // work (a crucible on it), not a problem.
+                        b.status = Status::Working;
+                        b.steam_reason = Some("Burning: it heats what is above it".into());
+                    }
+                    burns
                 } else {
                     false
                 };
