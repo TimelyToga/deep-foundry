@@ -35,6 +35,8 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 - 2026-10-03 (lead, user away): worktrees removed. Merged ones deleted. `automation/progression` (8 commits, breaks 3 tier0 tests) and `automation/integration-wip` (uncommitted Codex work saved as a commit) are kept as branches only; not merged.
 - 2026-10-03: stutter in the generated world fixed. The air temperature of the sky was 5-15 °C but new cells are 20 °C, so ~170 chunks never went to heat sleep (4 ms/tick, spikes 70 ms). Air is now 20 °C down to 600 deep. Test `the_start_area_goes_to_sleep`; measure `dig_tree_perf`; `DEEP_FOUNDRY_DIG_SCRIPT=left|right` walks into trees.
 
+- 2026-10-03: Tier 0 complete (plan step 1 done). `tier0_goals_can_be_done` plays all 24 goals in the generated world (seed 3), ~30 s. Scripts: crates/game/src/tier0_metal.rs (smelting site right of the kiln), ore_guide.rs. Generated world is the default (`--world demo` for the old one). Start area re-laid (no ore right of the Hub to x 170; clay left of the Hub and at 410; tin beds 232 and -525; malachite -470, -300, 330; hematite 720 and limestone -390 for Tier 1). Physics fixes: campfire body terracotta, grass does not spread fire, crucible pours straight into a mold under its tap, molds track the metal temperature.
+
 ## Plan (2026-10-03, lead works alone while the user is away)
 1. Tier 0 complete in the real game: crucible on a campfire smelts tin, tap pours into a plate mold, bellows, copper, bronze, gears, stamp mill + sluice, lab, kits, Hub repair. Remove every `waits_for`; tier0 test scripts for each goal.
 2. Generated world is the default for new games. More early resources in the start area (shallow iron ore and limestone, more clay, coal). Guide texts for the generated world.
