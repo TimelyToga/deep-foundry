@@ -331,6 +331,27 @@ fn the_world_is_stable_at_the_start() {
     assert!(moved * 2000 < solid, "{moved} of {solid} cells changed in 200 ticks");
 }
 
+/// With nothing happening, the chunks around the start go to sleep: the air is at the air
+/// temperature of its rows, so the heat pass has nothing to do. (A colder sky kept about 170
+/// chunks awake forever.)
+#[test]
+fn the_start_area_goes_to_sleep() {
+    let c = content();
+    let config = SimConfig { depth_chunks: 40, ..SimConfig::infinite(1, None) };
+    let wg = WorldGen::new(&c, WorldGenSettings::for_world(config.sky_chunks, config.depth_chunks));
+    let s = *wg.world_settings();
+    let air = wg.air_temperature_rows().to_vec();
+    let config = SimConfig { source: Some(Arc::new(wg)), ..config };
+    let mut sim = Simulation::new(c.clone(), config);
+    sim.set_air_temperature(&air);
+    sim.apply(Command::SetView { area: CellRect::new(-700, s.surface_y - 400, 700, s.surface_y + 300) });
+    for _ in 0..300 {
+        sim.tick();
+    }
+    let awake = sim.stats().awake_chunks;
+    assert!(awake <= 4, "{awake} chunks still awake after 300 ticks");
+}
+
 #[test]
 fn a_generated_world_saves_and_loads() {
     let c = content();
