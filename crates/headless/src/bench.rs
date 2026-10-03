@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result, anyhow};
 use foundry_content::Content;
-use foundry_core::{CHUNK_SIZE, CellPos, CellRect, Command, MaterialId, PaintMode, Rng};
+use foundry_core::{CHUNK_SIZE, CellPos, CellRect, ChunkPos, Command, MaterialId, PaintMode, Rng};
 use foundry_sim::{SimConfig, Simulation};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -163,10 +163,10 @@ pub fn chunks_with_material(sim: &Simulation) -> u32 {
     let mut n = 0;
     for cy in 0..h / CHUNK_SIZE {
         for cx in 0..w / CHUNK_SIZE {
-            let found = (0..CHUNK_SIZE * CHUNK_SIZE).any(|i| {
-                let p = CellPos::new(cx * CHUNK_SIZE + i % CHUNK_SIZE, cy * CHUNK_SIZE + i / CHUNK_SIZE);
-                !sim.cell(p).material.is_air()
-            });
+            // One read for each chunk. A read for each cell makes a chunk that is not in memory again for every cell.
+            let found = sim
+                .world()
+                .with_cells(ChunkPos::new(cx, cy), |c| c.is_some_and(|c| c.mat.iter().any(|&m| m != MaterialId::AIR.0)));
             n += found as u32;
         }
     }
