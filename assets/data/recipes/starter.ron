@@ -39,14 +39,14 @@
     Recipe(id: "kiln_copper_washed", name: Some("Molten copper (washed ore)"), category: "kiln", inputs: [("washed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 14)], byproducts: [(item: "carbon_dioxide", count: 2, chance: 1.0)], time: 12.0, min_temp: Some(1100)),
     Recipe(id: "tin_plate", category: "casting_plate", inputs: [("molten_tin", 16)], outputs: [("tin_plate", 1)], time: 6.0),
     Recipe(id: "copper_plate", category: "casting_plate", inputs: [("molten_copper", 16)], outputs: [("copper_plate", 1)], time: 8.0),
-    // The crucible: 16 ore and 4 charcoal give 12 units of metal from raw ore, 14 from crushed ore
-    // and 16 from washed ore (one plate). Ore processing (stamp mill, sluice) pays off.
-    Recipe(id: "tin_smelting", name: Some("Molten tin (raw ore)"), category: "crucible_smelting", inputs: [("raw_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 12)], time: 8.0, min_temp: Some(900)),
-    Recipe(id: "tin_smelting_crushed", name: Some("Molten tin (crushed ore)"), category: "crucible_smelting", inputs: [("crushed_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 14)], time: 8.0, min_temp: Some(900)),
-    Recipe(id: "tin_smelting_washed", name: Some("Molten tin (washed ore)"), category: "crucible_smelting", inputs: [("washed_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 16)], time: 8.0, min_temp: Some(900)),
-    Recipe(id: "copper_smelting", name: Some("Molten copper (raw ore)"), category: "crucible_smelting", inputs: [("raw_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 12)], time: 10.0, min_temp: Some(1100)),
-    Recipe(id: "copper_smelting_crushed", name: Some("Molten copper (crushed ore)"), category: "crucible_smelting", inputs: [("crushed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 14)], time: 10.0, min_temp: Some(1100)),
-    Recipe(id: "copper_smelting_washed", name: Some("Molten copper (washed ore)"), category: "crucible_smelting", inputs: [("washed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 16)], time: 10.0, min_temp: Some(1100)),
+    // The crucible: 16 ore and 4 charcoal give 16 units of metal (one plate) from raw ore, 20 from
+    // crushed ore and 24 from washed ore. Ore processing (stamp mill, sluice) pays off.
+    Recipe(id: "tin_smelting", name: Some("Molten tin (raw ore)"), category: "crucible_smelting", inputs: [("raw_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 16)], time: 8.0, min_temp: Some(900)),
+    Recipe(id: "tin_smelting_crushed", name: Some("Molten tin (crushed ore)"), category: "crucible_smelting", inputs: [("crushed_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 20)], time: 8.0, min_temp: Some(900)),
+    Recipe(id: "tin_smelting_washed", name: Some("Molten tin (washed ore)"), category: "crucible_smelting", inputs: [("washed_cassiterite", 16), ("charcoal", 4)], outputs: [("molten_tin", 24)], time: 8.0, min_temp: Some(900)),
+    Recipe(id: "copper_smelting", name: Some("Molten copper (raw ore)"), category: "crucible_smelting", inputs: [("raw_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 16)], time: 10.0, min_temp: Some(1100)),
+    Recipe(id: "copper_smelting_crushed", name: Some("Molten copper (crushed ore)"), category: "crucible_smelting", inputs: [("crushed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 20)], time: 10.0, min_temp: Some(1100)),
+    Recipe(id: "copper_smelting_washed", name: Some("Molten copper (washed ore)"), category: "crucible_smelting", inputs: [("washed_malachite", 16), ("charcoal", 4)], outputs: [("molten_copper", 24)], time: 10.0, min_temp: Some(1100)),
     Recipe(id: "bronze_gear", category: "hand", inputs: [("bronze_plate", 2)], outputs: [("bronze_gear", 1)], time: 2.0),
     Recipe(id: "bronze_kit", category: "hand", inputs: [("bronze_gear", 1), ("tin_plate", 1), ("raw_clay_brick", 1)], outputs: [("bronze_kit", 2)], time: 5.0),
     // Bronze: melt 3 copper plates and 1 tin plate together in the crucible (64 units: 4 plates).

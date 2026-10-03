@@ -434,11 +434,11 @@ mod tests {
         f.player.insert(&c, mat(&f, "wood"), 50);
         let err = f.tank_to_building(0, Click::Left, hub).unwrap_err();
         assert!(err.contains("no repair stage needs it"), "{err}");
-        // Stage 1 needs 24 bronze plates: the Hub takes 24 of 100.
+        // Stage 1 needs 16 bronze plates: the Hub takes 16 of 100.
         f.player.insert(&c, plate, 100);
         let slot = f.player.slots.iter().position(|s| s.is_some()).unwrap();
-        assert_eq!(f.parts_to_building(slot, Click::Shift, hub), Ok(24));
-        assert_eq!(f.player.count(plate), 76);
+        assert_eq!(f.parts_to_building(slot, Click::Shift, hub), Ok(16));
+        assert_eq!(f.player.count(plate), 84);
         let err = f.parts_to_building(slot, Click::Shift, hub).unwrap_err();
         assert!(err.contains("has all the Bronze plate"), "{err}");
         // A later stage item (copper wire for stage 2) waits in the Hub; a click gives it back.

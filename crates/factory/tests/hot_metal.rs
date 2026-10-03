@@ -54,7 +54,7 @@ fn campfire_and_bellows_heat_the_crucible_for_tin_copper_and_bronze() {
     let view = f.building_view(crucible).unwrap();
     assert_eq!(view.outputs[0].item, item(&c, "molten_tin"));
     assert_eq!(
-        view.outputs[0].count, 12,
+        view.outputs[0].count, 16,
         "tin smelting reads the heated simulation cells"
     );
     assert!(view.temperature >= 900, "{view:?}");
@@ -76,13 +76,13 @@ fn campfire_and_bellows_heat_the_crucible_for_tin_copper_and_bronze() {
             run(&mut f, &mut sim, 1);
             reached_copper_heat |= f.building_view(crucible).unwrap().temperature >= 1100;
             peak_fire_cell = peak_fire_cell.max(sim.cell(fire_cell).temperature);
-            if f.building_view(crucible).unwrap().outputs[0].count >= 12 {
+            if f.building_view(crucible).unwrap().outputs[0].count >= 16 {
                 break;
             }
         }
         assert_eq!(
             f.building_view(crucible).unwrap().outputs[0].count,
-            12,
+            16,
             "{:?}",
             f.building_view(crucible).unwrap()
         );
