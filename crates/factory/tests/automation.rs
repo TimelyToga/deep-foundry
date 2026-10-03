@@ -200,3 +200,38 @@ fn a_steam_furnace_makes_glass_vials() {
     let made = f.buildings.inventory(vials).unwrap().count(item(&c, "glass_vial"));
     assert_eq!(made, 4, "furnace {:?}; mold {:?}", f.building_view(furnace), f.building_view(mold));
 }
+
+/// Rubber: steam extractor (rubber tree wood) → barrel under its outlet → arm → steam furnace
+/// (Rubber) → arm → steam press → crate of rubber sheets.
+#[test]
+fn a_rubber_line_makes_rubber_sheets() {
+    let c = content();
+    let mut sim = world(&c, Some(96));
+    let mut f = Factory::new(c.clone());
+    research_all(&mut f);
+    let extractor = f.place(kind(&c, "steam_extractor"), TilePos::new(2, 9), 0, false, &mut sim).unwrap();
+    let barrel = f.place(kind(&c, "barrel"), TilePos::new(3, 11), 0, false, &mut sim).unwrap();
+    f.place(kind(&c, "arm"), TilePos::new(4, 11), 0, false, &mut sim).unwrap();
+    let furnace = f.place(kind(&c, "steam_furnace"), TilePos::new(5, 10), 0, false, &mut sim).unwrap();
+    f.place(kind(&c, "arm"), TilePos::new(7, 10), 0, false, &mut sim).unwrap();
+    // The press stands on the crate: its part output (bottom right, down) fills it.
+    let sheets = f.place(kind(&c, "crate"), TilePos::new(9, 11), 0, false, &mut sim).unwrap();
+    let press = f.place(kind(&c, "steam_press"), TilePos::new(8, 9), 0, false, &mut sim).unwrap();
+    f.set_recipe(extractor, c.factory.recipe("resin")).unwrap();
+    f.set_recipe(furnace, c.factory.recipe("rubber")).unwrap();
+    f.set_recipe(press, c.factory.recipe("rubber_sheet")).unwrap();
+    assert_eq!(f.buildings.insert(&c, extractor, item(&c, "rubber_wood"), 32), 32);
+    let mut done = 0;
+    for _ in 0..8 {
+        f.buildings.insert(&c, extractor, item(&c, "rubber_wood"), 32);
+        run_with_steam(&mut f, &mut sim, &[extractor, furnace, press], 600);
+        done = f.buildings.inventory(sheets).unwrap().count(item(&c, "rubber_sheet"));
+    }
+    assert!(
+        done >= 2,
+        "{done} sheets; barrel {:?}; furnace {:?}; press {:?}",
+        f.buildings.inventory(barrel).map(|i| i.contents()),
+        f.building_view(furnace),
+        f.building_view(press)
+    );
+}

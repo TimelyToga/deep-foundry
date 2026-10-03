@@ -125,7 +125,7 @@
         kits: [("bronze_kit", 1)],
         units: 15,
         discoveries: ["rubber_wood"],
-        unlocks: ["resin", "rubber_sheet"],
+        unlocks: ["resin", "rubber", "rubber_sheet"],
     ),
     Tech(
         id: "steam_kit_tech",

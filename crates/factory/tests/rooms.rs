@@ -460,3 +460,23 @@ fn a_steam_blower_in_the_wall_blows_the_blast_furnace() {
     println!("blower blast furnace: iron after {ticks} ticks, hottest {hottest} °C");
     assert!(f.buildings.inventory(low).unwrap().count(iron) >= 14, "{:?}", f.building_view(id));
 }
+
+/// Bellows in the wall of a kiln make its charcoal fire hot enough for firebrick (1200 °C), with
+/// no `set_blast` call from the test. (A charcoal fire alone gives about 1000 °C.)
+#[test]
+fn bellows_in_a_kiln_wall_fire_firebrick() {
+    let (c, mut sim, mut f) = setup();
+    let mut plan = kiln_plan();
+    // The ring is tiles 4 to 8 by 8 to 11; the bellows go into the right wall.
+    plan.gaps.push(TilePos::new(8, 10));
+    let id = plan.build(&mut f, &mut sim);
+    f.place(kind(&c, "bellows"), TilePos::new(8, 10), 0, false, &mut sim).unwrap();
+    f.set_recipe(id, c.factory.recipe("firebrick")).unwrap();
+    f.buildings.insert(&c, id, item(&c, "raw_firebrick"), 8);
+    f.buildings.insert(&c, id, item(&c, "charcoal"), 400);
+    run(&mut f, &mut sim, 1);
+    assert!(f.buildings.room(id).unwrap().is_valid(), "{:?}", f.buildings.room(id).unwrap().problem);
+    let (ticks, hottest) = run_until(&mut f, &mut sim, id, 60 * 120, |f, _| output_count(f, id, "firebrick") >= 4);
+    println!("kiln with bellows: firebrick after {ticks} ticks, hottest {hottest} °C");
+    assert!(output_count(&f, id, "firebrick") >= 4, "{:?}", f.building_view(id));
+}
