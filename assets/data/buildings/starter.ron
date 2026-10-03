@@ -16,15 +16,15 @@
     Building(
         id: "crucible",
         name: "Crucible",
-        description: "Holds molten metal. Takes heat from the cells below it. Makes alloys.",
+        description: "Smelts ore with charcoal and makes alloys. Put its left half on a campfire: it takes heat from the cells below it. The tap on its right half pours the molten metal out: put a mold under the tap, one tile away from the fire.",
         kind: "crucible",
-        size: (1, 1),
+        size: (2, 1),
         tier: 0,
         body: "terracotta",
         max_temp: 1600,
         ports: [
             (kind: BulkIn, tile: (0, 0), side: Up),
-            (kind: FluidOut, tile: (0, 0), side: Right, name: Some("Tap")),
+            (kind: FluidOut, tile: (1, 0), side: Right, name: Some("Tap")),
             (kind: Heat, tile: (0, 0), side: Down),
         ],
         crafts: ["alloying", "crucible_smelting"],
@@ -51,7 +51,7 @@
         tier: 0,
         // A ring of stones: a wood body would catch fire from its own heat port.
         body: "stone",
-        max_temp: 1300,
+        max_temp: 1500,
         ports: [
             (kind: BulkIn, tile: (0, 0), side: Up, filter: ["wood", "charcoal", "raw_coal", "coke"]),
             (kind: Heat, tile: (0, 0), side: Up),
@@ -62,7 +62,7 @@
         // of wood or charcoal, and one unit burns for 300 ticks (5 seconds). The buffers hold 8
         // bricks.
         crafts: ["pit_firing"],
-        params: {"buffer_crafts": 8.0, "fuel_capacity": 100.0, "fuel_ticks": 300.0, "heat_temp": 900.0},
+        params: {"buffer_crafts": 8.0, "fuel_capacity": 100.0, "fuel_ticks": 300.0, "heat_temp": 1000.0},
     ),
     Building(
         id: "wood_wall",
@@ -125,13 +125,13 @@
     Building(
         id: "plate_mold",
         name: "Plate mold",
-        description: "Molten metal in the mold becomes a plate when it cools.",
+        description: "Molten metal poured on its top becomes a plate when it cools. Keep it away from fire: a hot mold does not cool. A crate on its right side collects the plates.",
         kind: "mold",
         size: (1, 1),
         tier: 0,
         body: "clay_brick_block",
         max_temp: 1600,
-        ports: [(kind: FluidIn, tile: (0, 0), side: Up)],
+        ports: [(kind: FluidIn, tile: (0, 0), side: Up), (kind: PartOut, tile: (0, 0), side: Right)],
         crafts: ["casting_plate"],
     ),
     Building(
@@ -339,7 +339,7 @@
         tier: 1,
         body: "clay_brick_block",
         max_temp: 1600,
-        ports: [(kind: FluidIn, tile: (0, 0), side: Up)],
+        ports: [(kind: FluidIn, tile: (0, 0), side: Up), (kind: PartOut, tile: (0, 0), side: Right)],
         crafts: ["casting_pane"],
     ),
     Building(
@@ -351,7 +351,7 @@
         tier: 1,
         body: "clay_brick_block",
         max_temp: 1600,
-        ports: [(kind: FluidIn, tile: (0, 0), side: Up)],
+        ports: [(kind: FluidIn, tile: (0, 0), side: Up), (kind: PartOut, tile: (0, 0), side: Right)],
         crafts: ["casting_vial"],
     ),
     Building(

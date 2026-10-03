@@ -1073,7 +1073,7 @@ impl Buildings {
         }
         self.move_belts(&list, content, sim);
         for &i in &list {
-            self.after_tick(i);
+            self.after_tick(i, content);
         }
         self.check_damage(content, sim);
     }
@@ -1250,10 +1250,12 @@ impl Buildings {
         None
     }
 
-    /// A bulk output can feed a neighboring storage port directly, so powder need not land in
-    /// one exact world cell before the crate can collect it.
+    /// A bulk output feeds the powder input of the building on the other side of the port
+    /// directly (a crate, a hopper, a machine), so powder need not land in one exact world cell
+    /// first. `None`: no building there with a powder input facing this port.
     fn push_bulk(&mut self, i: u32, port: PlacedPort, item: ItemRef, count: u32, content: &Content) -> Option<(u32, u32)> {
         let ItemRef::Material(_) = item else { return None };
+        let hub = self.hub.clone();
         let n_tile = neighbor_tile(port.tile, port.side);
         let &nid = self.front.get(&n_tile)?;
         let (me, dst) = two_mut(&mut self.slots, i as usize, nid.index as usize)?;
@@ -1265,9 +1267,67 @@ impl Buildings {
         if !port_allows(my_def, &port, item) || !port_allows(their_def, &their_port, item) {
             return None;
         }
-        let Logic::Storage(inv) = &mut dst.logic else { return None };
-        let left = inv.insert(content, item, count);
-        Some((count - left, nid.index))
+        // A storage, a hopper, a machine or the Hub with a powder input facing this port.
+        Some((accept(&mut dst.logic, content, item, count, &hub), nid.index))
+    }
+
+    /// The powder outputs of building `i` that face a powder input of the building next to them.
+    fn feeding_ports(&self, i: u32) -> Vec<PlacedPort> {
+        let Some(b) = self.at_index(i) else { return vec![] };
+        b.ports
+            .iter()
+            .filter(|p| p.kind == PortKind::BulkOut)
+            .filter(|p| {
+                let n_tile = neighbor_tile(p.tile, p.side);
+                self.front.get(&n_tile).and_then(|id| self.get(*id)).is_some_and(|dst| {
+                    dst.ports.iter().any(|q| q.kind == PortKind::BulkIn && q.tile == n_tile && q.side == opposite(p.side))
+                })
+            })
+            .copied()
+            .collect()
+    }
+
+    /// A hopper gives up to `n` cells, in order, to the buildings that its `ports` feed. When the
+    /// building does not take the first material (its buffer for it is full), the hopper gives
+    /// the next material in its queue that it takes, so one full input does not stop the others
+    /// (ore and charcoal for a crucible from one hopper).
+    fn hopper_to_neighbor(&mut self, i: u32, ports: &[PlacedPort], n: u32, content: &Content) {
+        let mut given = 0;
+        let mut woken = None;
+        for &port in ports {
+            let mut refused: Vec<MaterialId> = vec![];
+            while given < n {
+                let Some(Logic::Hopper(h)) = self.at_index(i).map(|b| &b.logic) else { return };
+                let Some((k, mat)) = h.cells.iter().enumerate().find(|(_, m)| !refused.contains(m)).map(|(k, &m)| (k, m)) else {
+                    break;
+                };
+                match self.push_bulk(i, port, ItemRef::Material(mat), 1, content) {
+                    Some((1, dst)) => {
+                        woken = Some(dst);
+                        given += 1;
+                        if let Some(Logic::Hopper(h)) = self.at_index_mut(i).map(|b| &mut b.logic) {
+                            h.cells.remove(k);
+                        }
+                    }
+                    _ => refused.push(mat),
+                }
+            }
+        }
+        if let Some(b) = self.at_index_mut(i) {
+            b.busy |= given > 0;
+            if let Logic::Hopper(h) = &b.logic {
+                b.status = if h.cells.is_empty() {
+                    Status::NoInput
+                } else if given == 0 {
+                    Status::OutputBlocked
+                } else {
+                    Status::Working
+                };
+            }
+        }
+        if let Some(dst) = woken {
+            self.wake_index(dst);
+        }
     }
 
     /// Machines work, labs research, the Hub delivers.
@@ -1425,6 +1485,8 @@ impl Buildings {
     /// Output ports put cells into the world; part outputs give parts to neighbors.
     fn give_outputs(&mut self, i: u32, content: &Content, sim: &mut Simulation) {
         let now = self.now;
+        let feeding = self.feeding_ports(i);
+        let mut hopper_steps = 0;
         let Some(b) = self.at_index_mut(i) else { return };
         let def = content.factory.building_def(b.kind);
         let next_push = b.next_push;
@@ -1456,7 +1518,13 @@ impl Buildings {
                             bulk_outputs.push((j, *port, mat, want));
                             break;
                         }
-                        let placed = cells::put_to_side(sim, port.tile, port.side, mat, want, None);
+                        // Molten output of a hot recipe (the crucible tap) leaves 150 °C above its
+                        // freezing point (at most the heat of the machine), so it stays liquid long
+                        // enough to reach a mold, and the mold can cool soon after.
+                        let hot = recipe.min_temp.and(content.materials.freeze[mat.index()]).map(|f| {
+                            f.at.saturating_add(150).min(b.heat).max(content.materials.temperature[mat.index()])
+                        });
+                        let placed = cells::put_to_side(sim, port.tile, port.side, mat, want, hot);
                         m.outputs[j] -= placed;
                         b.busy |= placed > 0;
                         if placed < want {
@@ -1477,6 +1545,12 @@ impl Buildings {
                 let n = steps_in_tick(now, def.param("rate", 16.0));
                 let mut released = 0;
                 'ports: for port in b.ports.iter().filter(|p| p.kind == PortKind::BulkOut) {
+                    // A building with a powder input facing the port takes the cells directly
+                    // (after this match).
+                    if feeding.contains(port) {
+                        hopper_steps = n;
+                        continue;
+                    }
                     while released < n {
                         let Some(&mat) = h.cells.front() else { break 'ports };
                         if cells::put_to_side(sim, port.tile, port.side, mat, 1, None) == 0 {
@@ -1497,6 +1571,9 @@ impl Buildings {
                 };
             }
             _ => {}
+        }
+        if hopper_steps > 0 {
+            self.hopper_to_neighbor(i, &feeding, hopper_steps, content);
         }
         for (j, port, mat, want) in bulk_outputs {
             let pushed = self.push_bulk(i, port, ItemRef::Material(mat), want, content);
@@ -1593,8 +1670,9 @@ impl Buildings {
     }
 
     /// Decide if the building sleeps after this tick.
-    fn after_tick(&mut self, i: u32) {
+    fn after_tick(&mut self, i: u32, content: &Content) {
         let Some(b) = self.at_index_mut(i) else { return };
+        let is_mold = content.factory.building_def(b.kind).kind == "mold";
         if b.busy {
             b.idle = 0;
         } else {
@@ -1619,7 +1697,12 @@ impl Buildings {
             Logic::Machine(m) => {
                 if m.recipe.is_none() {
                     Some(None)
-                } else if b.busy || b.idle < 2 {
+                } else if b.busy || b.idle < 2 || (is_mold && m.recipe.is_some_and(|r| {
+                    let rd = content.factory.recipe_def(r);
+                    (0..rd.inputs.len()).any(|k| m.inputs[k] < m.input_capacity(rd, k))
+                })) {
+                    // A mold with room watches its top every tick: poured metal runs off a flat
+                    // top in a few ticks.
                     None
                 } else {
                     match b.status {

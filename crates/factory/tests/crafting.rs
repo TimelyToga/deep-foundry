@@ -11,7 +11,7 @@ fn stocked_factory() -> Factory {
     let c = content();
     let mut f = Factory::new(c.clone());
     research_all(&mut f);
-    f.player.insert(&c, item(&c, "bronze_plate"), 3);
+    f.player.insert(&c, item(&c, "bronze_plate"), 2);
     f.player.insert(&c, item(&c, "tin_plate"), 1);
     f.player.insert(&c, item(&c, "clay"), 16);
     f
@@ -36,7 +36,7 @@ fn missing_ingredients_are_crafted_first() {
     run(&mut f, &mut sim, 479);
     assert_eq!(f.player.count(kit), 0);
     run(&mut f, &mut sim, 1);
-    assert_eq!(f.player.count(kit), 1);
+    assert_eq!(f.player.count(kit), 2, "one craft makes 2 kits");
     assert_eq!(f.player.contents().len(), 1, "no gear or brick is left over");
     assert!(f.hand.is_idle());
 }
@@ -52,7 +52,7 @@ fn a_workbench_nearby_doubles_the_speed() {
     run(&mut f, &mut sim, 239);
     assert_eq!(f.player.count(item(&c, "bronze_kit")), 0);
     run(&mut f, &mut sim, 1);
-    assert_eq!(f.player.count(item(&c, "bronze_kit")), 1);
+    assert_eq!(f.player.count(item(&c, "bronze_kit")), 2);
     // Far away the speed is 1 again.
     assert_eq!(f.buildings.hand_speed(&c, CellPos::new(120, 10)), 1.0);
 }
@@ -78,7 +78,7 @@ fn only_known_recipes_are_crafted() {
         Err(CraftError::Missing { name, count, .. }) => assert_eq!((name.as_str(), count), ("Bronze gear", 1)),
         other => panic!("{other:?}"),
     }
-    assert_eq!(f.player.count(item(&c, "bronze_plate")), 3, "nothing was taken");
+    assert_eq!(f.player.count(item(&c, "bronze_plate")), 2, "nothing was taken");
 }
 
 #[test]

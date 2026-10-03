@@ -1,5 +1,5 @@
 // Hub repair stages. See docs/design/01-game-design.md section 15.1.
 [
-    Milestone(stage: 1, name: "Repair the Hub frame", description: "Unlocks Tier 1: Steam.", deliver: [("bronze_plate", 40), ("bronze_gear", 20), ("clay_brick", 100)], unlocks_tier: 1),
+    Milestone(stage: 1, name: "Repair the Hub frame", description: "Unlocks Tier 1: Steam.", deliver: [("bronze_plate", 24), ("bronze_gear", 8), ("clay_brick", 48)], unlocks_tier: 1),
     Milestone(stage: 2, name: "Repair the Hub power core", description: "Unlocks Tier 2: LV.", deliver: [("steel_plate", 100), ("copper_wire", 200), ("glass_pane", 50), ("rubber_sheet", 20)], unlocks_tier: 2),
 ]

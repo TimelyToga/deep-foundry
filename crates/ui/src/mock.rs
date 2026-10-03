@@ -1209,7 +1209,7 @@ mod tests {
         let plate = it(&c, "bronze_plate");
         let before = Stock::from_player(&g.model.player).get(plate);
         g.apply(UiAction::Craft { recipe: rid(&c, "bronze_gear"), count: 2 });
-        assert_eq!(Stock::from_player(&g.model.player).get(plate), before - 6);
+        assert_eq!(Stock::from_player(&g.model.player).get(plate), before - 4);
         let last = g.model.player.crafting.len() - 1;
         g.apply(UiAction::CancelCraft { index: last, count: 2 });
         assert_eq!(Stock::from_player(&g.model.player).get(plate), before);
