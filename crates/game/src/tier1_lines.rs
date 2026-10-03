@@ -28,7 +28,7 @@ fn a_steam_furnace_runs_on_a_boiler_with_water_from_a_sprayed_pool() {
     for (id, n) in [("bronze_plate", 60), ("bronze_gear", 20), ("bronze_pipe_section", 10), ("clay_brick", 30), ("wood", 200)] {
         p.give(id, n);
     }
-    for (id, n) in [("small_boiler", 1), ("steam_furnace", 1), ("bronze_pipe", 4), ("hopper", 1), ("plate_mold", 1), ("crate", 1)] {
+    for (id, n) in [("small_boiler", 1), ("steam_furnace", 1), ("bronze_pipe", 4), ("hopper", 2), ("plate_mold", 1), ("crate", 1)] {
         p.craft(id, n).unwrap();
     }
     p.give("charcoal", 400);
@@ -69,6 +69,7 @@ fn a_steam_furnace_runs_on_a_boiler_with_water_from_a_sprayed_pool() {
     p.clear_area((x + 3) * TILE_SIZE, (x + 7) * TILE_SIZE, (b - 3) * TILE_SIZE, (b + 1) * TILE_SIZE);
     let furnace = p.place_at("steam_furnace", TilePos::new(x + 3, b - 1)).unwrap();
     let hopper = p.place_at("hopper", TilePos::new(x + 3, b - 2)).unwrap();
+    let ore_hopper = p.place_at("hopper", TilePos::new(x + 4, b - 2)).unwrap();
     let mold = p.place_at("plate_mold", TilePos::new(x + 5, b)).unwrap();
     let crate_ = p.place_at("crate", TilePos::new(x + 6, b)).unwrap();
 
@@ -79,13 +80,11 @@ fn a_steam_furnace_runs_on_a_boiler_with_water_from_a_sprayed_pool() {
     p.choose(mold, "copper_plate").unwrap();
     p.open_id(furnace).unwrap();
     p.choose(furnace, "copper_smelting").unwrap();
-    // The hopper holds 64 cells: 16 charcoal and 48 ore (a player clicks with the right button,
-    // or puts a hopper for each).
-    for (id, n) in [("charcoal", 16), ("raw_malachite", 48)] {
-        let it = content.item(id).unwrap();
-        p.host.factory.player.remove(it, n);
-        p.host.factory.buildings.insert(&content, hopper, it, n);
-    }
+    // One hopper for each input of the furnace.
+    p.open_id(hopper).unwrap();
+    p.click_tank("charcoal");
+    p.open_id(ore_hopper).unwrap();
+    p.click_tank("raw_malachite");
     let plate = "copper_plate";
     for _ in 0..60 {
         if p.stored(crate_, plate) >= 3 {

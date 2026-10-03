@@ -421,7 +421,7 @@
     Building(
         id: "steam_furnace",
         name: "Steam furnace",
-        description: "Smelts ore with charcoal or coke, melts copper and tin plates into bronze, and melts sand and ash into glass, with no fire: steam heats it to 1300 °C. Feed it from a hopper or a belt on its top, or with arms. Its tap pours into a mold right of it. Uses 3 steam per second.",
+        description: "Smelts ore with charcoal or coke, melts copper and tin plates into bronze, and melts sand and ash into glass, with no fire: steam heats it to 1300 °C. Feed it from hoppers or belts on its top (two inputs: put one hopper for ore and one for charcoal), or with arms. Its tap pours into a mold right of it. Uses 3 steam per second.",
         kind: "crafter",
         size: (2, 2),
         tier: 1,
@@ -429,6 +429,7 @@
         max_temp: 400,
         ports: [
             (kind: BulkIn, tile: (0, 0), side: Up),
+            (kind: BulkIn, tile: (1, 0), side: Up),
             (kind: FluidOut, tile: (1, 0), side: Right, name: Some("Tap")),
             (kind: Pipe, tile: (0, 1), side: Left, name: Some("Steam in")),
         ],
