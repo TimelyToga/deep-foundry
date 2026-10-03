@@ -68,7 +68,8 @@ impl Buildings {
         };
         let moved = self.arm_move(from, to, content);
         if let Some(b) = self.at_index_mut(i) {
-            b.status = if moved > 0 { crate::Status::Working } else { crate::Status::NoInput };
+            // Waiting for items or room is normal for an arm: it is idle, not a problem.
+            b.status = if moved > 0 { crate::Status::Working } else { crate::Status::Idle };
             if let Logic::Arm(arm) = &mut b.logic {
                 arm.next_move = now + period;
                 arm.moved += moved as u64;

@@ -1398,9 +1398,12 @@ impl Buildings {
                 }
             }
         }
+        let drill = self.at_index(i).is_some_and(|b| content.factory.building_def(b.kind).kind == "drill");
         if let Some(b) = self.at_index_mut(i) {
             b.busy |= given > 0;
-            if let Logic::Hopper(h) = &b.logic {
+            if let Logic::Hopper(h) = &b.logic
+                && !drill
+            {
                 b.status = if h.cells.is_empty() {
                     Status::NoInput
                 } else if given == 0 {
@@ -1677,13 +1680,20 @@ impl Buildings {
                     }
                 }
                 b.busy |= released > 0;
-                b.status = if h.cells.is_empty() {
-                    Status::NoInput
-                } else if b.blocked && released == 0 {
-                    Status::OutputBlocked
+                if def.kind == "drill" {
+                    // The drill sets its own status when it digs (see `drill`).
+                    if b.blocked && released == 0 && !h.cells.is_empty() {
+                        b.status = Status::OutputBlocked;
+                    }
                 } else {
-                    Status::Working
-                };
+                    b.status = if h.cells.is_empty() {
+                        Status::NoInput
+                    } else if b.blocked && released == 0 {
+                        Status::OutputBlocked
+                    } else {
+                        Status::Working
+                    };
+                }
             }
             _ => {}
         }

@@ -88,7 +88,7 @@ pub(crate) fn in_slot(ctx: &Ctx, k: i32) -> Option<Tree> {
             // Thick trunks: wood is the first fuel and building material.
             let half = if height > 50 { 3 } else if height > 36 { 2 } else { 1 };
             // One broad tree in 5 is a rubber tree, from 600 cells away from the Hub on.
-            let rubber = x.abs() > 600 && (h >> 4) % 5 == 0;
+            let rubber = x.abs() > 600 && (h >> 4).is_multiple_of(5);
             Tree { x, base, height, kind: Kind::Broad, half, crown: (9 + height / 4).min(REACH - 2), h, rubber }
         }
     })

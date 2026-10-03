@@ -242,6 +242,11 @@ pub struct BuildingMark {
     pub output: Option<ItemRef>,
     /// Alt mode: the belt direction (+1 right, -1 left), 0 for other buildings.
     pub belt: i8,
+    /// An arm: the step from the building it takes from to the one it gives to. (0, 0) for other
+    /// buildings.
+    pub arm: (i8, i8),
+    /// A back-layer building (a pipe): no outline.
+    pub back: bool,
 }
 
 /// A drag line stopped: the placement at `at` failed for this reason.
@@ -1084,18 +1089,21 @@ impl FactoryHost {
             .buildings
             .iter()
             .filter(|(_, b)| !b.cell_rect().intersect(&view).is_empty())
-            .filter_map(|(id, b)| {
+            .map(|(id, b)| {
                 let output = if alt { mark_output(f, id, b) } else { None };
                 let belt = match &b.logic {
                     foundry_factory::Logic::Belt(_) if alt => foundry_factory::buildings::belt_direction(b.transform) as i8,
                     _ => 0,
                 };
-                (b.status.is_problem() || output.is_some() || belt != 0).then_some(BuildingMark {
-                    rect: b.cell_rect(),
-                    status: b.status,
-                    output,
-                    belt,
-                })
+                let arm = match &b.logic {
+                    foundry_factory::Logic::Arm(_) => {
+                        let (dx, dy) = foundry_factory::geometry::side_step(b.transform.side(foundry_content::Side::Right));
+                        (dx as i8, dy as i8)
+                    }
+                    _ => (0, 0),
+                };
+                // Every building in the view: the overlay draws its outline.
+                BuildingMark { rect: b.cell_rect(), status: b.status, output, belt, arm, back: b.layer == foundry_content::Layer::Back }
             })
             .collect();
         // The hole or the wrong wall block of a room: a red mark on that tile.
@@ -1104,7 +1112,7 @@ impl FactoryHost {
             if let Some(t) = tile {
                 let rect = CellRect::new(t.x * TILE_SIZE, t.y * TILE_SIZE, (t.x + 1) * TILE_SIZE, (t.y + 1) * TILE_SIZE);
                 if !rect.intersect(&view).is_empty() {
-                    marks.push(BuildingMark { rect, status: Status::NoRoom, output: None, belt: 0 });
+                    marks.push(BuildingMark { rect, status: Status::NoRoom, output: None, belt: 0, arm: (0, 0), back: true });
                 }
             }
         }
