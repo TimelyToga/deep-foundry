@@ -24,6 +24,8 @@ mod ore_guide;
 mod metal;
 #[path = "tier1_lines.rs"]
 mod tier1;
+#[path = "tier1_play.rs"]
+mod tier1_play;
 
 struct Player {
     host: FactoryHost,
@@ -38,6 +40,11 @@ struct Player {
     smelter: Option<metal::Smelter>,
     /// The flat ground of the smelting site: first tile column, building tile row.
     site: Option<(i32, i32)>,
+    /// How deep below the start `find` looks for a material (36: the soil; more with the bronze
+    /// drill head, then around the robot).
+    search_depth: i32,
+    /// The last cell that `find` found, with its material (it looks there first).
+    found: std::cell::Cell<Option<(MaterialId, CellPos)>>,
 }
 
 impl Player {
@@ -53,7 +60,7 @@ impl Player {
         let r = host.robot.rect();
         sim.apply(Command::SetView { area: CellRect::new(r.x0 - 700, r.y0 - 300, r.x1 + 700, r.y1 + 300) });
         let start = CellPos::new(r.x0, r.y1);
-        let mut p = Self { host, sim, content, start, normal: NormalMode::new(), tick: 0, smelter: None, site: None };
+        let mut p = Self { host, sim, content, start, normal: NormalMode::new(), tick: 0, smelter: None, site: None, search_depth: 36, found: Default::default() };
         p.ticks(30);
         p
     }
@@ -186,10 +193,34 @@ impl Player {
     fn find(&self, material: MaterialId) -> Option<CellPos> {
         let (cx, cy) = self.host.robot.center();
         let (cx, cy) = (cx as i32, cy as i32);
+        // First a small box around the last cell found (the same deposit): a full scan is slow.
+        if let Some((m, last)) = self.found.get()
+            && m == material
+        {
+            let mut near: Option<(i64, CellPos)> = None;
+            for y in last.y - 24..last.y + 24 {
+                for x in last.x - 24..last.x + 24 {
+                    let p = CellPos::new(x, y);
+                    if y >= self.start.y + self.search_depth || self.sim.cell(p).material != material {
+                        continue;
+                    }
+                    let d = ((x - cx) as i64).pow(2) + 4 * ((y - cy) as i64).pow(2);
+                    if near.is_none_or(|(bd, _)| d < bd) {
+                        near = Some((d, p));
+                    }
+                }
+            }
+            if let Some((_, p)) = near {
+                self.found.set(Some((material, p)));
+                return Some(p);
+            }
+        }
         let mut best: Option<(i64, CellPos)> = None;
-        // Down to 36 cells below the start: deeper ore is in stone, too hard for the first drill head.
-        for y in self.start.y - 120..self.start.y + 36 {
-            for x in self.start.x - 650..self.start.x + 650 {
+        // Down to 36 cells below the start: deeper ore is in stone, too hard for the first drill
+        // head. With the bronze drill head (Tier 1) the search goes deeper, around the robot.
+        let (x0, x1) = if self.search_depth > 36 { (cx - 300, cx + 300) } else { (self.start.x - 650, self.start.x + 650) };
+        for y in self.start.y - 120..self.start.y + self.search_depth {
+            for x in x0..x1 {
                 let p = CellPos::new(x, y);
                 if self.sim.cell(p).material != material {
                     continue;
@@ -200,6 +231,7 @@ impl Player {
                 }
             }
         }
+        self.found.set(best.map(|(_, p)| (material, p)));
         best.map(|(_, p)| p)
     }
 
@@ -212,7 +244,11 @@ impl Player {
                 self.stop();
                 return Ok(());
             }
-            let Some(at) = self.find(m) else { return Err(format!("no {material} left near the start")) };
+            let Some(at) = self.find(m) else {
+                let r = self.host.robot.rect();
+                let near = self.sim.count_material(CellRect::new(r.x0 - 400, r.y0 - 100, r.x1 + 400, r.y1 + 200), m);
+                return Err(format!("no {material} left near the start; robot at {r:?}; {near} cells within 400 of it"));
+            };
             let below = at.y - self.host.robot.center().1 as i32;
             if below > 60 && (at.x - self.center_x()).abs() > 6 {
                 // Deep: stand right above it and dig a shaft down.
@@ -249,12 +285,25 @@ impl Player {
     /// If no tank holds `m` and no tank is free, empty a tank of a material that the next goals
     /// do not need (sand, ash, crushed or washed ore), as a player does.
     fn free_tank_for(&mut self, m: MaterialId) {
+        // A vein goes into the tanks as the material it breaks into (hematite: raw hematite).
+        let m = self.content.materials.broken_into.get(m.index()).copied().unwrap_or(m);
         let tanks = &self.host.factory.player.tanks;
         if tanks.iter().any(|t| t.material == Some(m) || t.material.is_none()) {
             return;
         }
-        let keep = ["wood", "clay", "charcoal", "raw_malachite", "raw_cassiterite", "water"];
-        let junk = tanks.iter().position(|t| t.material.is_some_and(|tm| !keep.contains(&self.content.materials.ids[tm.index()].as_str())));
+        let keep = [
+            "wood", "clay", "charcoal", "raw_malachite", "raw_cassiterite", "water", "raw_coal", "coke", "crushed_limestone",
+            "crushed_hematite", "raw_hematite", "raw_limestone", "sand", "ash", "rubber_wood", "slag_block", "crushed_slag", "creosote",
+            "resin", "rubber",
+        ];
+        let ground = ["dirt", "stone", "gravel", "grass", "silt", "mud", "granite", "basalt", "leaves"];
+        let name = |t: &foundry_factory::Tank| t.material.map(|tm| self.content.materials.ids[tm.index()].clone()).unwrap_or_default();
+        let smallest = |pick: &dyn Fn(&str) -> bool| {
+            (0..tanks.len()).filter(|&i| tanks[i].material != Some(m) && pick(&name(&tanks[i]))).min_by_key(|&i| tanks[i].units)
+        };
+        // Plain ground first, then the smallest tank of a material that the next goals do not
+        // need, then the smallest tank.
+        let junk = smallest(&|n| ground.contains(&n)).or_else(|| smallest(&|n| !keep.contains(&n))).or_else(|| smallest(&|_| true));
         if let Some(i) = junk {
             self.ui(&[UiAction::EmptyTank(i)]);
         }

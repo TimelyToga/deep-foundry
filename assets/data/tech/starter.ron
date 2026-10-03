@@ -83,7 +83,7 @@
         requires: ["bronze_drill_head"],
         kits: [("bronze_kit", 1)],
         units: 20,
-        discoveries: ["raw_magnetite"],
+        discoveries: ["raw_hematite"],
         unlocks: ["crushed_magnetite", "crushed_hematite", "crushed_limestone"],
     ),
     Tech(

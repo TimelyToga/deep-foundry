@@ -59,12 +59,15 @@ impl Player {
     /// tile row `row` (a hill there would slide into the site), ground (dirt) in the 2 rows from
     /// it down. Returns the tile row where
     /// buildings stand (`row - 1`).
-    fn flatten(&mut self, x: i32, w: i32, row: i32) -> i32 {
+    pub(super) fn flatten(&mut self, x: i32, w: i32, row: i32) -> i32 {
         let dirt = self.content.expect_material("dirt");
         let tree = ["wood", "leaves"].map(|m| self.content.expect_material(m));
         for cx in x * TILE_SIZE..(x + w) * TILE_SIZE {
             for y in (row - 12) * TILE_SIZE..row * TILE_SIZE {
-                self.sim.set_cell(CellPos::new(cx, y), MaterialId::AIR, None);
+                // Buildings (the Hub) stay.
+                if !self.sim.is_building_cell(CellPos::new(cx, y)) {
+                    self.sim.set_cell(CellPos::new(cx, y), MaterialId::AIR, None);
+                }
             }
             // Tree roots (wood) under a campfire catch fire, and the fire spreads under the
             // other buildings: the ground under the site is dirt.

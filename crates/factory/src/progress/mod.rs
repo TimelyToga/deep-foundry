@@ -457,6 +457,19 @@ impl Progress {
         self.tier = self.tier.max(tier);
     }
 
+    /// Debug: the Hub repair stages up to `stage` are done (and their tiers open).
+    pub fn debug_set_stage(&mut self, content: &Content, stage: u8) {
+        self.stage = self.stage.max(stage);
+        for m in content.factory.milestones.iter().filter(|m| m.stage <= stage) {
+            self.tier = self.tier.max(m.unlocks_tier);
+        }
+    }
+
+    /// Debug: mark a guide goal done, with no reward (tests start later in the guide).
+    pub fn debug_finish_goal(&mut self, id: &str) {
+        self.goals_done.insert(id.to_string());
+    }
+
     /// Start `tech` (it can start): spend its points the first time and make it current.
     /// A technology with no lab work is done at once.
     fn begin(&mut self, content: &Content, tech: TechId) {

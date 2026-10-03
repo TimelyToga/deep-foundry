@@ -222,7 +222,7 @@ pub fn wall_names(content: &Content, controller: &BuildingDef) -> String {
 /// How many of `n` units of an item go into the recipe input first, when the item is both a
 /// recipe input and a fuel of the machine (wood in a kiln that makes charcoal, coal in a coke
 /// oven). The input buffer and the fuel slot then fill to about the same part of their size, so
-/// the fire gets fuel too. For other items: all `n`.
+/// the fire gets fuel too; the input gets at least enough for one craft. For other items: all `n`.
 pub fn input_share(m: &machines::Machine, content: &Content, item: ItemRef, n: u32) -> u32 {
     let (Some(r), Some(f), ItemRef::Material(mat)) = (m.recipe, m.fuel.as_ref(), item) else { return n };
     let recipe = content.factory.recipe_def(r);
@@ -235,7 +235,9 @@ pub fn input_share(m: &machines::Machine, content: &Content, item: ItemRef, n: u
     let n64 = n as u64;
     // (input + a) / input_cap = (fuel + n - a) / fuel_cap, solved for a.
     let a = ((fuel + n64) * input_cap).saturating_sub(input * fuel_cap) / (input_cap + fuel_cap);
-    a.min(n64) as u32
+    // But at least enough for one craft: a large fuel slot must not take nearly all of it.
+    let one = (recipe.inputs[k].count as u64).saturating_sub(input);
+    a.max(one).min(n64) as u32
 }
 
 /// Run one tick of a room controller (called from `Buildings::work`). Returns the status.

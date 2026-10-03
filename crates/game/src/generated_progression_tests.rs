@@ -22,6 +22,8 @@ fn generated_player(seed: u64) -> Player {
         tick: 0,
         smelter: None,
         site: None,
+        search_depth: 36,
+        found: Default::default(),
     };
     player.ticks(30);
     player
