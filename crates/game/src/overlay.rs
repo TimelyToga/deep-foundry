@@ -62,6 +62,9 @@ pub struct Scene<'a> {
 pub fn draw(painter: &Painter, frame: &FactoryFrame, s: &Scene) {
     let v = View { camera: s.camera, ppp: s.ppp };
     construct_draw::draw_under(painter, &v, frame, s.build, s.atlas);
+    for m in frame.marks.iter().filter(|m| !m.back) {
+        outline(painter, &v, m);
+    }
     for m in frame.marks.iter().filter(|m| m.status.is_problem()) {
         status_mark(painter, &v, m.rect, m.status);
     }
@@ -142,6 +145,26 @@ pub fn aim_point(frame: &FactoryFrame, mouse: Option<CellPos>) -> CellPos {
     match (mouse, &frame.robot) {
         (Some(m), Some(r)) => tools::clamp_aim(r, m),
         _ => frame.aim,
+    }
+}
+
+/// A thin dark frame around a building, so buildings of the same material next to each other
+/// read as separate buildings. An arm also gets an arrow from the building it takes from to the
+/// one it gives to.
+fn outline(p: &Painter, v: &View, m: &crate::factory_host::BuildingMark) {
+    let r = v.cell_rect(m.rect);
+    p.rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.5, Color32::from_black_alpha(150)), StrokeKind::Inside);
+    if m.arm != (0, 0) {
+        let (dx, dy) = (m.arm.0 as f32, m.arm.1 as f32);
+        let c = r.center();
+        let k = r.width().min(r.height()) * 0.32;
+        let (tail, head) = (c - vec2(dx, dy) * k, c + vec2(dx, dy) * k);
+        let color = Color32::from_rgb(255, 225, 120);
+        p.line_segment([tail, head], Stroke::new(2.0, color));
+        let side = vec2(-dy, dx) * k * 0.55;
+        let back = head - vec2(dx, dy) * k * 0.55;
+        p.line_segment([head, back + side], Stroke::new(2.0, color));
+        p.line_segment([head, back - side], Stroke::new(2.0, color));
     }
 }
 

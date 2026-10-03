@@ -31,7 +31,9 @@ OPTIONS:
                              guide-workbench (the guide after the workbench and the ores),
                              guide-done (the guide when the rest waits for new machines),
                              campfire (a campfire window: raw bricks, wood fuel, clay bricks),
-                             steam-line (a functioning boiler, bronze pipes and steam crusher)
+                             steam-line (a functioning boiler, bronze pipes and steam crusher),
+                             smelter (the Tier 0 crucible site), automation (a Tier 1 line with
+                             a steam drill, arms, a steam furnace, a mold and an assembler)
     --mode MODE              The mode of a world that --ui-state starts: sandbox (default) or
                              normal (the robot, the factory and the Hub)
     --ui-scale S             Size of the UI, 0.75 to 2 (default: the settings file, else 1)
@@ -151,6 +153,10 @@ pub enum UiState {
     KilnHole,
     /// Normal mode: a boiler makes steam through bronze pipes and runs a crusher.
     SteamLine,
+    /// Normal mode: the Tier 0 smelting site (campfire, crucible, bellows, mold, crate).
+    Smelter,
+    /// Normal mode: a Tier 1 automated line (steam drill, arms, steam furnace, mold, assembler).
+    Automation,
 }
 
 impl UiState {
@@ -182,6 +188,8 @@ impl UiState {
             "kiln" => UiState::Kiln,
             "kiln-hole" => UiState::KilnHole,
             "steam-line" => UiState::SteamLine,
+            "smelter" => UiState::Smelter,
+            "automation" => UiState::Automation,
             _ => return None,
         })
     }
@@ -212,6 +220,8 @@ impl UiState {
                 | UiState::Kiln
                 | UiState::KilnHole
                 | UiState::SteamLine
+                | UiState::Smelter
+                | UiState::Automation
         )
     }
 }

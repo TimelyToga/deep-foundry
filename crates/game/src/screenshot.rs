@@ -31,11 +31,13 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+mod lines;
 mod steam_line;
 
 pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
     let start = Instant::now();
-    let state = if args.no_ui { UiState::Playing } else { args.ui_state.unwrap_or(UiState::Playing) };
+    // With --no-ui the state still sets up the world (a line, a kiln); only the UI is not drawn.
+    let state = args.ui_state.unwrap_or(UiState::Playing);
     let demo = demo::build(content.clone(), args.shape(), args.seed);
     let mut sim = demo.sim;
     let normal = args.start_mode() == GameMode::Normal;
@@ -221,7 +223,9 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             | UiState::OreLine
             | UiState::Kiln
             | UiState::KilnHole
-            | UiState::SteamLine => {
+            | UiState::SteamLine
+            | UiState::Smelter
+            | UiState::Automation => {
                 ui.model.state = GameState::Playing;
                 if state == UiState::Inventory {
                     ui.ui.open_window(WindowKind::Character);
@@ -741,6 +745,14 @@ fn setup_normal_screen(
         }
         UiState::SteamLine => {
             mouse = Some(steam_line::setup(h, sim, &content));
+        }
+        UiState::Smelter => {
+            mouse = Some(lines::smelter(h, sim, &content));
+            n.build.alt = true;
+        }
+        UiState::Automation => {
+            mouse = Some(lines::automation(h, sim, &content));
+            n.build.alt = true;
         }
         UiState::GuideWorkbench | UiState::GuideDone => {
             // The goals up to the workbench and the two ores are done.
