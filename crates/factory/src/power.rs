@@ -26,9 +26,11 @@ pub struct PowerNet {
     pub id: u32,
     pub generators: Vec<BuildingId>,
     pub consumers: Vec<BuildingId>,
-    /// Watts the generators could make in the last tick, and watts the machines wanted.
+    /// Watts the generators could make in the last tick, watts the machines wanted, and watts
+    /// the generators gave.
     pub supply_w: f64,
     pub demand_w: f64,
+    pub used_w: f64,
     /// The part of their power the machines got in the last tick (0 to 1).
     pub satisfaction: f32,
 }
@@ -170,6 +172,7 @@ impl Buildings {
             }
             net.supply_w = supply;
             net.demand_w = demand;
+            net.used_w = used;
             net.satisfaction = factor;
         }
         self.power.nets = nets;
