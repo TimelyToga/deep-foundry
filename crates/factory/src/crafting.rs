@@ -390,7 +390,7 @@ mod tests {
         inv.insert(&c, plate, 7);
         let mut hc = HandCrafting::new();
         let req = hc.craft(&c, &mut inv, gear, 2, &all).unwrap();
-        assert_eq!(inv.count(plate), 1);
+        assert_eq!(inv.count(plate), 3);
         assert_eq!(hc.jobs.len(), 1);
         assert!(hc.cancel(&c, &mut inv, req).is_empty());
         assert_eq!(inv.count(plate), 7);
@@ -404,7 +404,7 @@ mod tests {
         let mut inv = Inventory::player();
         let mut hc = HandCrafting::new();
         match hc.craft(&c, &mut inv, gear, 1, &all) {
-            Err(CraftError::Missing { count: 3, name, .. }) => assert_eq!(name, "Bronze plate"),
+            Err(CraftError::Missing { count: 2, name, .. }) => assert_eq!(name, "Bronze plate"),
             other => panic!("{other:?}"),
         }
         inv.insert(&c, c.item("bronze_plate").unwrap(), 3);
@@ -438,7 +438,7 @@ mod tests {
         let plate = c.item("bronze_plate").unwrap();
         let tin = c.item("tin_plate").unwrap();
         let mut inv = Inventory::new(1, 0, 0);
-        inv.insert(&c, plate, 3);
+        inv.insert(&c, plate, 2);
         let mut hc = HandCrafting::new();
         hc.craft(&c, &mut inv, gear, 1, &all).unwrap();
         inv.insert(&c, tin, 1);

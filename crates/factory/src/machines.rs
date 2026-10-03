@@ -463,13 +463,13 @@ mod tests {
     #[test]
     fn a_craft_takes_time_times_60_ticks() {
         let c = content();
-        let r = c.factory.recipe("bronze_gear").unwrap(); // 3 bronze plates -> 1 gear, 2 s
+        let r = c.factory.recipe("bronze_gear").unwrap(); // 2 bronze plates -> 1 gear, 2 s
         let recipe = c.factory.recipe_def(r);
         let mut m = Machine::new(2);
         m.set_recipe(&c, Some(r));
         let plate = c.item("bronze_plate").unwrap();
-        assert_eq!(m.input_room(recipe, plate), 6);
-        assert_eq!(m.add_input(recipe, plate, 10), 6);
+        assert_eq!(m.input_room(recipe, plate), 4);
+        assert_eq!(m.add_input(recipe, plate, 10), 4);
         for _ in 0..119 {
             assert_eq!(m.step(recipe, &cond(1.0), 1), Status::Working);
         }
@@ -494,16 +494,16 @@ mod tests {
         let plate = c.item("bronze_plate").unwrap();
         let mut m = Machine::new(1);
         m.set_recipe(&c, Some(r));
-        m.add_input(recipe, plate, 3);
+        m.add_input(recipe, plate, 2);
         for _ in 0..120 {
             m.step(recipe, &cond(1.0), 1);
         }
         assert_eq!(m.outputs[0], 1);
-        m.add_input(recipe, plate, 3);
+        m.add_input(recipe, plate, 2);
         assert_eq!(m.step(recipe, &cond(1.0), 1), Status::OutputFull);
         assert_eq!(m.full_output(recipe), Some(0));
         let back = m.set_recipe(&c, None);
-        assert_eq!(back, vec![Stack { item: plate, count: 3 }, Stack { item: c.item("bronze_gear").unwrap(), count: 1 }]);
+        assert_eq!(back, vec![Stack { item: plate, count: 2 }, Stack { item: c.item("bronze_gear").unwrap(), count: 1 }]);
     }
 
     #[test]
@@ -513,10 +513,10 @@ mod tests {
         let recipe = c.factory.recipe_def(r);
         let mut m = Machine::new(2);
         m.set_recipe(&c, Some(r));
-        let cu = c.item("molten_copper").unwrap();
-        let sn = c.item("molten_tin").unwrap();
-        m.add_input(recipe, cu, 48);
-        m.add_input(recipe, sn, 16);
+        let cu = c.item("copper_plate").unwrap();
+        let sn = c.item("tin_plate").unwrap();
+        m.add_input(recipe, cu, 3);
+        m.add_input(recipe, sn, 1);
         let mut cold = cond(1.0);
         cold.heat = 900;
         assert_eq!(m.step(recipe, &cold, 1), Status::TooCold);
@@ -527,7 +527,7 @@ mod tests {
         assert!(m.running);
         assert_eq!(m.inputs, vec![0, 0]);
         let back = m.take_contents(&c);
-        assert_eq!(back, vec![Stack { item: cu, count: 48 }, Stack { item: sn, count: 16 }]);
+        assert_eq!(back, vec![Stack { item: cu, count: 3 }, Stack { item: sn, count: 1 }]);
     }
 
     #[test]
