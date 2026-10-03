@@ -49,8 +49,9 @@
         kind: "furnace",
         size: (1, 1),
         tier: 0,
-        // A ring of stones: a wood body would catch fire from its own heat port.
-        body: "stone",
+        // A fire pit lined with baked clay: a wood body would catch fire from its own heat port,
+        // and stone melts at 1200 °C (the bellows make the fire 1300 °C).
+        body: "terracotta",
         max_temp: 1500,
         ports: [
             (kind: BulkIn, tile: (0, 0), side: Up, filter: ["wood", "charcoal", "raw_coal", "coke"]),

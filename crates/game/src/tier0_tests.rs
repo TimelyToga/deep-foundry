@@ -20,6 +20,8 @@ use std::time::Instant;
 
 #[path = "ore_guide.rs"]
 mod ore_guide;
+#[path = "tier0_metal.rs"]
+mod metal;
 
 struct Player {
     host: FactoryHost,
@@ -30,6 +32,10 @@ struct Player {
     /// The main-thread side, for opening buildings and clicking slots as the UI does.
     normal: NormalMode,
     tick: u64,
+    /// The smelting site, once it is built (see `tier0_metal.rs`).
+    smelter: Option<metal::Smelter>,
+    /// The flat ground of the smelting site: first tile column, building tile row.
+    site: Option<(i32, i32)>,
 }
 
 impl Player {
@@ -45,7 +51,7 @@ impl Player {
         let r = host.robot.rect();
         sim.apply(Command::SetView { area: CellRect::new(r.x0 - 700, r.y0 - 300, r.x1 + 700, r.y1 + 300) });
         let start = CellPos::new(r.x0, r.y1);
-        let mut p = Self { host, sim, content, start, normal: NormalMode::new(), tick: 0 };
+        let mut p = Self { host, sim, content, start, normal: NormalMode::new(), tick: 0, smelter: None, site: None };
         p.ticks(30);
         p
     }
@@ -93,8 +99,9 @@ impl Player {
             .map(|cx| {
                 (0..self.sim.size_cells().1)
                     .find(|&y| {
-                        let m = self.sim.cell(CellPos::new(cx, y)).material;
-                        crate::player::blocks(&self.content, m) && !tree.contains(&m)
+                        let p = CellPos::new(cx, y);
+                        let m = self.sim.cell(p).material;
+                        self.sim.is_building_cell(p) || (crate::player::blocks(&self.content, m) && !tree.contains(&m))
                     })
                     .unwrap_or(0)
             })
@@ -104,7 +111,10 @@ impl Player {
         let r = robot.rect();
         for y in r.y0..r.y1 {
             for cx in r.x0..r.x1 {
-                self.sim.set_cell(CellPos::new(cx, y), MaterialId::AIR, None);
+                let p = CellPos::new(cx, y);
+                if !self.sim.is_building_cell(p) {
+                    self.sim.set_cell(p, MaterialId::AIR, None);
+                }
             }
         }
         self.host.robot = robot;
@@ -175,7 +185,8 @@ impl Player {
         let (cx, cy) = self.host.robot.center();
         let (cx, cy) = (cx as i32, cy as i32);
         let mut best: Option<(i64, CellPos)> = None;
-        for y in self.start.y - 120..self.start.y + 120 {
+        // Down to 36 cells below the start: deeper ore is in stone, too hard for the first drill head.
+        for y in self.start.y - 120..self.start.y + 36 {
             for x in self.start.x - 650..self.start.x + 650 {
                 let p = CellPos::new(x, y);
                 if self.sim.cell(p).material != material {
@@ -193,22 +204,58 @@ impl Player {
     /// Dig cells of `material` until `done` is true.
     fn dig(&mut self, material: &str, done: impl Fn(&Player) -> bool) -> Result<(), String> {
         let m = self.content.expect_material(material);
-        for _ in 0..800 {
+        for step in 0..800 {
+            self.free_tank_for(m);
             if done(self) {
                 self.stop();
                 return Ok(());
             }
             let Some(at) = self.find(m) else { return Err(format!("no {material} left near the start")) };
-            if (at.x - self.center_x()).abs() > 40 {
+            let below = at.y - self.host.robot.center().1 as i32;
+            if below > 60 && (at.x - self.center_x()).abs() > 6 {
+                // Deep: stand right above it and dig a shaft down.
+                self.walk_to(at.x)?;
+            } else if (at.x - self.center_x()).abs() > 40 {
                 // Stand beside it, on the side of the robot.
                 let side = if self.center_x() > at.x { 32 } else { -32 };
                 self.walk_to(at.x + side)?;
             }
-            self.apply(FactoryCommand::Input(PlayerInput { aim: at, dig: true, ..Default::default() }));
+            // Out of reach (deep, or the robot stands on a tree): dig along the line to it, so
+            // the robot falls down the shaft.
+            let (rx, ry) = self.host.robot.center();
+            let (dx, dy) = (at.x as f32 - rx, at.y as f32 - ry);
+            let dist = (dx * dx + dy * dy).sqrt();
+            let aim = if dist > crate::tools::REACH - 6.0 {
+                // From just under the feet (the robot's middle is 8 cells above them) down.
+                let k = [10.0, 20.0, 34.0, 48.0, 62.0, 74.0][step % 6] / dist;
+                CellPos::new((rx + dx * k) as i32, (ry + dy * k) as i32)
+            } else {
+                at
+            };
+            self.apply(FactoryCommand::Input(PlayerInput { aim, dig: true, ..Default::default() }));
             self.ticks(3);
         }
         self.stop();
-        if done(self) { Ok(()) } else { Err(format!("digging {material} did not finish the goal; nearest {:?}, robot {:?}", self.find(m), self.host.robot)) }
+        if done(self) {
+            return Ok(());
+        }
+        let notices = self.host.frame(&self.sim, 0).notices;
+        let tanks: Vec<_> = self.host.factory.player.tanks.iter().map(|t| (t.material.map(|m| self.content.materials.ids[m.index()].clone()), t.units)).collect();
+        Err(format!("digging {material} did not finish the goal; nearest {:?}, robot {:?}; notices {notices:?}; tanks {tanks:?}; cells around it:\n{}", self.find(m), self.host.robot, self.map_around()))
+    }
+
+    /// If no tank holds `m` and no tank is free, empty a tank of a material that the next goals
+    /// do not need (sand, ash, crushed or washed ore), as a player does.
+    fn free_tank_for(&mut self, m: MaterialId) {
+        let tanks = &self.host.factory.player.tanks;
+        if tanks.iter().any(|t| t.material == Some(m) || t.material.is_none()) {
+            return;
+        }
+        let keep = ["wood", "clay", "charcoal", "raw_malachite", "raw_cassiterite", "water"];
+        let junk = tanks.iter().position(|t| t.material.is_some_and(|tm| !keep.contains(&self.content.materials.ids[tm.index()].as_str())));
+        if let Some(i) = junk {
+            self.ui(&[UiAction::EmptyTank(i)]);
+        }
     }
 
     fn stop(&mut self) {
@@ -218,11 +265,11 @@ impl Player {
     /// Hand craft and wait for the result.
     fn craft(&mut self, recipe: &str, n: u32) -> Result<(), String> {
         let r = self.content.factory.recipe(recipe).ok_or(format!("no recipe {recipe}"))?;
-        let out = self.content.factory.recipe_def(r).outputs[0].item;
-        let before = self.host.factory.item_count(out);
+        let out = self.content.factory.recipe_def(r).outputs[0];
+        let before = self.host.factory.item_count(out.item);
         self.apply(FactoryCommand::Craft { recipe: r, count: n });
         for _ in 0..3000 {
-            if self.host.factory.item_count(out) >= before + n {
+            if self.host.factory.item_count(out.item) >= before + n * out.count {
                 return Ok(());
             }
             self.ticks(1);
@@ -304,10 +351,9 @@ impl Player {
         let per_brick = 6;
         let has_wood = move |p: &Player| p.count("wood") >= n * per_brick + 4;
         self.dig("wood", has_wood)?;
-        self.walk_to(self.start.x)?;
         let kind = self.content.factory.building("campfire").ok_or("no campfire")?;
-        let rect = self.host.factory.buildings.iter().find(|(_, b)| b.kind == kind).map(|(_, b)| b.cell_rect()).ok_or("no campfire placed")?;
-        let id = self.open(CellPos::new(rect.x0 + 3, rect.y0 + 3))?;
+        let id = self.host.factory.buildings.iter().find(|(_, b)| b.kind == kind).map(|(id, _)| id).ok_or("no campfire placed")?;
+        self.open_id(id)?;
         let raw = self.content.item("raw_clay_brick").unwrap();
         let wood = ItemRef::Material(self.content.expect_material("wood"));
         let slot = self.normal.frame.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|s| s.item == raw)).ok_or("no raw bricks")?;
@@ -354,12 +400,11 @@ impl Player {
         self.craft("kiln_controller", 1)?;
         self.craft("kiln_hatch", 1)?;
         self.craft("clay_brick_wall", 6)?;
-        self.walk_to(self.start.x)?;
-        // The ring stands one tile above the highest ground under it.
-        let tile = foundry_core::TILE_SIZE;
-        let x0 = self.host.robot.rect().x1.div_euclid(tile) + 2;
-        let top = (x0 * tile..(x0 + 3) * tile).map(|x| crate::factory_host::ground_top(&self.sim, &self.content, x)).min().unwrap_or(0);
-        let y0 = top.div_euclid(tile) - 3;
+        // The ring stands on the flat ground of the smelting site, left of the smelter, away from
+        // the wood buildings at the start (a hot kiln burns them).
+        let (sx, b) = self.site()?;
+        let (x0, y0) = (sx - 5, b - 2);
+        self.walk_to((sx + 1) * foundry_core::TILE_SIZE)?;
         for dy in 0..3 {
             for dx in 0..3 {
                 let part = match (dx, dy) {
@@ -414,10 +459,7 @@ impl Player {
         }
     }
 
-    /// Play one goal with the player actions. `None`: there is no script for this goal.
-    // The scripts for "t0_stamp_mill" and "t0_wash_ore". They wait for bronze gears (smelting);
-    // add them back to `play` when the smelting goals have scripts.
-    #[allow(dead_code)]
+    /// The scripts for "t0_stamp_mill" and "t0_wash_ore" (see `ore_guide.rs`).
     fn process_ore(&mut self, wash: bool) -> Result<(), String> {
         ore_guide::process(self, wash)
     }
@@ -433,14 +475,55 @@ impl Player {
             "t0_tin_ore" => self.dig("cassiterite", |p| p.discovered("cassiterite")),
             "t0_research_bronze" => self.research("bronze"),
             "t0_raw_bricks" => self.dig("clay", has("clay", 128)).and_then(|_| self.craft("raw_clay_brick", 8)),
-            "t0_campfire" => self.dig("wood", has("wood", 10)).and_then(|_| self.craft("campfire", 1)).and_then(|_| self.place("campfire")),
+            "t0_campfire" => self.dig("wood", has("wood", 10)).and_then(|_| self.craft("campfire", 1)).and_then(|_| self.place_campfire()),
             "t0_fire_bricks" => self.fire_bricks(8),
             "t0_sluice" => self.dig("wood", has("wood", 20)).and_then(|_| self.craft("sluice", 1)).and_then(|_| self.place("sluice")),
             "t0_research_labs" => self.research("research"),
             "t0_kiln" => self.build_kiln(),
             "t0_charcoal" => self.make_charcoal(32),
+            "t0_tin" => self.smelt("tin", 6),
+            "t0_bellows" => self.build_bellows(),
+            "t0_copper" => self.smelt("copper", 4),
+            "t0_bronze" => self.bronze(12),
+            "t0_gears" => self.craft("bronze_gear", 4),
+            "t0_stamp_mill" => self.dig("wood", has("wood", 40)).and_then(|_| self.process_ore(false)),
+            "t0_wash_ore" => self.process_ore(true),
+            "t0_lab" => self.build_lab(),
+            "t0_kits" => self.make_kits(10),
+            "t0_hub" => self.repair_hub(),
             _ => return None,
         })
+    }
+
+    /// Craft and place a basic lab (copper plates, clay bricks from the kiln, wood).
+    fn build_lab(&mut self) -> Result<(), String> {
+        if self.held("copper_plate") < 4 {
+            self.smelt("copper", 4 - self.held("copper_plate"))?;
+        }
+        if self.held("clay_brick") < 4 {
+            self.kiln_bricks(4 - self.held("clay_brick"))?;
+        }
+        self.dig("wood", |p| p.held("wood") >= 20)?;
+        self.craft("basic_lab", 1)?;
+        self.place("basic_lab")
+    }
+
+    /// Hand craft research kits (2 per craft): a bronze gear, a tin plate and a raw clay brick.
+    fn make_kits(&mut self, n: u32) -> Result<(), String> {
+        let crafts = n.div_ceil(2);
+        let gears = crafts.saturating_sub(self.held("bronze_gear"));
+        let plates = (gears * 2).saturating_sub(self.held("bronze_plate"));
+        if plates > 0 {
+            self.bronze(4 * plates.div_ceil(4))?;
+        }
+        if self.held("tin_plate") < crafts {
+            self.smelt("tin", crafts - self.held("tin_plate"))?;
+        }
+        if self.held("raw_clay_brick") < crafts {
+            let more = crafts - self.held("raw_clay_brick");
+            self.dig("clay", move |p| p.held("clay") >= more * 16)?;
+        }
+        self.craft("bronze_kit", crafts)
     }
 
     /// The guide as the UI shows it (the goals with the default keys in the texts).
@@ -490,8 +573,8 @@ fn tier0_goals_can_be_done() {
     }
     // Every goal that the game can do is done: the guide says what comes next.
     let model = p.ui_guide();
-    let NextGoal::Waiting(next) = next_goal(&model.guide) else { panic!("the guide should say what comes next") };
-    assert_eq!(next.next_text().unwrap(), "Next: smelting in the crucible. It comes in a later update.");
+    assert!(!matches!(next_goal(&model.guide), NextGoal::Goal(g) if g.tier == 0), "every Tier 0 goal is done");
+    assert!(waiting.is_empty(), "every Tier 0 goal can be done: {waiting:?}");
     println!("Tier 0: {} goals can be done, {} wait: {waiting:?}", goals.len() - waiting.len(), waiting.len());
 }
 
