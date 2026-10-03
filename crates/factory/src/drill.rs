@@ -7,11 +7,16 @@
 //!   `hardness`.
 //! - A dug cell becomes the material it breaks into (a malachite vein gives raw malachite).
 //! - It needs steam (one dig uses a dig period of steam) and room in its buffer.
+//! - It sorts what it dug: material that a recipe uses (ore, coal, sand, clay) goes out of its
+//!   main output port; the rest (dirt, stone) goes out of its port named "Waste". A port gives
+//!   to the building in front of it (a crate, a hopper, a machine) or puts cells into the world.
 
-use crate::buildings::{Buildings, Logic};
+use crate::buildings::{Buildings, Logic, PlacedPort};
+use crate::cells;
+use crate::logistics::steps_in_tick;
 use crate::cells::phase;
 use crate::steam::{consume_steam, steam_ready};
-use foundry_content::{Content, Phase};
+use foundry_content::{Content, ItemRef, Phase, PortKind};
 use foundry_core::{CellPos, MaterialId};
 use foundry_sim::Simulation;
 
@@ -86,4 +91,77 @@ fn find_cell(sim: &Simulation, content: &Content, x0: i32, x1: i32, y0: i32, y1:
         }
     }
     None
+}
+
+/// Give the dug cells out: useful material through the main output, the rest through the waste
+/// output (see the module text). Up to "rate" cells per second.
+pub(crate) fn give_outputs(b: &mut Buildings, i: u32, content: &Content, sim: &mut Simulation) {
+    if b.useful.is_empty() {
+        b.useful = crate::digging::useful_materials(content);
+    }
+    let now = b.now;
+    let Some(d) = b.at_index(i) else { return };
+    let def = content.factory.building_def(d.kind);
+    let n = steps_in_tick(now, def.param("rate", 16.0));
+    let is_waste = |p: &PlacedPort| p.def.and_then(|k| def.ports[k as usize].name.as_deref()) == Some("Waste");
+    let outs: Vec<PlacedPort> = d.ports.iter().filter(|p| p.kind == PortKind::BulkOut).copied().collect();
+    let main = outs.iter().find(|p| !is_waste(p)).copied();
+    let waste = outs.iter().find(|p| is_waste(p)).copied().or(main);
+    let (mut given, mut blocked) = (0, [false, false]);
+    let mut k = 0;
+    while given < n {
+        let Some(Logic::Hopper(h)) = b.at_index(i).map(|d| &d.logic) else { return };
+        let Some(&m) = h.cells.get(k) else { break };
+        let useful = b.useful.get(m.index()).copied().unwrap_or(true);
+        let slot = if useful { 0 } else { 1 };
+        let Some(port) = (if useful { main } else { waste }) else { break };
+        if blocked[slot] {
+            k += 1;
+            continue;
+        }
+        let pushed = b.push_bulk(i, port, ItemRef::Material(m), 1, content);
+        let ok = match pushed {
+            Some((1, dst)) => {
+                b.wake_index(dst);
+                true
+            }
+            Some(_) => false,
+            // No building at the waste port: throw the waste away, so it lands 15 to 30 cells
+            // off and does not pile up in front of the port.
+            None if !useful && port.side != foundry_content::Side::Down => {
+                throw_waste(sim, port, m, now as u32 ^ (given << 8));
+                true
+            }
+            None => cells::put_to_side(sim, port.tile, port.side, m, 1, None) == 1,
+        };
+        if ok {
+            if let Some(Logic::Hopper(h)) = b.at_index_mut(i).map(|d| &mut d.logic) {
+                h.cells.remove(k);
+            }
+            given += 1;
+        } else {
+            blocked[slot] = true;
+            k += 1;
+        }
+    }
+    if let Some(d) = b.at_index_mut(i) {
+        d.busy |= given > 0;
+        let full = matches!(&d.logic, Logic::Hopper(h) if h.is_full());
+        if full && given == 0 {
+            d.status = crate::Status::OutputBlocked;
+            d.steam_reason = Some("Output blocked: no room for what it dug".into());
+        }
+    }
+}
+
+/// Throw one waste cell out of a port, up and away from the drill, as a flying particle.
+fn throw_waste(sim: &mut Simulation, port: PlacedPort, m: MaterialId, n: u32) {
+    let (dx, _) = crate::geometry::side_step(port.side);
+    let r = crate::geometry::tiles_to_cells(port.tile, (1, 1));
+    let x = if dx < 0 { r.x0 - 2 } else { r.x1 + 1 };
+    let mut h = n.wrapping_mul(0x9e37_79b9) ^ (r.x0 as u32).wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 15;
+    let (j1, j2) = ((h & 0xff) as f32 / 255.0, ((h >> 8) & 0xff) as f32 / 255.0);
+    let v = (dx as f32 * (0.8 + 0.7 * j1), -(1.0 + 0.6 * j2));
+    sim.spawn_particle((x as f64 + 0.5, r.y0 as f64 + 1.5), v, m, None);
 }

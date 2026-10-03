@@ -247,6 +247,8 @@ pub struct BuildingMark {
     pub arm: (i8, i8),
     /// A back-layer building (a pipe): no outline.
     pub back: bool,
+    /// The building's own icon, drawn faintly on it (not for walls, belts, pipes and arms).
+    pub icon: Option<ItemRef>,
 }
 
 /// A drag line stopped: the placement at `at` failed for this reason.
@@ -1102,8 +1104,11 @@ impl FactoryHost {
                     }
                     _ => (0, 0),
                 };
+                let def = f.content.factory.building_def(b.kind);
+                let plain = matches!(def.kind.as_str(), "wall" | "room_wall" | "belt" | "pipe" | "arm" | "hub");
+                let icon = (!plain).then_some(ItemRef::Part(def.part));
                 // Every building in the view: the overlay draws its outline.
-                BuildingMark { rect: b.cell_rect(), status: b.status, output, belt, arm, back: b.layer == foundry_content::Layer::Back }
+                BuildingMark { rect: b.cell_rect(), status: b.status, output, belt, arm, back: b.layer == foundry_content::Layer::Back, icon }
             })
             .collect();
         // The hole or the wrong wall block of a room: a red mark on that tile.
@@ -1112,7 +1117,7 @@ impl FactoryHost {
             if let Some(t) = tile {
                 let rect = CellRect::new(t.x * TILE_SIZE, t.y * TILE_SIZE, (t.x + 1) * TILE_SIZE, (t.y + 1) * TILE_SIZE);
                 if !rect.intersect(&view).is_empty() {
-                    marks.push(BuildingMark { rect, status: Status::NoRoom, output: None, belt: 0, arm: (0, 0), back: true });
+                    marks.push(BuildingMark { rect, status: Status::NoRoom, output: None, belt: 0, arm: (0, 0), back: true, icon: None });
                 }
             }
         }
