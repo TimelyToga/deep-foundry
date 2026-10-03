@@ -12,7 +12,7 @@ Written in Rust with wgpu and egui.
 
 ## Overview
 
-You are a small robot at a broken Hub. You dig material into your tanks, craft your first tools and buildings, and repair the Hub stage by stage. Each tier opens new machines: fire and clay first, then bronze, then steam and automation.
+You are a small robot at a broken Hub. You dig material into your tanks, craft your first tools and buildings, and repair the Hub stage by stage. Each tier opens new machines: fire and clay first, then bronze, then steam and automation, then electric power.
 
 The machines work with the real cells of the world. A kiln is a room of brick walls with a real fire inside. The room temperature comes from the burning cells. A crucible on a campfire smelts ore and pours the molten metal into a mold. Ore falls into a hopper, moves on a belt and is washed with real water. In Tier 1, steam drills, arms, steam furnaces and assemblers run whole production lines with no work from you.
 
@@ -50,13 +50,14 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - Stamp mill and sluice.
   - Boiler, pipes and steam machines.
   - Automation (Tier 1): arms that move items between buildings, the steam assembler, the steam furnace, the steam drill, the steam blower for the blast furnace, iron crates.
+  - Electric power (Tier 2): steam turbines, copper cables and power networks; the macerator, electric furnace, electric assembler, electric drill and fast arm. Too little power slows every machine on the network.
   - Factories keep running when you walk away.
 - **Progression**
   - Research in labs.
   - Hub repair stages and milestones.
   - Material discovery.
   - A guide that always shows the next goal.
-  - Every Tier 0 goal, up to the first Hub repair, has a test that plays it with real player input in the generated world. Tier 1 has the same test, up to the second Hub repair (with the Tier 0 parts given at its start).
+  - Every Tier 0 goal, up to the first Hub repair, has a test that plays it with real player input in the generated world. Tier 1 and Tier 2 have the same test (with the parts of the earlier tier given at its start).
 - **Interface**
   - Factorio-style windows: character, crafting, buildings and research.
   - Pause, save and load menus.
@@ -73,7 +74,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 - Splitters, sorters and belt lifts.
 - Building sprites (now buildings are blocks of their material with an outline and a faint icon).
 - Blueprints, and ghosts that wait for items.
-- Power networks and electric machines (Tier 2 and later).
+- The power network window with real data; batteries; MV machines (Tier 3 and later).
 - Deeper world layers, with more ores and hazards.
 - Sound.
 

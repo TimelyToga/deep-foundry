@@ -29,6 +29,7 @@ mod hot_metal;
 pub mod logistics;
 pub mod machines;
 pub mod placement;
+pub mod power;
 pub mod progress;
 pub mod progress_link;
 pub mod steam;

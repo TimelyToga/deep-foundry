@@ -265,6 +265,8 @@ pub struct Buildings {
     /// The materials that a recipe uses (`digging::useful_materials`), made when a drill first
     /// needs it. Not saved.
     pub(crate) useful: Vec<bool>,
+    /// The power networks (see `power`). Not saved: made again from the cables.
+    pub(crate) power: crate::power::PowerGrid,
 }
 
 /// The saved form of `Buildings`. The tile maps, the workbench list and the counts of each
@@ -302,6 +304,7 @@ impl From<BuildingsSave> for Buildings {
             events: vec![],
             layout: 0,
             useful: vec![],
+            power: Default::default(),
         };
         for i in 0..b.slots.len() {
             let generation = b.slots[i].generation;
@@ -339,6 +342,7 @@ impl Default for Buildings {
             events: vec![],
             layout: 0,
             useful: vec![],
+            power: Default::default(),
         }
     }
 }
@@ -1110,6 +1114,7 @@ impl Buildings {
             self.take_inputs(i, content, sim);
         }
         self.tick_steam_network(content, sim);
+        self.tick_power(content);
         for &i in &list {
             self.work(i, content, sim, progress, &bellows);
         }
@@ -2023,6 +2028,7 @@ impl Buildings {
             max_hit_points: def.hit_points,
             ports: b.ports.iter().map(|p| PortView::new(def, p)).collect(),
             room: None,
+            power: self.power_info(content, id),
         };
         match &b.logic {
             Logic::Machine(m) => {
@@ -2067,6 +2073,9 @@ impl Buildings {
                             .map(|freeze_at| format!("Cooling: the metal is {} °C; it casts below {} °C", b.metal_temp, freeze_at))
                             .unwrap_or_else(|| format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp)),
                         Status::TooHot => format!("Too hot: {} °C, the limit is {} °C", b.temperature, def.max_temp),
+                        Status::NoPower if crate::power::is_consumer(content, b) => {
+                            "No power: put a copper cable behind its power port, on a network with a generator".into()
+                        }
                         Status::NoFuel => match fuel_hint(content, def) {
                             Some(f) => format!("No fuel: put {} in the fuel slot", content.materials.names[f.index()].to_lowercase()),
                             None => "No fuel".into(),

@@ -1,4 +1,4 @@
-//! Can a player do each Tier 1 guide goal? The test starts where Tier 0 ends (the Tier 0 goals,
+//! Can a player do each Tier 1 and Tier 2 guide goal? The test starts where Tier 0 ends (the Tier 0 goals,
 //! technologies and the first Hub repair are set done, and the Tier 0 parts are given), then plays
 //! the Tier 1 goals in guide order with the player actions: research in a lab, dig, craft, place,
 //! build rooms, open windows and click slots, scan.
@@ -100,14 +100,32 @@ impl Player {
             }
         };
         self.apply(FactoryCommand::StartResearch(t));
+        let kit_ids: Vec<String> = self
+            .content
+            .factory
+            .tech_def(t)
+            .kits
+            .iter()
+            .filter_map(|s| match s.item {
+                foundry_content::ItemRef::Part(p) => Some(self.content.factory.part_def(p).id.clone()),
+                foundry_content::ItemRef::Material(_) => None,
+            })
+            .collect();
         for _ in 0..400 {
             if self.host.factory.progress.is_researched(t) {
                 return Ok(());
             }
-            let kits = self.host.factory.building_view(lab).map_or(0, |v| v.inputs.iter().map(|b| b.count).sum::<u32>());
-            if kits < 4 {
+            let view = self.host.factory.building_view(lab);
+            let low = |id: &str| {
+                let item = self.content.item(id).unwrap();
+                view.as_ref().map_or(0, |v| v.inputs.iter().filter(|b| b.item == item).map(|b| b.count).sum::<u32>()) < 4
+            };
+            let feed: Vec<String> = kit_ids.iter().filter(|k| low(k)).cloned().collect();
+            if !feed.is_empty() {
                 self.open_id(lab)?;
-                self.click_part_stack("bronze_kit");
+                for k in &feed {
+                    self.click_part_stack(k);
+                }
             }
             self.ticks(60);
         }
@@ -603,6 +621,37 @@ impl Player {
                 self.give_item("glass_pane", 54);
                 self.build_at("steam_lab", TilePos::new(x + 24, b - 5), 20).map(|_| ())
             }
+            "t2_electricity" => {
+                // Steam kits from the steam kit line, and steel and bronze from the lines of Tier 1
+                // (given).
+                for (id, n) in [("steam_kit", 120), ("steel_plate", 60), ("bronze_plate", 40), ("bronze_pipe_section", 10), ("bronze_gear", 20)] {
+                    self.give_item(id, n);
+                }
+                self.lab_research(plant, "electricity")
+            }
+            "t2_turbine" => self.build_at("steam_turbine", TilePos::new(x + 10, b - 6), 12).map(|id| plant.steamed.push(id)),
+            "t2_cables" => {
+                self.give_item("rubber_sheet", 10);
+                self.give_item("copper_wire", 140);
+                self.craft("copper_cable", 3).and_then(|_| {
+                    // From the power port of the turbine (tile x + 11, b - 5) to the right.
+                    self.walk_to((x + 14) * TILE_SIZE)?;
+                    for k in 0..10 {
+                        self.place_at("copper_cable", TilePos::new(x + 11 + k, b - 5))?;
+                    }
+                    Ok(())
+                })
+            }
+            "t2_motors" => self.craft("electric_motor", 10),
+            "t2_macerator" => self.lab_research(plant, "lv_machines").and_then(|_| self.build_at("macerator", TilePos::new(x + 13, b - 6), 14).map(|_| ())),
+            "t2_electric_furnace" => self.build_at("electric_furnace", TilePos::new(x + 16, b - 6), 14).map(|_| ()),
+            "t2_electric_assembler" => self
+                .craft("electric_motor", 2)
+                .and_then(|_| self.build_at("electric_assembler", TilePos::new(x + 18, b - 5), 14).map(|_| ())),
+            "t2_electric_drill" => self.lab_research(plant, "electric_mining").and_then(|_| {
+                self.craft("electric_motor", 3)?;
+                self.build_at("electric_drill", TilePos::new(x - 20, b - 1), -16).map(|_| ())
+            }),
             "t1_hub" => {
                 // The grind of the second repair (more of what the lines above make) is given.
                 for (id, n) in [("steel_plate", 100), ("copper_wire", 200), ("rubber_sheet", 20)] {
@@ -620,7 +669,7 @@ fn tier1_goals_can_be_done() {
     let mut p = Player::new();
     p.tier0_done();
     let mut plant = Plant { lab: None, steamed: vec![] };
-    let goals: Vec<foundry_factory::progress::GoalDef> = p.host.factory.guide.goals.iter().filter(|g| g.tier == 1).cloned().collect();
+    let goals: Vec<foundry_factory::progress::GoalDef> = p.host.factory.guide.goals.iter().filter(|g| g.tier == 1 || g.tier == 2).cloned().collect();
     let mut missing = vec![];
     for g in &goals {
         if !p.host.factory.progress.is_goal_done(&g.id) {

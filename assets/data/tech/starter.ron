@@ -137,4 +137,36 @@
         units: 20,
         unlocks: ["steam_kit"],
     ),
+
+    // --- Tier 2: LV ---
+    Tech(
+        id: "electricity",
+        name: "Electricity",
+        description: "Steam turbines make electric power; copper cables carry it to machines.",
+        tier: 2,
+        requires: ["steam_kit_tech"],
+        kits: [("bronze_kit", 1), ("steam_kit", 1)],
+        units: 20,
+        unlocks: ["steam_turbine", "copper_cable", "electric_motor"],
+    ),
+    Tech(
+        id: "lv_machines",
+        name: "LV machines",
+        description: "The macerator, the electric furnace, the electric assembler and the fast arm.",
+        tier: 2,
+        requires: ["electricity"],
+        kits: [("bronze_kit", 1), ("steam_kit", 1)],
+        units: 30,
+        unlocks: ["macerator", "electric_furnace", "electric_assembler", "fast_arm"],
+    ),
+    Tech(
+        id: "electric_mining",
+        name: "Electric mining",
+        description: "The electric drill digs deeper, faster and harder rock.",
+        tier: 2,
+        requires: ["lv_machines"],
+        kits: [("bronze_kit", 1), ("steam_kit", 1)],
+        units: 30,
+        unlocks: ["electric_drill"],
+    ),
 ]

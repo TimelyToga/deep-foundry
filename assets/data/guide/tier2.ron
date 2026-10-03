@@ -1,0 +1,68 @@
+// Guide goals for Tier 2: LV electric power. Fields: see crates/factory/src/progress/guide.rs.
+// Texts: say what to do, where, and with which key or button (see tier0.ron).
+[
+    Goal(
+        id: "t2_electricity",
+        tier: 2,
+        title: "Research electricity",
+        text: "Press {key:research} and research Electricity. It needs bronze kits and steam kits in a steam lab.",
+        condition: Research("electricity"),
+        reward_points: 2,
+    ),
+    Goal(
+        id: "t2_turbine",
+        tier: 2,
+        title: "Make electric power",
+        text: "Build a steam turbine and give it steam from a bronze pipe at its steam port. It makes up to 12 kW from 6 steam per second: about one small boiler's steam.",
+        condition: Build("steam_turbine", 1),
+        reward_points: 2,
+    ),
+    Goal(
+        id: "t2_cables",
+        tier: 2,
+        title: "Lay cables",
+        text: "Craft copper cables (copper wire and rubber sheets) and place them in the back layer, from the power port of the turbine to the power ports of your machines. Cables next to each other are one network.",
+        condition: Build("copper_cable", 10),
+        reward_points: 1,
+    ),
+    Goal(
+        id: "t2_motors",
+        tier: 2,
+        title: "Make electric motors",
+        text: "An electric motor needs a steel plate, 8 copper wires and a bronze gear. Electric machines need motors: make them in an assembler with arms.",
+        condition: HaveItem("electric_motor", 10),
+        reward_points: 1,
+    ),
+    Goal(
+        id: "t2_macerator",
+        tier: 2,
+        title: "Crush with electricity",
+        text: "Research LV machines and build a macerator on your cable network. It crushes ore 4 times faster than the stamp mill. If the turbine cannot make enough power, every machine on the network slows down.",
+        condition: Build("macerator", 1),
+        reward_points: 1,
+    ),
+    Goal(
+        id: "t2_electric_furnace",
+        tier: 2,
+        title: "Electric smelting",
+        text: "Build an electric furnace on the network. It smelts, makes bronze and melts glass fast, with no fuel.",
+        condition: Build("electric_furnace", 1),
+        reward_points: 1,
+    ),
+    Goal(
+        id: "t2_electric_assembler",
+        tier: 2,
+        title: "Electric assembly",
+        text: "Build an electric assembler and let it make research kits or motors. Fast arms (a cable behind each) keep it fed.",
+        condition: Build("electric_assembler", 1),
+        reward_points: 1,
+    ),
+    Goal(
+        id: "t2_electric_drill",
+        tier: 2,
+        title: "Mine with electricity",
+        text: "Research Electric mining and build an electric drill on a deposit. It digs 10 tiles deep, also hard rock.",
+        condition: Build("electric_drill", 1),
+        reward_points: 2,
+    ),
+]

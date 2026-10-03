@@ -59,6 +59,13 @@ impl Buildings {
             }
             return false;
         }
+        if crate::power::is_consumer(content, b) && b.power_factor <= 0.0 {
+            if let Some(b) = self.at_index_mut(i) {
+                b.status = crate::Status::NoPower;
+                b.steam_reason = Some("Needs power from a connected cable".into());
+            }
+            return false;
+        }
         let period = def.param("period", 20.0).max(1.0) as u64;
         let Some((from, to)) = self.arm_ends(i) else {
             if let Some(b) = self.at_index_mut(i) {

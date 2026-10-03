@@ -599,7 +599,16 @@ fn building_view(
         progress: b.progress,
         // A room machine works faster in a bigger room.
         speed: b.room.as_ref().map_or(1.0, |r| r.speed),
-        power: None,
+        power: b.power.and_then(|p| {
+            let voltage = foundry_ui::Voltage::from_tier(p.tier)?;
+            Some(foundry_ui::PowerUse {
+                use_w: b.power_w as f64,
+                max_w: p.max_w as f64,
+                voltage,
+                network_voltage: p.connected.then_some(voltage),
+                satisfaction: p.satisfaction,
+            })
+        }),
         temperature: Some(b.temperature as f32),
         milestone: milestone.map(milestone_view),
         later_stages: later.iter().map(milestone_view).collect(),
