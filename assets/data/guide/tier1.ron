@@ -47,7 +47,7 @@
         id: "t1_steam_furnace",
         tier: 1,
         title: "Smelt with steam",
-        text: "Research Steam smelting and build a steam furnace. It smelts ore with no fire and makes bronze from plates. Put a hopper with ore and charcoal on its top, or feed it with arms. Place a plate mold right of the furnace, under its tap, and a crate right of the mold.",
+        text: "Research Steam smelting and build a steam furnace. It smelts ore with no fire and makes bronze from plates. Put two hoppers on its top, one with ore and one with charcoal, or feed it with arms. Place a plate mold right of the furnace, under its tap, and a crate right of the mold.",
         condition: Build("steam_furnace", 1),
         reward_points: 2,
     ),
