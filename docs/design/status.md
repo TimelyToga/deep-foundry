@@ -1,6 +1,6 @@
 # Build status (lead notes)
 
-Updated: 2026-09-27. Keep this file short. It is the lead's list of what is running and what comes next.
+Updated: 2026-10-03. Keep this file short. It is the lead's list of what is running and what comes next.
 
 ## On main
 - infinite world: sparse chunks, anchors (view), packing, pristine chunks, save v2 with source name; game loads saves with `Simulation::load_file_with_resolver(.., &demo::resolve_source, ..)`. Width 0 = endless.
@@ -41,7 +41,8 @@ Updated: 2026-09-27. Keep this file short. It is the lead's list of what is runn
 
 - 2026-10-03: parts ride belts (logistics::BeltPart); steam drill sorts ore from waste; boiler fuel 4 s per unit, 3 steam per water; steam furnace has 2 top inputs. Game tests: `a_steam_furnace_runs_on_a_boiler_with_water_from_a_sprayed_pool` (tier1_lines.rs) and `tier1_goals_can_be_done` (tier1_play.rs, ~22 s; shortcuts: Tier 0 parts given, steam put into machine tanks, big Hub-2 amounts given). 552 tests pass.
 - 2026-10-03: Tier 2 LV power (power.rs): cables (back layer) make networks, a building joins with a cable on its Power port tile; generators (steam turbine 12 kW from 6 steam/s) and consumers share by satisfaction; machines with no network get factor 0. Buildings: steam_turbine, copper_cable, macerator, electric_furnace, electric_assembler, electric_drill, fast_arm; part electric_motor; techs electricity, lv_machines, electric_mining; guide tier2.ron (8 goals, in tier1_play test). Building window shows the power bar (BuildingView.power). Tests crates/factory/tests/power.rs.
-- Next ideas: power network window with real data; batteries; building sprites; splitters/sorters; blueprints; Hub stage 3 and Tier 3.
+- 2026-10-03: power network window with real data (FactoryCommand::OpenPower, FactoryFrame.power); sorter and splitter (kind "sorter"/"splitter", hopper buffer, drill::sort_out); arm filter (click an item on the open arm); a powder output fills an adjacent crate from any side; hoppers/sorters/splitters with cells stay awake (they used to miss output steps). 559 tests pass; smoke test passes (it uses the demo world).
+- Next ideas: batteries; building sprites; belt lifts; blueprints; Hub stage 3 and Tier 3; a Tier 2 Hub stage.
 
 ## Plan (2026-10-03, lead works alone while the user is away)
 1. Tier 0 complete in the real game: crucible on a campfire smelts tin, tap pours into a plate mold, bellows, copper, bronze, gears, stamp mill + sluice, lab, kits, Hub repair. Remove every `waits_for`; tier0 test scripts for each goal.
