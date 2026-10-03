@@ -12,10 +12,18 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Default)]
 pub(super) struct FactoryActivity {
     anchors: BTreeMap<ChunkPos, AnchorId>,
+    /// `Buildings::layout` at the last sync, and the building count: nothing to do while they
+    /// stay the same (the buildings did not change).
+    synced: Option<(u64, usize)>,
 }
 
 impl FactoryActivity {
     pub(super) fn sync(&mut self, factory: &Factory, sim: &mut Simulation) {
+        let key = (factory.buildings.layout(), factory.buildings.len());
+        if self.synced == Some(key) {
+            return;
+        }
+        self.synced = Some(key);
         let needed: BTreeSet<_> = factory.buildings.iter().flat_map(|(_, b)| b.cell_rect().chunks()).collect();
         self.anchors.retain(|chunk, id| {
             if needed.contains(chunk) {
