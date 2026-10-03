@@ -285,6 +285,25 @@ impl MainPerf {
     }
 }
 
+/// The walk direction of the tree script (`DEEP_FOUNDRY_DIG_SCRIPT=left` or `right`): the robot
+/// walks this way all the time and digs ahead of it, high and low, so it cuts through trees.
+/// `None`: the normal script.
+pub fn tree_script() -> Option<i8> {
+    static DIR: OnceLock<Option<i8>> = OnceLock::new();
+    *DIR.get_or_init(|| match std::env::var("DEEP_FOUNDRY_DIG_SCRIPT").as_deref() {
+        Ok("left") => Some(-1),
+        Ok("right") => Some(1),
+        _ => None,
+    })
+}
+
+/// The mouse offset and walk direction of the tree script at `t` seconds: the mouse sweeps up
+/// and down in front of the robot, from 40 cells above its middle to its feet.
+pub fn tree_script_at(t: f32, dir: i8) -> ((f32, f32), i8) {
+    let sweep = (t * 2.0).sin() * 0.5 + 0.5;
+    ((dir as f32 * 14.0, -40.0 + 48.0 * sweep), dir)
+}
+
 /// The mouse offset from the middle of the robot (in cells) and the walk direction at `t`
 /// seconds after the script started. It digs down, then right while walking right, then left
 /// while walking left, and the mouse moves in small circles all the time.

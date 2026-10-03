@@ -89,11 +89,18 @@ fn measure(workers: Option<&mut Workers>) {
     measure_in(workers, None);
 }
 
+/// `material`: as `measure_in`. `tree`: the generated world and the tree script to the right
+/// (`perf::tree_script_at`), for 20 seconds.
+fn measure_in(workers: Option<&mut Workers>, material: Option<&str>) {
+    measure_with(workers, material, false);
+}
+
 /// `material`: fill the ground around the robot with this material first (for example "wood").
-fn measure_in(mut workers: Option<&mut Workers>, material: Option<&str>) {
+fn measure_with(mut workers: Option<&mut Workers>, material: Option<&str>, tree: bool) {
     let content = Arc::new(Content::load_default().unwrap());
     let guide = Arc::new(Guide::load_default().unwrap());
-    let d = demo::build(content.clone(), Shape::Infinite { depth_chunks: 128 }, 1);
+    let shape = if tree { Shape::Generated { depth_chunks: 128 } } else { Shape::Infinite { depth_chunks: 128 } };
+    let d = demo::build(content.clone(), shape, 1);
     let mut sim = d.sim;
     let mut host = FactoryHost::new_game(content.clone(), guide, &mut sim, d.start_center.0 as i32).unwrap();
     let (w, h) = sim.size_cells();
@@ -143,7 +150,9 @@ fn measure_in(mut workers: Option<&mut Workers>, material: Option<&str>) {
     }
     let tick_length = Duration::from_secs_f64(TICK_SECONDS);
     let mut next = Instant::now();
-    for frame in 0..TICKS {
+    let ticks = if tree { TICKS * 2 } else { TICKS };
+    let mut second = Samples::new("cell update, this second");
+    for frame in 0..ticks {
         // 60 ticks per second, as the game: between two ticks the pool threads go to sleep.
         next += tick_length;
         spin_sleep::sleep_until(next);
@@ -166,7 +175,28 @@ fn measure_in(mut workers: Option<&mut Workers>, material: Option<&str>) {
             Some(w) => w.tick(sim.stats().awake_chunks, || sim.advance()),
             None => sim.advance(),
         };
+        second.add(t);
         t = parts[1].add(t);
+        if tree && frame % 60 == 59 {
+            let r = host.robot.rect();
+            let area = foundry_core::CellRect::new(r.x0 - 300, r.y0 - 200, r.x1 + 300, r.y1 + 200);
+            let count = |m: &str| content.material(m).map_or(0, |m| sim.count_material(area, m));
+            let st = sim.stats();
+            println!(
+                "  second {}: cell update avg {:.2} max {:.2} ms | awake chunks {} | robot x {} | fire {} smoke {} ash {} ember {} leaves {}",
+                frame / 60,
+                second.ms.iter().sum::<f64>() / second.ms.len() as f64,
+                second.ms.iter().cloned().fold(0.0, f64::max),
+                st.awake_chunks,
+                r.x0,
+                count("fire"),
+                count("smoke"),
+                count("ash"),
+                count("ember"),
+                count("leaves"),
+            );
+            second.ms.clear();
+        }
         host.tick(&mut sim);
         t = parts[2].add(t);
         let snapshot = sim.take_snapshot();
@@ -193,7 +223,8 @@ fn measure_in(mut workers: Option<&mut Workers>, material: Option<&str>) {
         ui.model.hover_detail = n.hover_detail(&content, ui.model.hover.as_ref());
         t = parts[6].add(t);
         // The mouse and the keys of the script.
-        let ((dx, dy), walk) = crate::perf::dig_script_at(frame as f32 * TICK_SECONDS as f32);
+        let at = frame as f32 * TICK_SECONDS as f32;
+        let ((dx, dy), walk) = if tree { crate::perf::tree_script_at(at, 1) } else { crate::perf::dig_script_at(at) };
         let (cx, cy) = n.frame.robot.map(|r| r.center()).unwrap_or((0.0, 0.0));
         let mouse = CellPos::new((cx + dx).floor() as i32, (cy + dy).floor() as i32);
         n.held.dig = true;
@@ -237,7 +268,7 @@ fn measure_in(mut workers: Option<&mut Workers>, material: Option<&str>) {
         }
         main_total.add(t_main);
     }
-    println!("  {TICKS} ticks and frames, {dug_ticks} ticks dug, {chunks_sent} chunk images sent");
+    println!("  {ticks} ticks and frames, {dug_ticks} ticks dug, {chunks_sent} chunk images sent");
     for p in &parts {
         p.print();
     }
@@ -262,6 +293,15 @@ fn dig_wood_perf() {
     println!("--- dig_wood_perf: digging in wood, on the pools of sim_pool.rs ---");
     let m = std::env::var("DIG_PERF_MATERIAL").unwrap_or_else(|_| "wood".into());
     sim_pool::run(|w| measure_in(Some(w), Some(&m)));
+}
+
+/// The robot walks right through the trees of the generated world and digs them (the user saw
+/// stutter there). Prints each second: the cell update time and fire, smoke and ash near the robot.
+#[test]
+#[ignore = "a measure, not a check: run it with --release --ignored --nocapture"]
+fn dig_tree_perf() {
+    println!("--- dig_tree_perf: cutting trees in the generated world, on the pools of sim_pool.rs ---");
+    sim_pool::run(|w| measure_with(Some(w), None, true));
 }
 
 fn big_scene(content: &Arc<Content>) -> foundry_sim::Simulation {
@@ -347,3 +387,4 @@ fn zoom_out_perf() {
     println!("--- zoom_out_perf: on the crew pool ---");
     sim_pool::run(|w| measure_zoom_out(Some(w), true));
 }
+

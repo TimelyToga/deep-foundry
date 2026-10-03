@@ -283,13 +283,19 @@ impl WorldGen {
     }
 }
 
-/// The air temperature of row `y` (°C): about 15 °C at the surface, colder high in the sky, and
-/// warmer with depth (see docs/design/01-game-design.md section 5.2).
+/// The air temperature of row `y` (°C): 20 °C (`DEFAULT_TEMPERATURE`) in the sky and the surface
+/// layer, and warmer with depth (see docs/design/01-game-design.md section 5.2).
+///
+/// The sky and the surface layer must be at `DEFAULT_TEMPERATURE`: new chunks put their cells
+/// there at that temperature (`Fill::write`), and air is at rest only when it is at the air
+/// temperature of its row. With a colder sky, every air cell cooled slowly with random ±1 °C
+/// steps, so no chunk near the surface ever went to heat sleep (about 170 awake chunks around the
+/// player, 4 ms per tick and spikes of 70 ms).
 fn air_temperature(s: &WorldGenSettings, y: i32) -> i16 {
     // (depth below the surface level, °C). Straight lines between the points.
     const POINTS: [(f32, f32); 10] = [
-        (-1024.0, 5.0),
-        (0.0, 15.0),
+        (-1024.0, 20.0),
+        (0.0, 20.0),
         (600.0, 20.0),
         (1800.0, 30.0),
         (1900.0, 40.0),
@@ -344,8 +350,10 @@ mod tests {
     fn air_is_warmer_below() {
         let s = WorldGenSettings::default();
         let t = |d: i32| air_temperature(&s, s.surface_y + d);
-        assert_eq!(t(0), 15);
-        assert!(t(-1024) < t(0));
+        // The sky and the surface layer are at the temperature of new cells (see `air_temperature`).
+        assert_eq!(t(0), foundry_core::DEFAULT_TEMPERATURE);
+        assert_eq!(t(-1024), foundry_core::DEFAULT_TEMPERATURE);
+        assert_eq!(t(600), foundry_core::DEFAULT_TEMPERATURE);
         assert!(t(700) >= 20 && t(700) <= 25);
         assert!(t(2500) > 40 && t(2500) < 80);
         assert!(t(4000) > 150);

@@ -1413,7 +1413,11 @@ impl Game {
             return;
         }
         let start = *self.perf.get_or_insert_with(crate::perf::MainPerf::new).script_start.get_or_insert(now);
-        let ((dx, dy), walk) = crate::perf::dig_script_at(now.duration_since(start).as_secs_f32());
+        let t = now.duration_since(start).as_secs_f32();
+        let ((dx, dy), walk) = match crate::perf::tree_script() {
+            Some(dir) => crate::perf::tree_script_at(t, dir),
+            None => crate::perf::dig_script_at(t),
+        };
         let Some(n) = self.world.as_mut().and_then(|w| w.normal.as_mut()) else { return };
         let Some((x, y)) = n.robot_pos(now) else { return };
         let cell = DVec2::new(
