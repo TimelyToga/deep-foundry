@@ -56,7 +56,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - Hub repair stages and milestones.
   - Material discovery.
   - A guide that always shows the next goal.
-  - Every Tier 0 goal, up to the first Hub repair, has a test that plays it with real player input in the generated world.
+  - Every Tier 0 goal, up to the first Hub repair, has a test that plays it with real player input in the generated world. Tier 1 has the same test, up to the second Hub repair (with the Tier 0 parts given at its start).
 - **Interface**
   - Factorio-style windows: character, crafting, buildings and research.
   - Pause, save and load menus.
@@ -71,7 +71,6 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 ## Planned features
 
 - Splitters, sorters and belt lifts.
-- A play-through test for Tier 1.
 - Building sprites (now buildings are blocks of their material with an outline and a faint icon).
 - Blueprints, and ghosts that wait for items.
 - Power networks and electric machines (Tier 2 and later).
