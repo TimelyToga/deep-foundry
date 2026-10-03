@@ -30,6 +30,33 @@ pub struct Arm {
     pub next_move: u64,
     /// Items moved since the arm was placed (for the window).
     pub moved: u64,
+    /// Only this item moves. `None`: every item. The player sets it by clicking an item with the
+    /// arm's window open.
+    #[serde(default)]
+    pub filter: Option<ArmFilter>,
+}
+
+/// The item an arm moves (a saved form of `ItemRef`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArmFilter {
+    Part(foundry_core::PartId),
+    Material(MaterialId),
+}
+
+impl ArmFilter {
+    pub fn item(self) -> ItemRef {
+        match self {
+            ArmFilter::Part(p) => ItemRef::Part(p),
+            ArmFilter::Material(m) => ItemRef::Material(m),
+        }
+    }
+
+    pub fn of(item: ItemRef) -> Self {
+        match item {
+            ItemRef::Part(p) => ArmFilter::Part(p),
+            ItemRef::Material(m) => ArmFilter::Material(m),
+        }
+    }
 }
 
 impl Buildings {
@@ -73,7 +100,11 @@ impl Buildings {
             }
             return false;
         };
-        let moved = self.arm_move(from, to, content);
+        let filter = match &self.at_index(i).map(|b| &b.logic) {
+            Some(Logic::Arm(arm)) => arm.filter.map(ArmFilter::item),
+            _ => None,
+        };
+        let moved = self.arm_move(from, to, filter, content);
         if let Some(b) = self.at_index_mut(i) {
             // Waiting for items or room is normal for an arm: it is idle, not a problem.
             b.status = if moved > 0 { crate::Status::Working } else { crate::Status::Idle };
@@ -94,8 +125,11 @@ impl Buildings {
     }
 
     /// Move one load from building `from` to building `to`. Returns the count moved.
-    fn arm_move(&mut self, from: BuildingId, to: BuildingId, content: &Content) -> u32 {
+    fn arm_move(&mut self, from: BuildingId, to: BuildingId, filter: Option<ItemRef>, content: &Content) -> u32 {
         for (item, have) in self.arm_offers(from, content) {
+            if filter.is_some_and(|f| f != item) {
+                continue;
+            }
             let per_move = match item {
                 ItemRef::Part(_) => 1,
                 ItemRef::Material(_) => MATERIAL_PER_MOVE,

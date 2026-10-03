@@ -49,7 +49,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
   - Crucible, bellows and casting molds: the crucible pours into a mold, and the mold puts the plates into a crate.
   - Stamp mill and sluice.
   - Boiler, pipes and steam machines.
-  - Automation (Tier 1): arms that move items between buildings, the steam assembler, the steam furnace, the steam drill, the steam blower for the blast furnace, iron crates.
+  - Automation (Tier 1): arms that move items between buildings (with a filter), the steam assembler, the steam furnace, the steam drill, the steam blower for the blast furnace, iron crates.
   - Electric power (Tier 2): steam turbines, copper cables and power networks; the macerator, electric furnace, electric assembler, electric drill and fast arm. Too little power slows every machine on the network.
   - Factories keep running when you walk away.
 - **Progression**
@@ -71,7 +71,7 @@ The machines work with the real cells of the world. A kiln is a room of brick wa
 
 ## Planned features
 
-- Belt lifts and item filters for arms.
+- Belt lifts.
 - Building sprites (now buildings are blocks of their material with an outline and a faint icon).
 - Blueprints, and ghosts that wait for items.
 - Batteries; MV machines (Tier 3 and later).
