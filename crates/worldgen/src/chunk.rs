@@ -640,8 +640,8 @@ impl<'a, 'b> Fill<'a, 'b> {
     fn features(&mut self) {
         if self.near_surface {
             self.outcrops();
-            // The start blobs are all within 400 cells of x = 0.
-            if self.x0 < 600 && self.x0 + CHUNK_SIZE > -600 {
+            let reach = surface::START_BLOB_REACH;
+            if self.x0 < reach && self.x0 + CHUNK_SIZE > -reach {
                 self.start_blobs();
             }
         }
@@ -693,9 +693,10 @@ impl<'a, 'b> Fill<'a, 'b> {
             for y in ya..yb {
                 for x in xa..xb {
                     let (r, c) = ((y - self.y0) as usize, (x - self.xl) as usize);
-                    let keep = b.mat == self.m.malachite && hash2(self.seed(sd::START), x, y).is_multiple_of(4);
+                    let h = hash2(self.seed(sd::START), x, y);
+                    let keep = b.mat == self.m.malachite && h.is_multiple_of(4);
                     if b.contains(x, y) && !keep && self.is_ground(r, c) {
-                        self.grid[r * GW + c] = b.mat;
+                        self.grid[r * GW + c] = if b.alt != 0 && (h >> 3) % 10 < 6 { b.alt } else { b.mat };
                     }
                 }
             }

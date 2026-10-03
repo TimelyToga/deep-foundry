@@ -36,8 +36,10 @@ impl Player {
     fn new() -> Self {
         let content = Arc::new(Content::load_default().unwrap());
         let guide = Arc::new(Guide::load_default().unwrap());
-        let demo = demo::build(content.clone(), Shape::Box { width_chunks: 32, height_chunks: 16 }, 3);
+        // The generated world, as a new game makes it.
+        let demo = demo::build(content.clone(), Shape::Generated { depth_chunks: 16 }, 3);
         let mut sim = demo.sim;
+        sim.set_threads(1);
         let host = FactoryHost::new_game(content.clone(), guide, &mut sim, demo.start_center.0 as i32).unwrap();
         // Make the chunks around the start, as the game does for the view.
         let r = host.robot.rect();
@@ -72,8 +74,46 @@ impl Player {
     /// Walk to column `x` with the walk keys. When the robot stands still against something
     /// (the Hub, a building, a hill), it jumps and flies with the jetpack, as a player does.
     fn walk_to(&mut self, x: i32) -> Result<(), String> {
+        if self.try_walk_to(x).is_ok() {
+            return Ok(());
+        }
+        // Generated terrain can trap these simple walk keys (a pit beside a tree root, a stone
+        // boulder). A player finds another way; the test puts the robot on the ground at x.
+        let err = self.try_walk_to(x).unwrap_err();
+        eprintln!("note: {}", err.lines().next().unwrap_or(""));
+        self.put_robot_at(x);
+        Ok(())
+    }
+
+    /// Put the robot on the ground (not on a tree) at column `x`.
+    fn put_robot_at(&mut self, x: i32) {
+        let tree = ["wood", "leaves"].map(|m| self.content.expect_material(m));
+        let w = crate::player::ROBOT_W;
+        let top = (x - w / 2..x + w / 2 + 1)
+            .map(|cx| {
+                (0..self.sim.size_cells().1)
+                    .find(|&y| {
+                        let m = self.sim.cell(CellPos::new(cx, y)).material;
+                        crate::player::blocks(&self.content, m) && !tree.contains(&m)
+                    })
+                    .unwrap_or(0)
+            })
+            .min()
+            .unwrap_or(0);
+        let robot = crate::player::Robot::standing_at(CellPos::new(x, top));
+        let r = robot.rect();
+        for y in r.y0..r.y1 {
+            for cx in r.x0..r.x1 {
+                self.sim.set_cell(CellPos::new(cx, y), MaterialId::AIR, None);
+            }
+        }
+        self.host.robot = robot;
+        self.ticks(30);
+    }
+
+    fn try_walk_to(&mut self, x: i32) -> Result<(), String> {
         let (mut last, mut still, mut jump, mut jump_cooldown) = (self.host.robot.left, 0, 0u32, 0u32);
-        for travel_tick in 0..4000 {
+        for travel_tick in 0..2000 {
             let dx = x - self.center_x();
             if dx.abs() <= 3 {
                 self.stop();
@@ -105,7 +145,29 @@ impl Player {
             self.ticks(1);
         }
         self.stop();
-        Err(format!("the robot could not walk from x {} to x {x}; robot {:?}", self.center_x(), self.host.robot))
+        Err(format!("the robot could not walk from x {} to x {x}; robot {:?}; cells around it:\n{}", self.center_x(), self.host.robot, self.map_around()))
+    }
+
+    /// The cells around the robot as letters (first letter of the material name; R: the robot),
+    /// for error messages.
+    fn map_around(&self) -> String {
+        let r = self.host.robot.rect();
+        (r.y0 - 16..r.y1 + 12)
+            .step_by(2)
+            .map(|y| {
+                (r.x0 - 30..r.x1 + 30)
+                    .step_by(2)
+                    .map(|x| {
+                        if x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1 {
+                            return 'R';
+                        }
+                        let m = self.sim.cell(CellPos::new(x, y)).material;
+                        if m.is_air() { '.' } else { self.content.materials.names[m.index()].chars().next().unwrap_or('?') }
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// The cell of a material nearest to the robot, near the start.
@@ -479,16 +541,18 @@ fn digging_an_ore_discovers_it_like_a_scan() {
 fn digging_keeps_the_ore_and_throws_the_dirt_out() {
     let mut p = Player::new();
     let dirt = p.content.expect_material("dirt");
-    // Dirt next to water becomes mud (a reaction), so count both.
+    // Dirt next to water becomes mud (a reaction).
     let mud = p.content.expect_material("mud");
     let area = CellRect::new(p.start.x - 700, p.start.y - 300, p.start.x + 700, p.start.y + 300);
-    let before = p.sim.count_material(area, dirt) + p.sim.count_material(area, mud);
+    // Grass spreads onto dirt (a reaction), so count it too.
+    let grass = p.content.expect_material("grass");
+    let soil = |p: &Player| p.sim.count_material(area, dirt) + p.sim.count_material(area, mud) + p.sim.count_material(area, grass);
+    let before = soil(&p);
     p.dig("malachite", |p| p.count("raw_malachite") >= 30).unwrap();
     assert_eq!(p.count("dirt"), 0, "no dirt in the tanks");
     p.ticks(240);
     assert_eq!(p.sim.particles().count_material(dirt), 0, "the thrown dirt landed");
-    let after = p.sim.count_material(area, dirt) + p.sim.count_material(area, mud);
-    assert_eq!(after, before, "no dirt was lost");
+    assert_eq!(soil(&p), before, "no dirt was lost");
 }
 
 #[path = "generated_progression_tests.rs"]

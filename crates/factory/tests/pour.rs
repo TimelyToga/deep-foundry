@@ -24,8 +24,8 @@ fn the_crucible_pours_tin_into_a_plate_mold() {
     assert_eq!(f.buildings.insert(&c, campfire, item(&c, "wood"), 100), 100);
     f.set_recipe(crucible, Some(c.factory.recipe("tin_smelting").unwrap())).unwrap();
     f.set_recipe(mold, Some(c.factory.recipe("tin_plate").unwrap())).unwrap();
-    // 4 batches of 12 units: 48 units, 3 plates.
-    for _ in 0..4 {
+    // 3 batches of 16 units: 3 plates.
+    for _ in 0..3 {
         f.buildings.insert(&c, crucible, item(&c, "raw_cassiterite"), 16);
         f.buildings.insert(&c, crucible, item(&c, "charcoal"), 4);
         run(&mut f, &mut sim, 2400);

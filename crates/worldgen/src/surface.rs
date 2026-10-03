@@ -154,6 +154,8 @@ pub(crate) struct Blob {
     pub rx: i32,
     pub ry: i32,
     pub mat: u16,
+    /// A second material mixed in: 6 of 10 cells (gravel in a tin ore bed). 0: none.
+    pub alt: u16,
 }
 
 impl Blob {
@@ -164,14 +166,19 @@ impl Blob {
     }
 }
 
+/// Number of blobs in the start area.
+pub(crate) const START_BLOBS: usize = 10;
+/// The start blobs are all within this many cells of x = 0.
+pub(crate) const START_BLOB_REACH: i32 = 800;
+
 /// The fixed features of the start zone.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Start {
     pub lake: Feature,
     pub river: Feature,
     pub outcrop: Feature,
-    /// Two malachite blobs, a clay blob and a sand patch.
-    pub blobs: [Blob; 4],
+    /// Ore, clay and sand blobs near the Hub (see `WorldGen::start`).
+    pub blobs: [Blob; START_BLOBS],
 }
 
 /// The ground of one column, with the features.
@@ -489,14 +496,26 @@ impl<'a> Ctx<'a> {
             // The blobs are not under the lake or the river, so the ground there has no feature.
             let blob = |cx: i32, depth: i32, rx: i32, ry: i32, mat: u16| {
                 let g = self.base_height(cx).0.round() as i32;
-                Blob { cx, cy: g + depth, rx, ry, mat }
+                Blob { cx, cy: g + depth, rx, ry, mat, alt: 0 }
             };
+            // Enough ore for all of Tier 0 by hand (about 1,300 malachite and 700 cassiterite),
+            // clay for the bricks, and shallow iron ore and limestone for Tier 1 (they need the
+            // bronze drill head).
             let blobs = [
-                blob(-300 + jit(3, 20.0), 11, 17, 8, m.malachite),
-                blob(330 + jit(4, 20.0), 12, 13, 7, m.malachite),
-                blob(62, 8, 22, 5, m.clay),
+                blob(-300 + jit(3, 20.0), 14, 30, 10, m.malachite),
+                blob(330 + jit(4, 20.0), 15, 26, 9, m.malachite),
+                blob(-470 + jit(6, 20.0), 16, 24, 8, m.malachite),
+                blob(62, 8, 34, 6, m.clay),
+                blob(-170 + jit(7, 10.0), 9, 22, 6, m.clay),
                 // Sand at the surface left of the Hub, for the first goal of the guide.
                 blob(-78 + jit(5, 6.0), 2, 26, 7, m.sand),
+                // A tin ore bed (cassiterite in gravel) right of the Hub, besides the river.
+                Blob { alt: m.gravel, ..blob(190 + jit(8, 10.0), 9, 36, 8, m.cassiterite) },
+                Blob { alt: m.gravel, ..blob(-525 + jit(9, 6.0), 10, 26, 7, m.cassiterite) },
+                // Tier 1: iron ore and limestone under the surface, past the river and left of
+                // the malachite.
+                blob(720 + jit(10, 20.0), 34, 30, 10, m.hematite),
+                blob(-390 + jit(11, 20.0), 40, 34, 9, m.limestone),
             ];
             Start { lake, river, outcrop, blobs }
         })

@@ -15,8 +15,9 @@ OPTIONS:
                              (default 128). The world has no limit to the left and right.
     --world WxH              A finite world of W x H chunks with bedrock walls, in place of the
                              world with no side limit (for tests)
-    --world gen              A world made by the world generator (surface biomes, caves, ores)
-                             in place of the demo world. New games and screenshots use it.
+    --world gen              A world made by the world generator: surface biomes, trees, lakes,
+                             caves and ores (the default)
+    --world demo             The small demo world (a test world) in place of the generated world
     --exit-after SECONDS     Quit after this time and print the average FPS and frame time
     --no-vsync               Do not wait for the display refresh (to measure the highest FPS)
     --size WxH               Window size in screen pixels (default 1600x900 points)
@@ -63,7 +64,8 @@ pub struct Args {
     pub depth: i32,
     /// A finite world of this many chunks (width, height). `None`: no limit to the left and right.
     pub world: Option<(i32, i32)>,
-    /// `--world gen`: new worlds come from the world generator, not the demo source.
+    /// New worlds come from the world generator (the default, `--world gen`), else from the demo
+    /// source (`--world demo`).
     pub generated: bool,
     pub exit_after: Option<f64>,
     pub no_vsync: bool,
@@ -220,7 +222,7 @@ impl Default for Args {
             seed: 1,
             depth: foundry_sim::DEFAULT_DEPTH_CHUNKS,
             world: None,
-            generated: false,
+            generated: true,
             exit_after: None,
             no_vsync: false,
             screenshot: None,
@@ -296,8 +298,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             }
             "--world" => {
                 let v = value("--world")?;
-                if v == "gen" {
-                    out.generated = true;
+                if v == "gen" || v == "demo" {
+                    out.generated = v == "gen";
                     out.world = None;
                     continue;
                 }
@@ -464,8 +466,8 @@ mod tests {
 
     #[test]
     fn world_shape() {
-        assert_eq!(run(&[]).unwrap().shape(), crate::demo::Shape::Infinite { depth_chunks: 128 });
-        assert_eq!(run(&["--depth", "40"]).unwrap().shape(), crate::demo::Shape::Infinite { depth_chunks: 40 });
+        assert_eq!(run(&[]).unwrap().shape(), crate::demo::Shape::Generated { depth_chunks: 128 });
+        assert_eq!(run(&["--world", "demo", "--depth", "40"]).unwrap().shape(), crate::demo::Shape::Infinite { depth_chunks: 40 });
         let b = run(&["--world", "8x4"]).unwrap().shape();
         assert_eq!(b, crate::demo::Shape::Box { width_chunks: 8, height_chunks: 4 });
         let g = run(&["--world", "gen", "--depth", "40"]).unwrap().shape();
