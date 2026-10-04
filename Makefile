@@ -3,12 +3,13 @@
 #   make run      build and run the game
 #   make test     run all tests (dev profile)
 #   make screenshots  make the README pictures again (needs sips, macOS)
+#   make trailer  record the shots and make the README trailer again (needs ffmpeg, ImageMagick, img2webp)
 #   make clean-old  delete old build files and cached crate sources (DAYS=3 by default)
 #   make clean    delete all build files
 
 DAYS ?= 3
 
-.PHONY: build run headless test screenshots clean-old clean
+.PHONY: build run headless test screenshots trailer clean-old clean
 
 build:
 	cargo build --profile fast -p timtech
@@ -39,6 +40,13 @@ screenshots: build
 	$(SHOT) $(SHOTS)/cave.png --world gen --ui-state cave --no-ui --size 1280x560 --center 300,1355
 	for f in world_wide world_gen kiln steam_line; do $(SMALL) $(SHOTS)/$$f.png --out docs/screenshots/$$f.jpg >/dev/null; done
 	for f in smelter automation cave; do $(JPEG) $(SHOTS)/$$f.png --out docs/screenshots/$$f.jpg >/dev/null; done
+
+# The shots are in tools/trailer/record.sh, the cuts and captions in tools/trailer/make.sh.
+trailer: build
+	tools/trailer/record.sh
+	tools/trailer/make.sh
+	cp out/trailer/timtech-trailer.mp4 docs/media/timtech-trailer.mp4
+	cp out/trailer/timtech-preview.webp docs/media/timtech-trailer-preview.webp
 
 # Removes:
 #  - target/release (the Makefile uses target/fast)

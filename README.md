@@ -1,8 +1,8 @@
 # TimTech
 
-[![Deep Foundry gameplay at 60 fps: click to watch the video](docs/media/demo-preview.webp)](docs/media/deep-foundry-demo.mp4)
+[![The TimTech trailer: click to watch the video](docs/media/timtech-trailer-preview.webp)](docs/media/timtech-trailer.mp4)
 
-[Watch the gameplay video (20 seconds, 60 fps)](docs/media/deep-foundry-demo.mp4)
+[Watch the trailer (46 seconds, 1080p, 60 fps)](docs/media/timtech-trailer.mp4). All shots are recorded from the game with `make trailer`.
 
 A 2D side-view factory game in a world where every cell moves. Sand falls, water flows, fire burns and metal melts, as in Noita. On top of that you build a factory and work through a long production tree, as in Factorio and GregTech.
 
