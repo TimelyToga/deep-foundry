@@ -286,14 +286,14 @@ struct Game {
     /// Esc stopped the wait for a new key: stop it after the next UI frame (so the UI does not
     /// also use this Esc to close the menu).
     cancel_wait: bool,
-    /// Timing logs (`DEEP_FOUNDRY_PERF`, see `perf.rs`).
+    /// Timing logs (`TIMTECH_PERF`, see `perf.rs`).
     perf: Option<crate::perf::MainPerf>,
 }
 
 impl Game {
     fn new(event_loop: &ActiveEventLoop, args: &Args, content: Arc<Content>) -> Result<Self> {
         let mut attrs =
-            Window::default_attributes().with_title("Deep Foundry").with_inner_size(LogicalSize::new(1600.0, 900.0));
+            Window::default_attributes().with_title("TimTech").with_inner_size(LogicalSize::new(1600.0, 900.0));
         if let Some((w, h)) = args.size {
             attrs = attrs.with_inner_size(PhysicalSize::new(w, h));
         }
@@ -1409,7 +1409,7 @@ impl Game {
         }
     }
 
-    /// `DEEP_FOUNDRY_DIG_SCRIPT`: move the mouse around the robot, hold the dig button and walk
+    /// `TIMTECH_DIG_SCRIPT`: move the mouse around the robot, hold the dig button and walk
     /// (see `perf::dig_script_at`).
     fn dig_script_step(&mut self, now: Instant) {
         if !crate::perf::dig_script() || !self.playing() {

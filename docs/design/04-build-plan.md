@@ -1,4 +1,4 @@
-# Deep Foundry: build plan
+# TimTech: build plan
 
 ## 1. How we work
 

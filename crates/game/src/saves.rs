@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn list_is_newest_first_with_meta() {
-        let dir = std::env::temp_dir().join(format!("deep-foundry-saves-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("timtech-saves-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let old = world_path(&dir, "old one");

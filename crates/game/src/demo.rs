@@ -436,7 +436,7 @@ mod tests {
 
     /// Walk the view 10,000 chunks to the right over the demo world, one chunk per tick, and
     /// print tick times, chunks made per second and memory. Run it with:
-    /// `cargo test --release -p deep_foundry walk_the_demo_world -- --ignored --nocapture`
+    /// `cargo test --release -p timtech walk_the_demo_world -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn walk_the_demo_world() {

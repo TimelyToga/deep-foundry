@@ -1,4 +1,4 @@
-"""Draw the robot sprite sheet of Deep Foundry.
+"""Draw the robot sprite sheet of TimTech.
 
 Run it from the repository root:
 

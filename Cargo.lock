@@ -553,34 +553,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deep_foundry"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "env_logger",
- "foundry_content",
- "foundry_core",
- "foundry_factory",
- "foundry_render",
- "foundry_sim",
- "foundry_ui",
- "foundry_worldgen",
- "glam",
- "image",
- "log",
- "pollster",
- "rayon",
- "ron",
- "serde",
- "spin_sleep",
- "winit",
-]
-
-[[package]]
 name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3046,6 +3018,34 @@ dependencies = [
  "quick-error",
  "weezl",
  "zune-jpeg",
+]
+
+[[package]]
+name = "timtech"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "env_logger",
+ "foundry_content",
+ "foundry_core",
+ "foundry_factory",
+ "foundry_render",
+ "foundry_sim",
+ "foundry_ui",
+ "foundry_worldgen",
+ "glam",
+ "image",
+ "log",
+ "pollster",
+ "rayon",
+ "ron",
+ "serde",
+ "spin_sleep",
+ "winit",
 ]
 
 [[package]]

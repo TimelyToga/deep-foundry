@@ -1,4 +1,4 @@
-//! Headless tools for Deep Foundry: scene tests, benchmarks, and PNG pictures of the cell world.
+//! Headless tools for TimTech: scene tests, benchmarks, and PNG pictures of the cell world.
 //! No window and no GPU. See `README.md` in this crate for how to make a scene and run the commands.
 //!
 //! - `scene`: load a scene (PNG + RON) and build a `Simulation` from it.

@@ -1,4 +1,4 @@
-//! The Deep Foundry user interface (egui), in the style of Factorio.
+//! The TimTech user interface (egui), in the style of Factorio.
 //!
 //! The UI is a function of a read-only [`UiModel`] and its own small state (which windows are
 //! open, where they are, the search text). Each frame the game calls:

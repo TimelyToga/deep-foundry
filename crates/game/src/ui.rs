@@ -228,7 +228,7 @@ mod tests {
     fn sandbox() -> SandboxUi {
         let ctx = egui::Context::default();
         let content = Arc::new(Content::load_default().unwrap());
-        SandboxUi::new(&ctx, content, std::env::temp_dir().join("deep-foundry-no-saves-here"))
+        SandboxUi::new(&ctx, content, std::env::temp_dir().join("timtech-no-saves-here"))
     }
 
     #[test]

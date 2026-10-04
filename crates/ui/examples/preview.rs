@@ -146,8 +146,8 @@ impl eframe::App for Preview {
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("Deep Foundry UI preview").with_inner_size([1600.0, 900.0]),
+        viewport: egui::ViewportBuilder::default().with_title("TimTech UI preview").with_inner_size([1600.0, 900.0]),
         ..Default::default()
     };
-    eframe::run_native("Deep Foundry UI preview", options, Box::new(|cc| Ok(Box::new(Preview::new(cc)))))
+    eframe::run_native("TimTech UI preview", options, Box::new(|cc| Ok(Box::new(Preview::new(cc)))))
 }

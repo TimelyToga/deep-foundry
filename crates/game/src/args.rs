@@ -4,10 +4,10 @@ use foundry_ui::GameMode;
 use std::path::PathBuf;
 
 pub const USAGE: &str = "\
-Deep Foundry
+TimTech
 
 USAGE:
-    deep-foundry [OPTIONS]
+    timtech [OPTIONS]
 
 OPTIONS:
     --seed N                 World seed (default 1)
