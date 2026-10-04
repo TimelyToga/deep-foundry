@@ -2,6 +2,7 @@
 //!
 //! - With no options: open a window, run the simulation on its own thread, and draw it.
 //! - With `--screenshot`: render one image with no window and quit.
+//! - With `--record`: render a video with no window and quit.
 //!
 //! See README.md in this folder for the controls.
 
@@ -54,8 +55,9 @@ fn main() -> Result<()> {
         }
     };
     let content = Arc::new(Content::load_default()?);
-    match &args.screenshot {
-        Some(out) => screenshot::run(&args, out, content),
-        None => app::run(args, content),
+    match (&args.record, &args.screenshot) {
+        (Some(out), _) => screenshot::record::run(&args, out, content),
+        (None, Some(out)) => screenshot::run(&args, out, content),
+        (None, None) => app::run(args, content),
     }
 }

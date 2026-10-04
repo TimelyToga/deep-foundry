@@ -56,6 +56,25 @@ OPTIONS:
                              dig, spray, scan (the tool points at a place in front of the robot)
       --face left|right      Normal mode: the direction the robot looks in the picture
       --robot X              Normal mode: put the robot on the ground (or in the water) at column X
+      --record OUT.mp4       Record a video in place of one picture (needs ffmpeg). It runs one tick
+                             per frame at 60 frames per second, after the setup of --screenshot.
+        --seconds S          Length of the video (default 4)
+        --speed N            Ticks per frame (default 1)
+        --pan DX,DY          The camera moves this many cells per second
+        --zoom-to Z          The zoom at the end of the video (it changes smoothly from --zoom)
+        --follow             The camera follows the robot (normal mode)
+        --no-hud             Draw the world and the shapes on the buildings, but no windows or HUD
+        --pour MAT,DX,DY[,R[,FROM[,TO]]]
+                             Pour this material (a circle of radius R, default 1) every tick into the
+                             air cells at DX,DY from the start center, from FROM to TO seconds.
+                             Give it again for more streams.
+        --boom DX,DY,T[,STRENGTH[,HEAT]]
+                             An explosion at DX,DY from the start center at T seconds (strength
+                             default 120, heat default 0 °C). Give it again for more.
+        --drive LIST         Normal mode: the robot input, as steps KEYS:SECONDS, comma separated.
+                             KEYS is idle, or keys joined with +: left, right, jump (also flies with
+                             the jetpack), dig/DX/DY (dig at DX,DY from the robot center).
+                             Example: right:1,right+jump:0.5,dig/12/6:2
       --view LIST            Render views, comma separated: nolight, nobloom, noshimmer, heat
                              (heat map), grid (chunk grid), light (only the light map), chunks
                              (awake chunks)
@@ -105,6 +124,80 @@ pub struct Args {
     pub face_left: Option<bool>,
     /// Screenshots of the normal mode: put the robot at this column first.
     pub robot_x: Option<i32>,
+    /// `--record`: write a video to this file in place of one picture.
+    pub record: Option<PathBuf>,
+    /// The options of `--record`.
+    pub rec: Record,
+}
+
+/// The options of `--record`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Record {
+    pub seconds: f64,
+    /// Ticks per frame.
+    pub speed: u32,
+    /// Camera movement in cells per second.
+    pub pan: (f64, f64),
+    /// The zoom at the end. `None`: the zoom does not change.
+    pub zoom_to: Option<f32>,
+    /// The camera follows the robot.
+    pub follow: bool,
+    /// Draw no windows and no HUD (only the shapes on the buildings).
+    pub no_hud: bool,
+    pub pours: Vec<Pour>,
+    pub booms: Vec<Boom>,
+    pub drive: Vec<DriveStep>,
+}
+
+impl Default for Record {
+    fn default() -> Self {
+        Self {
+            seconds: 4.0,
+            speed: 1,
+            pan: (0.0, 0.0),
+            zoom_to: None,
+            follow: false,
+            no_hud: false,
+            pours: Vec::new(),
+            booms: Vec::new(),
+            drive: Vec::new(),
+        }
+    }
+}
+
+/// `--pour`: a stream of material, painted into the air every tick.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pour {
+    /// The material id (as in the data files).
+    pub material: String,
+    /// Cells from the start center.
+    pub at: (i32, i32),
+    pub radius: u16,
+    /// Start and end time in seconds.
+    pub from: f64,
+    pub to: f64,
+}
+
+/// `--boom`: an explosion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Boom {
+    /// Cells from the start center.
+    pub at: (i32, i32),
+    /// Time in seconds.
+    pub time: f64,
+    pub strength: f32,
+    pub heat: i16,
+}
+
+/// One step of `--drive`: the keys that are down for some seconds.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DriveStep {
+    /// -1: left, 1: right.
+    pub x: i8,
+    pub jump: bool,
+    /// Dig at this place, in cells from the robot center.
+    pub dig: Option<(i32, i32)>,
+    pub seconds: f64,
 }
 
 /// The names that `--pose` knows: the robot animations, then the tools.
@@ -260,6 +353,8 @@ impl Default for Args {
             pose: None,
             face_left: None,
             robot_x: None,
+            record: None,
+            rec: Record::default(),
         }
     }
 }
@@ -407,6 +502,40 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 out.ui_scale_set = true;
             }
             "--center" => out.center = Some(pair::<f64>(&value("--center")?, ',', "--center")?),
+            "--record" => out.record = Some(PathBuf::from(value("--record")?)),
+            "--seconds" => {
+                let s: f64 = number(&value("--seconds")?, "--seconds")?;
+                if !(s > 0.0 && s <= 600.0) {
+                    return Err("--seconds must be above 0 and at most 600".into());
+                }
+                out.rec.seconds = s;
+            }
+            "--speed" => {
+                let n: u32 = number(&value("--speed")?, "--speed")?;
+                if !(1..=100).contains(&n) {
+                    return Err("--speed must be 1 to 100 ticks".into());
+                }
+                out.rec.speed = n;
+            }
+            "--pan" => out.rec.pan = pair::<f64>(&value("--pan")?, ',', "--pan")?,
+            "--zoom-to" => {
+                let z: f32 = number(&value("--zoom-to")?, "--zoom-to")?;
+                if !(0.25..=64.0).contains(&z) {
+                    return Err("--zoom-to must be 0.25 to 64".into());
+                }
+                out.rec.zoom_to = Some(z);
+            }
+            "--follow" => {
+                out.rec.follow = true;
+                out.mode = GameMode::Normal;
+            }
+            "--no-hud" => out.rec.no_hud = true,
+            "--pour" => out.rec.pours.push(pour(&value("--pour")?)?),
+            "--boom" => out.rec.booms.push(boom(&value("--boom")?)?),
+            "--drive" => {
+                out.rec.drive = drive(&value("--drive")?)?;
+                out.mode = GameMode::Normal;
+            }
             other => return Err(format!("unknown option `{other}`")),
         }
     }
@@ -419,6 +548,60 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
 
 fn number<T: std::str::FromStr>(s: &str, name: &str) -> Result<T, String> {
     s.trim().parse().map_err(|_| format!("{name}: `{s}` is not a valid number"))
+}
+
+/// `--pour MAT,DX,DY[,R[,FROM[,TO]]]`.
+fn pour(v: &str) -> Result<Pour, String> {
+    let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+    if !(3..=6).contains(&parts.len()) || parts[0].is_empty() {
+        return Err("--pour: expected MAT,DX,DY[,R[,FROM[,TO]]]".into());
+    }
+    let n = |i: usize| number::<f64>(parts[i], "--pour");
+    Ok(Pour {
+        material: parts[0].to_string(),
+        at: (number(parts[1], "--pour")?, number(parts[2], "--pour")?),
+        radius: if parts.len() > 3 { number(parts[3], "--pour")? } else { 1 },
+        from: if parts.len() > 4 { n(4)? } else { 0.0 },
+        to: if parts.len() > 5 { n(5)? } else { f64::INFINITY },
+    })
+}
+
+/// `--boom DX,DY,T[,STRENGTH[,HEAT]]`.
+fn boom(v: &str) -> Result<Boom, String> {
+    let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+    if !(3..=5).contains(&parts.len()) {
+        return Err("--boom: expected DX,DY,T[,STRENGTH[,HEAT]]".into());
+    }
+    Ok(Boom {
+        at: (number(parts[0], "--boom")?, number(parts[1], "--boom")?),
+        time: number(parts[2], "--boom")?,
+        strength: if parts.len() > 3 { number(parts[3], "--boom")? } else { 120.0 },
+        heat: if parts.len() > 4 { number(parts[4], "--boom")? } else { 0 },
+    })
+}
+
+/// `--drive KEYS:SECONDS,...`.
+fn drive(v: &str) -> Result<Vec<DriveStep>, String> {
+    let mut steps = Vec::new();
+    for step in v.split(',').map(str::trim) {
+        let (keys, secs) = step.split_once(':').ok_or_else(|| format!("--drive: `{step}` needs :SECONDS"))?;
+        let mut s = DriveStep { seconds: number(secs, "--drive")?, ..Default::default() };
+        for key in keys.split('+') {
+            match key {
+                "idle" => {}
+                "left" => s.x = -1,
+                "right" => s.x = 1,
+                "jump" => s.jump = true,
+                k if k.starts_with("dig/") => {
+                    let (dx, dy) = pair::<i32>(&k[4..], '/', "--drive dig")?;
+                    s.dig = Some((dx, dy));
+                }
+                other => return Err(format!("--drive: unknown key `{other}` (idle, left, right, jump, dig/DX/DY)")),
+            }
+        }
+        steps.push(s);
+    }
+    Ok(steps)
 }
 
 fn pair<T: std::str::FromStr>(s: &str, sep: char, name: &str) -> Result<(T, T), String> {

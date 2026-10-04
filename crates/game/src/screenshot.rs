@@ -32,107 +32,19 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod lines;
+pub mod record;
 mod steam_line;
 
 pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
-    let start = Instant::now();
-    // With --no-ui the state still sets up the world (a line, a kiln); only the UI is not drawn.
-    let state = args.ui_state.unwrap_or(UiState::Playing);
-    let demo = demo::build(content.clone(), args.shape(), args.seed);
-    let mut sim = demo.sim;
-    let normal = args.start_mode() == GameMode::Normal;
-    let mut host = if normal {
-        let guide = Arc::new(Guide::load_default().unwrap_or_default());
-        let h = FactoryHost::new_game(content.clone(), guide, &mut sim, demo.start_center.0 as i32).map_err(anyhow::Error::msg)?;
-        Some(h)
-    } else {
-        None
-    };
-    let built = start.elapsed();
-
-    let size = args.image_size();
-    let zoom = args.zoom.unwrap_or(if normal { 4.0 } else { 2.0 });
-    let robot_center = |h: &FactoryHost| {
-        let (x, y) = h.robot.center();
-        DVec2::new(x as f64, y as f64 - 8.0)
-    };
-    let mut center = match (&args.center, &host) {
-        (Some(c), _) => DVec2::from(*c),
-        (None, Some(h)) => robot_center(h),
-        (None, None) => DVec2::from(demo.start_center),
-    };
-    // The screen plus the light margin, as the game asks for it.
-    let view_of = |c: DVec2| Camera::new(c, zoom, UVec2::new(size.0, size.1)).visible_rect().expand(LIGHT_MARGIN);
-
-    // Ask for the chunks on the screen, like the game does. The view is also the anchor: only
-    // chunks near it are made and updated.
-    sim.apply(Command::SetView { area: view_of(center) });
-    // The render views (`--view`). The awake chunks view needs the debug data of the simulation.
-    let mut render_settings = foundry_render::RenderSettings::default();
-    let mut views = render_setup::DebugViews::default();
-    render_setup::apply_view_names(&args.view, &mut render_settings, &mut views).map_err(anyhow::Error::msg)?;
-    if views.awake_chunks {
-        sim.apply(Command::SetDebug(true));
-    }
-    let tick_start = Instant::now();
-    if let (Some(h), Some(x)) = (host.as_mut(), args.robot_x) {
-        let feet = CellPos::new(x, crate::factory_host::ground_top(&sim, &content, x));
-        h.robot = crate::player::Robot::standing_at(feet);
-        if args.center.is_none() {
-            center = robot_center(h);
-            sim.apply(Command::SetView { area: view_of(center) });
-        }
-    }
-    if let Some(h) = host.as_mut()
-        && args.walk != 0
-    {
-        let walk = PlayerInput { movement: MoveInput { x: args.walk.signum() as i8, jump: false }, ..Default::default() };
-        h.apply(FactoryCommand::Input(walk), &mut sim);
-        for _ in 0..args.walk.unsigned_abs() {
-            sim.tick();
-            h.tick(&mut sim);
-            if args.center.is_none() {
-                center = robot_center(h);
-                sim.apply(Command::SetView { area: view_of(center) });
-            }
-        }
-        h.apply(FactoryCommand::Input(PlayerInput::default()), &mut sim);
-    }
-    for _ in 0..args.ticks {
-        sim.tick();
-        if let Some(h) = host.as_mut() {
-            h.tick(&mut sim);
-        }
-    }
-    // --pose and --face: the robot acts for the picture.
-    let mut pose = Pose::default();
-    if let Some(h) = host.as_mut() {
-        if let Some(left) = args.face_left {
-            h.robot.facing = if left { -1 } else { 1 };
-        }
-        if let Some((name, frame)) = &args.pose {
-            pose = act(h, &mut sim, name, *frame);
-            if args.center.is_none() {
-                center = robot_center(h);
-                sim.apply(Command::SetView { area: view_of(center) });
-            }
-        }
-    }
-    let ticks_time = tick_start.elapsed();
-    let camera = Camera::new(center, zoom, UVec2::new(size.0, size.1));
-    // The normal-mode screens: items, buildings and windows for the picture.
-    let mut normal_view = None;
-    if let Some(h) = host.as_mut() {
-        let (frame, build) = setup_normal_screen(h, &mut sim, state, camera.visible_rect());
-        normal_view = Some(NormalView { frame, build });
-    }
-    let snapshot = sim.take_snapshot();
+    let mut scene = Scene::prepare(args, content.clone())?;
+    let (built, ticks_time) = (scene.built, scene.ticks_time);
+    let (state, size, center) = (scene.state, scene.size, scene.center);
+    let camera = scene.camera();
+    let snapshot = scene.sim.take_snapshot();
 
     let (device, queue) = create_device().context("no GPU adapter found")?;
-    let mut renderer = Renderer::new(&device, &queue, CAPTURE_FORMAT, &content);
+    let mut renderer = scene.renderer(&device, &queue, &content);
     renderer.set_time(args.ticks as f64 * foundry_core::TICK_SECONDS);
-    renderer.set_surface_level(render_setup::surface_level(snapshot.world_cells));
-    *renderer.settings_mut() = render_settings;
     let upload_start = Instant::now();
     if state.has_world() {
         let evicted = renderer.apply_snapshot(&snapshot, &camera);
@@ -141,19 +53,210 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
         }
     }
     let upload_time = upload_start.elapsed();
-    // The robot: sprites on the cell grid, and its lights.
-    if let Some(h) = &host {
-        let look = render_setup::load_robot_look(&mut renderer);
-        let mut sprites = vec![];
-        let at = h.robot.draw_top_left();
-        look.sprites(&h.robot, at, pose.tool, sim.tick_count(), pose.forced, &mut sprites);
-        renderer.set_sprites(&sprites);
-        render_setup::robot_lights(&mut renderer, Some((&h.robot, at)));
-    }
+    let look = scene.host.is_some().then(|| render_setup::load_robot_look(&mut renderer));
+    scene.robot_sprites(&mut renderer, look.as_ref(), None);
 
     let pixels = if args.no_ui {
         capture(&device, &queue, &mut renderer, &camera)
     } else {
+        let mut panel = scene.make_ui(args, &device, &content, &camera, &snapshot);
+        let show_debug = state == UiState::Debug;
+        let stats = scene.stats(&snapshot, &renderer, &camera);
+        panel.layout(&device, &queue, &stats, show_debug, 6);
+        let clear = (!state.has_world()).then_some(wgpu::Color::BLACK);
+        capture_with(&device, &queue, &mut renderer, &camera, |encoder, view| panel.draw(&device, &queue, encoder, view, clear))
+    };
+
+    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot make folder {}", dir.display()))?;
+    }
+    let image = image::RgbaImage::from_raw(size.0, size.1, pixels).context("image size does not match")?;
+    image.save(out).with_context(|| format!("cannot write {}", out.display()))?;
+
+    let view = camera.visible_rect();
+    println!(
+        "saved {} ({}x{}, zoom {}, center {:.1},{:.1}, cells {}..{} x {}..{}, screen {:?}); world built in {:.0} ms, {} ticks in {:.0} ms, {} chunks uploaded in {:.2} ms, {} chunks drawn",
+        out.display(),
+        size.0,
+        size.1,
+        camera.zoom,
+        center.x,
+        center.y,
+        view.x0,
+        view.x1,
+        view.y0,
+        view.y1,
+        state,
+        built.as_secs_f64() * 1000.0,
+        args.ticks,
+        ticks_time.as_secs_f64() * 1000.0,
+        renderer.stats().uploaded_chunks,
+        upload_time.as_secs_f64() * 1000.0,
+        renderer.stats().drawn_chunks,
+    );
+    Ok(())
+}
+
+/// The world of a picture (or a video) after its setup: the cells, the factory, the camera and
+/// the normal-mode views.
+struct Scene {
+    sim: foundry_sim::Simulation,
+    host: Option<FactoryHost>,
+    state: UiState,
+    size: (u32, u32),
+    zoom: f32,
+    center: DVec2,
+    pose: Pose,
+    normal_view: Option<NormalView>,
+    render_settings: foundry_render::RenderSettings,
+    views: render_setup::DebugViews,
+    built: std::time::Duration,
+    ticks_time: std::time::Duration,
+}
+
+impl Scene {
+    /// Build the world, run `--ticks`, move the robot (`--robot`, `--walk`, `--pose`) and set up
+    /// the normal-mode screen.
+    fn prepare(args: &Args, content: Arc<Content>) -> Result<Scene> {
+        let start = Instant::now();
+        // With --no-ui the state still sets up the world (a line, a kiln); only the UI is not drawn.
+        let state = args.ui_state.unwrap_or(UiState::Playing);
+        let demo = demo::build(content.clone(), args.shape(), args.seed);
+        let mut sim = demo.sim;
+        let normal = args.start_mode() == GameMode::Normal;
+        let mut host = if normal {
+            let guide = Arc::new(Guide::load_default().unwrap_or_default());
+            let h = FactoryHost::new_game(content.clone(), guide, &mut sim, demo.start_center.0 as i32).map_err(anyhow::Error::msg)?;
+            Some(h)
+        } else {
+            None
+        };
+        let built = start.elapsed();
+
+        let size = args.image_size();
+        let zoom = args.zoom.unwrap_or(if normal { 4.0 } else { 2.0 });
+        let mut center = match (&args.center, &host) {
+            (Some(c), _) => DVec2::from(*c),
+            (None, Some(h)) => robot_center(h),
+            (None, None) => DVec2::from(demo.start_center),
+        };
+        // The screen plus the light margin, as the game asks for it.
+        let view_of = |c: DVec2| view_rect(c, zoom, size);
+
+        // Ask for the chunks on the screen, like the game does. The view is also the anchor: only
+        // chunks near it are made and updated.
+        sim.apply(Command::SetView { area: view_of(center) });
+        // The render views (`--view`). The awake chunks view needs the debug data of the simulation.
+        let mut render_settings = foundry_render::RenderSettings::default();
+        let mut views = render_setup::DebugViews::default();
+        render_setup::apply_view_names(&args.view, &mut render_settings, &mut views).map_err(anyhow::Error::msg)?;
+        if views.awake_chunks {
+            sim.apply(Command::SetDebug(true));
+        }
+        let tick_start = Instant::now();
+        if let (Some(h), Some(x)) = (host.as_mut(), args.robot_x) {
+            let feet = CellPos::new(x, crate::factory_host::ground_top(&sim, &content, x));
+            h.robot = crate::player::Robot::standing_at(feet);
+            if args.center.is_none() {
+                center = robot_center(h);
+                sim.apply(Command::SetView { area: view_of(center) });
+            }
+        }
+        if let Some(h) = host.as_mut()
+            && args.walk != 0
+        {
+            let walk = PlayerInput { movement: MoveInput { x: args.walk.signum() as i8, jump: false }, ..Default::default() };
+            h.apply(FactoryCommand::Input(walk), &mut sim);
+            for _ in 0..args.walk.unsigned_abs() {
+                sim.tick();
+                h.tick(&mut sim);
+                if args.center.is_none() {
+                    center = robot_center(h);
+                    sim.apply(Command::SetView { area: view_of(center) });
+                }
+            }
+            h.apply(FactoryCommand::Input(PlayerInput::default()), &mut sim);
+        }
+        for _ in 0..args.ticks {
+            sim.tick();
+            if let Some(h) = host.as_mut() {
+                h.tick(&mut sim);
+            }
+        }
+        // --pose and --face: the robot acts for the picture.
+        let mut pose = Pose::default();
+        if let Some(h) = host.as_mut() {
+            if let Some(left) = args.face_left {
+                h.robot.facing = if left { -1 } else { 1 };
+            }
+            if let Some((name, frame)) = &args.pose {
+                pose = act(h, &mut sim, name, *frame);
+                if args.center.is_none() {
+                    center = robot_center(h);
+                    sim.apply(Command::SetView { area: view_of(center) });
+                }
+            }
+        }
+        let ticks_time = tick_start.elapsed();
+        let camera = Camera::new(center, zoom, UVec2::new(size.0, size.1));
+        // The normal-mode screens: items, buildings and windows for the picture.
+        let mut normal_view = None;
+        if let Some(h) = host.as_mut() {
+            let (frame, build) = setup_normal_screen(h, &mut sim, state, camera.visible_rect());
+            normal_view = Some(NormalView { frame, build });
+        }
+        Ok(Scene { sim, host, state, size, zoom, center, pose, normal_view, render_settings, views, built, ticks_time })
+    }
+
+    fn camera(&self) -> Camera {
+        Camera::new(self.center, self.zoom, UVec2::new(self.size.0, self.size.1))
+    }
+
+    fn renderer(&self, device: &wgpu::Device, queue: &wgpu::Queue, content: &Content) -> Renderer {
+        let mut renderer = Renderer::new(device, queue, CAPTURE_FORMAT, content);
+        renderer.set_surface_level(render_setup::surface_level(self.sim.size_cells()));
+        *renderer.settings_mut() = self.render_settings;
+        renderer
+    }
+
+    /// The robot: sprites on the cell grid, and its lights. `tool`: the tool in use (else the
+    /// tool of `--pose`).
+    fn robot_sprites(&self, renderer: &mut Renderer, look: Option<&crate::robot_sprite::RobotLook>, tool: Option<ToolUse>) {
+        let (Some(h), Some(look)) = (&self.host, look) else { return };
+        let mut sprites = vec![];
+        let at = h.robot.draw_top_left();
+        look.sprites(&h.robot, at, tool.or(self.pose.tool), self.sim.tick_count(), self.pose.forced, &mut sprites);
+        renderer.set_sprites(&sprites);
+        render_setup::robot_lights(renderer, Some((&h.robot, at)));
+    }
+
+    fn stats(&self, snapshot: &foundry_core::Snapshot, renderer: &Renderer, camera: &Camera) -> StatsView {
+        StatsView {
+            tick: snapshot.stats.tick,
+            tick_ms: snapshot.stats.tick_ms,
+            awake_chunks: snapshot.stats.awake_chunks,
+            loaded_chunks: snapshot.stats.loaded_chunks,
+            packed_chunks: snapshot.stats.packed_chunks,
+            gpu_chunks: renderer.stats().resident_chunks,
+            gpu_capacity: renderer.stats().chunk_capacity,
+            zoom: camera.zoom,
+            particles: snapshot.particles.len() as u32,
+            sections: snapshot.stats.sections.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// The game UI for the screen of `--ui-state`. Call `layout` before drawing it.
+    fn make_ui(
+        &mut self,
+        args: &Args,
+        device: &wgpu::Device,
+        content: &Arc<Content>,
+        camera: &Camera,
+        snapshot: &foundry_core::Snapshot,
+    ) -> OffscreenUi {
+        let (state, center, sim) = (self.state, self.center, &self.sim);
+        let normal = self.host.is_some();
         let ctx = egui::Context::default();
         let saves_dir = args.saves.clone().unwrap_or_else(crate::saves::default_dir);
         let mut ui = SandboxUi::new(&ctx, content.clone(), saves_dir);
@@ -169,21 +272,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             awake_chunks: snapshot.stats.awake_chunks,
             loaded_chunks: snapshot.stats.loaded_chunks,
         });
-        let stats = StatsView {
-            tick: snapshot.stats.tick,
-            tick_ms: snapshot.stats.tick_ms,
-            awake_chunks: snapshot.stats.awake_chunks,
-            loaded_chunks: snapshot.stats.loaded_chunks,
-            packed_chunks: snapshot.stats.packed_chunks,
-            gpu_chunks: renderer.stats().resident_chunks,
-            gpu_capacity: renderer.stats().chunk_capacity,
-            zoom: camera.zoom,
-            particles: snapshot.particles.len() as u32,
-            sections: snapshot.stats.sections.clone(),
-            ..Default::default()
-        };
-        let show_debug = state == UiState::Debug;
-        if let Some(nv) = &normal_view {
+        if let Some(nv) = &self.normal_view {
             ui.set_mode(GameMode::Normal);
             let mut n = NormalMode::new();
             n.take_frame(nv.frame.clone(), Instant::now());
@@ -195,7 +284,7 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
             let cell = sim.cell(pos);
             ui.model.hover =
                 n.hover(pos).or(Some(HoverView::Cell { pos, material: cell.material, temperature: cell.temperature as f32 }));
-            ui.model.hover_detail = n.hover_detail(&content, ui.model.hover.as_ref());
+            ui.model.hover_detail = n.hover_detail(content, ui.model.hover.as_ref());
         }
         match state {
             UiState::Menu => {}
@@ -237,53 +326,32 @@ pub fn run(args: &Args, out: &Path, content: Arc<Content>) -> Result<()> {
                 ui.ui.open_window(if state == UiState::Research { WindowKind::Research } else { WindowKind::Guide });
             }
         }
-        if state.has_world() && normal_view.is_none() {
+        if state.has_world() && self.normal_view.is_none() {
             // The HUD shows the cell at the image center (there is no mouse).
             let pos = CellPos::new(center.x.floor() as i32, center.y.floor() as i32);
             let cell = sim.cell(pos);
             ui.model.hover = Some(HoverView::Cell { pos, material: cell.material, temperature: cell.temperature as f32 });
         }
-        let mut panel = OffscreenUi::new(&device, ctx, ui, size);
-        panel.overlay = normal_view.map(|nv| (camera, nv));
-        panel.panel.render = render_settings;
-        panel.panel.awake_chunks = views.awake_chunks;
-        if views.awake_chunks {
-            panel.debug_chunks = Some((camera, snapshot.debug_chunks.clone()));
+        let mut panel = OffscreenUi::new(device, ctx, ui, self.size);
+        panel.overlay = self.normal_view.take().map(|nv| (*camera, nv));
+        panel.panel.render = self.render_settings;
+        panel.panel.awake_chunks = self.views.awake_chunks;
+        if self.views.awake_chunks {
+            panel.debug_chunks = Some((*camera, snapshot.debug_chunks.clone()));
         }
-        panel.layout(&device, &queue, &stats, show_debug);
-        let draw_world = state.has_world();
-        let clear = (!draw_world).then_some(wgpu::Color::BLACK);
-        capture_with(&device, &queue, &mut renderer, &camera, |encoder, view| panel.draw(&device, &queue, encoder, view, clear))
-    };
-
-    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).with_context(|| format!("cannot make folder {}", dir.display()))?;
+        panel
     }
-    let image = image::RgbaImage::from_raw(size.0, size.1, pixels).context("image size does not match")?;
-    image.save(out).with_context(|| format!("cannot write {}", out.display()))?;
+}
 
-    let view = camera.visible_rect();
-    println!(
-        "saved {} ({}x{}, zoom {}, center {:.1},{:.1}, cells {}..{} x {}..{}, screen {:?}); world built in {:.0} ms, {} ticks in {:.0} ms, {} chunks uploaded in {:.2} ms, {} chunks drawn",
-        out.display(),
-        size.0,
-        size.1,
-        camera.zoom,
-        center.x,
-        center.y,
-        view.x0,
-        view.x1,
-        view.y0,
-        view.y1,
-        state,
-        built.as_secs_f64() * 1000.0,
-        args.ticks,
-        ticks_time.as_secs_f64() * 1000.0,
-        renderer.stats().uploaded_chunks,
-        upload_time.as_secs_f64() * 1000.0,
-        renderer.stats().drawn_chunks,
-    );
-    Ok(())
+/// The robot center, a little above the middle (where the camera looks).
+fn robot_center(h: &FactoryHost) -> DVec2 {
+    let (x, y) = h.robot.center();
+    DVec2::new(x as f64, y as f64 - 8.0)
+}
+
+/// The cells that the game asks for: the screen plus the light margin.
+fn view_rect(center: DVec2, zoom: f32, size: (u32, u32)) -> foundry_core::CellRect {
+    Camera::new(center, zoom, UVec2::new(size.0, size.1)).visible_rect().expand(LIGHT_MARGIN)
 }
 
 /// What `--pose` did: the tool in use and the fixed animation frame.
@@ -823,6 +891,8 @@ struct OffscreenUi {
     size: (u32, u32),
     pixels_per_point: f32,
     jobs: Vec<egui::ClippedPrimitive>,
+    /// Draw the windows and the HUD (false: only the shapes over the world).
+    hud: bool,
 }
 
 impl OffscreenUi {
@@ -840,13 +910,14 @@ impl OffscreenUi {
             size,
             pixels_per_point: 1.0,
             jobs: Vec::new(),
+            hud: true,
         }
     }
 
     /// Run the UI several times: the fonts become active in the second frame, and windows
     /// measure their size in their first frame.
-    fn layout(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, stats: &StatsView, show_debug: bool) {
-        for _ in 0..6 {
+    fn layout(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, stats: &StatsView, show_debug: bool, passes: usize) {
+        for _ in 0..passes {
             // The UI scale is the egui zoom factor, so the screen in points depends on it.
             let ppp = self.ctx.zoom_factor();
             let points = egui::vec2(self.size.0 as f32, self.size.1 as f32) / ppp;
@@ -857,7 +928,7 @@ impl OffscreenUi {
             raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(1.0);
             let ui = &mut self.ui;
             let overlay_data = &self.overlay;
-            let (debug_chunks, panel) = (&self.debug_chunks, &self.panel);
+            let (debug_chunks, panel, hud) = (&self.debug_chunks, &self.panel, self.hud);
             let mut out = self.ctx.run_ui(raw, |root| {
                 if show_debug {
                     debug_panel::draw(root, stats, panel, &mut Vec::new());
@@ -866,7 +937,9 @@ impl OffscreenUi {
                     let painter = root.ctx().layer_painter(egui::LayerId::background());
                     debug_panel::draw_overlay(&painter, chunks, camera, root.ctx().pixels_per_point());
                 }
-                let _ = ui.ui.show(root.ctx(), &ui.model);
+                if hud {
+                    let _ = ui.ui.show(root.ctx(), &ui.model);
+                }
                 if let Some((camera, nv)) = overlay_data {
                     let painter = root.ctx().layer_painter(egui::LayerId::background());
                     let content = ui.model.content.clone();
