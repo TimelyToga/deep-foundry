@@ -39,3 +39,12 @@ opt-level = 3
 [profile.release]
 lto = "thin"
 debug = "line-tables-only"
+
+# Fast optimized build with no debug info. Used by the Makefile.
+# No LTO and incremental on, so a rebuild after a small change is quick.
+[profile.fast]
+inherits = "release"
+lto = false
+debug = false
+strip = true
+incremental = true
