@@ -2,12 +2,13 @@
 #   make          build the game (optimized, no debug info)
 #   make run      build and run the game
 #   make test     run all tests (dev profile)
+#   make screenshots  make the README pictures again (needs sips, macOS)
 #   make clean-old  delete old build files and cached crate sources (DAYS=3 by default)
 #   make clean    delete all build files
 
 DAYS ?= 3
 
-.PHONY: build run headless test clean-old clean
+.PHONY: build run headless test screenshots clean-old clean
 
 build:
 	cargo build --profile fast -p deep_foundry
@@ -20,6 +21,24 @@ headless:
 
 test:
 	cargo test --workspace
+
+SHOT = ./target/fast/deep-foundry --screenshot
+SHOTS = out/shots
+# Pictures made at 2560x1440 are made smaller to 1280x720.
+SMALL = sips -s format jpeg -s formatOptions 85 -z 720 1280
+JPEG = sips -s format jpeg -s formatOptions 85
+
+screenshots: build
+	mkdir -p $(SHOTS)
+	$(SHOT) $(SHOTS)/world_wide.png --world gen --mode normal --ui-state playing --no-ui --zoom 1 --size 2560x1440
+	$(SHOT) $(SHOTS)/world_gen.png --world gen --mode normal --ui-state playing --size 2560x1440 --ui-scale 1.35
+	$(SHOT) $(SHOTS)/kiln.png --ui-state kiln --size 2560x1440 --ui-scale 1.35
+	$(SHOT) $(SHOTS)/steam_line.png --ui-state steam-line --size 2560x1440 --ui-scale 1.35
+	$(SHOT) $(SHOTS)/smelter.png --ui-state smelter --size 1600x900 --zoom 7 --center 62,1001
+	$(SHOT) $(SHOTS)/automation.png --ui-state automation --size 1600x900 --center 150,1008
+	$(SHOT) $(SHOTS)/cave.png --world gen --ui-state cave --no-ui --size 1280x560 --center 300,1355
+	for f in world_wide world_gen kiln steam_line; do $(SMALL) $(SHOTS)/$$f.png --out docs/screenshots/$$f.jpg >/dev/null; done
+	for f in smelter automation cave; do $(JPEG) $(SHOTS)/$$f.png --out docs/screenshots/$$f.jpg >/dev/null; done
 
 # Removes:
 #  - target/release (the Makefile uses target/fast)
