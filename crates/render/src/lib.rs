@@ -1,4 +1,4 @@
-//! The wgpu renderer for Deep Foundry.
+//! The wgpu renderer for TimTech.
 //!
 //! This crate reads only the snapshot types of `foundry_core` and the material data of
 //! `foundry_content`. It never reads the live world.

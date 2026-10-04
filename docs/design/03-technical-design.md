@@ -1,4 +1,4 @@
-# Deep Foundry: technical design
+# TimTech: technical design
 
 ## 1. Goals
 
@@ -69,7 +69,7 @@ Before we start: `rustup update stable`. The installed version (1.84) is too old
 ## 3. Workspace layout
 
 ```
-deep-foundry/
+timtech/
   Cargo.toml              workspace
   crates/
     core/       ids, positions, constants, random numbers, commands, snapshot types

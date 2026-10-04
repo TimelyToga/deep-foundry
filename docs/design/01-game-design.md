@@ -1,8 +1,8 @@
-# Deep Foundry: game design
+# TimTech: game design
 
 ## 1. Summary
 
-Deep Foundry is a 2D side-view factory game. Every pixel of the world is one cell of a simulated material, as in Noita. Sand falls and makes piles. Water flows and finds its level. Fire spreads to wood and oil. Heat moves through walls. Metal melts, flows, and becomes solid again when it cools.
+TimTech is a 2D side-view factory game. Every pixel of the world is one cell of a simulated material, as in Noita. Sand falls and makes piles. Water flows and finds its level. Fire spreads to wood and oil. Heat moves through walls. Metal melts, flows, and becomes solid again when it cools.
 
 The player controls a small mining robot on an unknown planet. The robot digs, builds machines, and automates production. The goal is to go down through the layers of the planet to its core. Each layer is hotter than the layer above it. Each layer has new materials and new dangers. The player needs a new tier of technology to work in each layer.
 

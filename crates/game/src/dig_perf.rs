@@ -3,7 +3,7 @@
 //! Run it with:
 //!
 //! ```sh
-//! cargo test --release -p deep_foundry dig_perf -- --ignored --nocapture --test-threads 1
+//! cargo test --release -p timtech dig_perf -- --ignored --nocapture --test-threads 1
 //! ```
 //!
 //! It builds the real demo world (no side limit, depth 128) and a normal game, with the camera of
@@ -121,7 +121,7 @@ fn measure_with(mut workers: Option<&mut Workers>, material: Option<&str>, tree:
     let mut controls = CameraControl::new(DVec2::new(x as f64, y as f64), ZOOM, UVec2::new(SCREEN.0, SCREEN.1), DVec2::new(w as f64, h as f64));
 
     let ctx = egui::Context::default();
-    let mut ui = SandboxUi::new(&ctx, content.clone(), std::env::temp_dir().join("deep-foundry-dig-perf"));
+    let mut ui = SandboxUi::new(&ctx, content.clone(), std::env::temp_dir().join("timtech-dig-perf"));
     ui.set_mode(GameMode::Normal);
     ui.model.state = GameState::Playing;
     let mut n = NormalMode::new();

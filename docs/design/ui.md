@@ -1,4 +1,4 @@
-# Deep Foundry: user interface
+# TimTech: user interface
 
 The UI is in the crate `crates/ui` (package `foundry_ui`). It uses egui. It looks and works like the Factorio GUI.
 

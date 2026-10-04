@@ -1,9 +1,9 @@
-# deep-foundry (the game program)
+# timtech (the game program)
 
 ## Run the game
 
 ```sh
-cargo run -p deep_foundry --release
+cargo run -p timtech --release
 ```
 
 The game starts in the main menu. "New game" makes a demo world: stone ground with hills, a dirt
@@ -18,7 +18,7 @@ Only chunks near the view update; far chunks wait until the view comes back.
 world: a temperate start area at x = 0 (the Hub stands on flat ground there), a desert to the
 right, a tundra to the left, other biomes further out, and the surface layer and the upper stone
 layer below with caves, ores, water pockets and methane pockets. For example
-`cargo run -p deep_foundry --release -- --world gen --mode normal --ui-state playing`. Saved
+`cargo run -p timtech --release -- --world gen --mode normal --ui-state playing`. Saved
 generated worlds load again with or without the option.
 
 The simulation runs on its own thread at 60 ticks per second. The window draws at the display
@@ -215,7 +215,7 @@ the newest save.
 ## Screenshots with no window
 
 ```sh
-cargo run -p deep_foundry -- --screenshot out/demo.png --ticks 120 --zoom 3 --size 2560x1440 --ui-state inventory
+cargo run -p timtech -- --screenshot out/demo.png --ticks 120 --zoom 3 --size 2560x1440 --ui-state inventory
 ```
 
 This builds the demo world, runs the ticks on the calling thread, draws one frame with the real
@@ -246,12 +246,12 @@ renderer and the UI into an offscreen texture, and saves a PNG file.
   `--robot X` puts the robot on the ground (or in the water) at column X first.
 
 ```sh
-cargo run --release -p deep_foundry -- --screenshot out/char.png --pose dig --zoom 8 --size 800x500 --no-ui --ticks 60
-cargo run --release -p deep_foundry -- --screenshot out/wade.png --robot 640 --zoom 8 --size 800x500 --no-ui --ticks 90
+cargo run --release -p timtech -- --screenshot out/char.png --pose dig --zoom 8 --size 800x500 --no-ui --ticks 60
+cargo run --release -p timtech -- --screenshot out/wade.png --robot 640 --zoom 8 --size 800x500 --no-ui --ticks 90
 ```
 
 ```sh
-cargo run -p deep_foundry -- --screenshot out/hub.png --size 2560x1440 --mode normal --ui-state hub --ticks 60
+cargo run -p timtech -- --screenshot out/hub.png --size 2560x1440 --mode normal --ui-state hub --ticks 60
 ```
 - `--center X,Y` sets the world cell at the image center. Any x works, for example
   `--center 64000000,1050`.
@@ -291,29 +291,29 @@ cargo run -p deep_foundry -- --screenshot out/hub.png --size 2560x1440 --mode no
 ## Measure the frame rate
 
 ```sh
-cargo run -p deep_foundry --release -- --exit-after 10 --size 2560x1440
-cargo run -p deep_foundry --release -- --exit-after 10 --size 2560x1440 --no-vsync
+cargo run -p timtech --release -- --exit-after 10 --size 2560x1440
+cargo run -p timtech --release -- --exit-after 10 --size 2560x1440 --no-vsync
 ```
 
 ## Find slow parts
 
-Timing logs in the window: `DEEP_FOUNDRY_PERF=1` prints two lines each second. The main thread
+Timing logs in the window: `TIMTECH_PERF=1` prints two lines each second. The main thread
 line has the parts of a frame (snapshot upload, UI model, egui, actions, wait for the display,
 draw, present), the frames with no or two new ticks, and the robot jerks. The simulation line has
 the parts of a tick (commands, cell update, factory, snapshot, factory frame, publish), the late
 ticks and the lost time. Each part shows "average/worst" in milliseconds.
-`DEEP_FOUNDRY_DIG_SCRIPT=1` plays a fixed script in the normal mode: the robot digs down, then
+`TIMTECH_DIG_SCRIPT=1` plays a fixed script in the normal mode: the robot digs down, then
 digs and walks right, then left, and the mouse moves around it.
 
 ```sh
-DEEP_FOUNDRY_PERF=1 DEEP_FOUNDRY_DIG_SCRIPT=1 cargo run -p deep_foundry --release -- \
+TIMTECH_PERF=1 TIMTECH_DIG_SCRIPT=1 cargo run -p timtech --release -- \
     --ui-state playing --mode normal --exit-after 14
 ```
 
 The same script with no window, with the time of each part of a tick and a frame:
 
 ```sh
-cargo test --release -p deep_foundry dig_perf -- --ignored --nocapture --test-threads 1
+cargo test --release -p timtech dig_perf -- --ignored --nocapture --test-threads 1
 ```
 
 Waits between threads are long only when the CPU is busy. To see them, run it while other
@@ -322,7 +322,7 @@ programs use all cores (for example one `yes > /dev/null` per core).
 ## Check the menus and saves
 
 ```sh
-cargo run -p deep_foundry -- --smoke-test --saves /tmp/deep-foundry-smoke
+cargo run -p timtech -- --smoke-test --saves /tmp/timtech-smoke
 ```
 
 It prints each step and "smoke test passed", or exits with code 1.

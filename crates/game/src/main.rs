@@ -1,4 +1,4 @@
-//! Deep Foundry: the game program.
+//! TimTech: the game program.
 //!
 //! - With no options: open a window, run the simulation on its own thread, and draw it.
 //! - With `--screenshot`: render one image with no window and quit.
@@ -39,7 +39,7 @@ use std::sync::Arc;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn,deep_foundry=info,foundry_render=info"),
+        env_logger::Env::default().default_filter_or("warn,timtech=info,foundry_render=info"),
     )
     .init();
     let args = match args::parse(std::env::args().skip(1)) {

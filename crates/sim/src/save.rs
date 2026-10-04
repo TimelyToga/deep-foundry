@@ -35,7 +35,7 @@ const VERSION: u32 = 3;
 pub enum SaveError {
     #[error("read or write failed: {0}")]
     Io(#[from] io::Error),
-    #[error("this is not a Deep Foundry world file")]
+    #[error("this is not a TimTech world file")]
     NotAWorld,
     #[error("the world file has format version {0}; this game reads version {VERSION}")]
     Version(u32),

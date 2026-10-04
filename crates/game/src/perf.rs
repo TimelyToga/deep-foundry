@@ -1,14 +1,14 @@
 //! Timing logs for the window, and a fixed dig script to measure with.
 //!
-//! - `DEEP_FOUNDRY_PERF=1`: once per second, print one line for the main thread and one line for
+//! - `TIMTECH_PERF=1`: once per second, print one line for the main thread and one line for
 //!   the simulation thread. Each part shows the average and the worst time of that second.
-//! - `DEEP_FOUNDRY_DIG_SCRIPT=1`: in the normal mode, the game plays a fixed script: the mouse
+//! - `TIMTECH_DIG_SCRIPT=1`: in the normal mode, the game plays a fixed script: the mouse
 //!   moves around the robot, the dig button is down, and the robot walks right, then left.
 //!
 //! Example:
 //!
 //! ```sh
-//! DEEP_FOUNDRY_PERF=1 DEEP_FOUNDRY_DIG_SCRIPT=1 cargo run -p deep_foundry --release -- \
+//! TIMTECH_PERF=1 TIMTECH_DIG_SCRIPT=1 cargo run -p timtech --release -- \
 //!     --ui-state playing --mode normal --exit-after 14
 //! ```
 
@@ -22,13 +22,13 @@ fn env_on(name: &str) -> bool {
 /// True if the timing logs are on.
 pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_on("DEEP_FOUNDRY_PERF"))
+    *ON.get_or_init(|| env_on("TIMTECH_PERF"))
 }
 
 /// True if the dig script is on.
 pub fn dig_script() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_on("DEEP_FOUNDRY_DIG_SCRIPT"))
+    *ON.get_or_init(|| env_on("TIMTECH_DIG_SCRIPT"))
 }
 
 /// The sum and the worst time of each part, over one second.
@@ -285,12 +285,12 @@ impl MainPerf {
     }
 }
 
-/// The walk direction of the tree script (`DEEP_FOUNDRY_DIG_SCRIPT=left` or `right`): the robot
+/// The walk direction of the tree script (`TIMTECH_DIG_SCRIPT=left` or `right`): the robot
 /// walks this way all the time and digs ahead of it, high and low, so it cuts through trees.
 /// `None`: the normal script.
 pub fn tree_script() -> Option<i8> {
     static DIR: OnceLock<Option<i8>> = OnceLock::new();
-    *DIR.get_or_init(|| match std::env::var("DEEP_FOUNDRY_DIG_SCRIPT").as_deref() {
+    *DIR.get_or_init(|| match std::env::var("TIMTECH_DIG_SCRIPT").as_deref() {
         Ok("left") => Some(-1),
         Ok("right") => Some(1),
         _ => None,

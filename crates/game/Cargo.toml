@@ -1,12 +1,12 @@
 [package]
-name = "deep_foundry"
+name = "timtech"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "deep-foundry"
+name = "timtech"
 path = "src/main.rs"
 
 [dependencies]

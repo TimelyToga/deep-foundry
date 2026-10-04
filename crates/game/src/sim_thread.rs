@@ -115,7 +115,7 @@ fn run(
     let mut count = 0u32;
     // Messages for the player, sent with the next snapshot.
     let mut notices: Vec<String> = Vec::new();
-    // Timing logs (`DEEP_FOUNDRY_PERF`).
+    // Timing logs (`TIMTECH_PERF`).
     let mut perf = SimPerf::new();
     while !stop.load(Ordering::Acquire) {
         let now = Instant::now();
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn save_and_load_report_notices() {
-        let dir = std::env::temp_dir().join(format!("deep-foundry-simthread-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("timtech-simthread-{}", std::process::id()));
         let path = dir.join("test.dfworld");
         let t = SimThread::start(small_sim());
         t.send(Command::SaveWorld { path: path.clone() });
@@ -314,7 +314,7 @@ mod tests {
     /// A save sent just before the stop is still written.
     #[test]
     fn a_save_sent_just_before_the_stop_is_written() {
-        let dir = std::env::temp_dir().join(format!("deep-foundry-simthread-stop-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("timtech-simthread-stop-{}", std::process::id()));
         for k in 0..10 {
             let path = dir.join(format!("stop{k}.dfworld"));
             let mut t = SimThread::start(small_sim());

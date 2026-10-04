@@ -1,6 +1,6 @@
 # Design documents
 
-Game name: **Deep Foundry**. Crate names start with `foundry_`.
+Game name: **TimTech**. Crate names start with `foundry_`.
 
 Read the files in this order:
 
@@ -14,7 +14,7 @@ Read the files in this order:
 ## Decisions (made on 2026-09-27)
 
 1. **Platform.** Native desktop game in Rust: wgpu for graphics, rayon for threads, egui for panels.
-2. **Name.** Deep Foundry.
+2. **Name.** TimTech (renamed from Deep Foundry on 2026-10-04). The crate names keep the `foundry_` start.
 3. **Enemies.** None in the first version. The world itself is the danger.
 4. **Overvoltage.** A machine that gets too high a voltage explodes. The build tool always warns first.
 5. **First playable scope.** Surface and upper stone layers, Tier 0 and Tier 1, end at the second milestone.

@@ -1,4 +1,4 @@
-//! Shared types for all Deep Foundry crates.
+//! Shared types for all TimTech crates.
 //!
 //! This crate is the contract between the simulation, the renderer, the UI and the game program.
 //! Keep it small. Change it only through `docs/design/interface-requests.md`.

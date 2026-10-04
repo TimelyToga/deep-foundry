@@ -1,4 +1,4 @@
-# Deep Foundry build commands.
+# TimTech build commands.
 #   make          build the game (optimized, no debug info)
 #   make run      build and run the game
 #   make test     run all tests (dev profile)
@@ -11,10 +11,10 @@ DAYS ?= 3
 .PHONY: build run headless test screenshots clean-old clean
 
 build:
-	cargo build --profile fast -p deep_foundry
+	cargo build --profile fast -p timtech
 
 run: build
-	./target/fast/deep-foundry $(ARGS)
+	./target/fast/timtech $(ARGS)
 
 headless:
 	cargo build --profile fast -p foundry_headless
@@ -22,7 +22,7 @@ headless:
 test:
 	cargo test --workspace
 
-SHOT = ./target/fast/deep-foundry --screenshot
+SHOT = ./target/fast/timtech --screenshot
 SHOTS = out/shots
 # Pictures made at 2560x1440 are made smaller to 1280x720.
 SMALL = sips -s format jpeg -s formatOptions 85 -z 720 1280

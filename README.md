@@ -1,4 +1,4 @@
-# Deep Foundry
+# TimTech
 
 [![Deep Foundry gameplay at 60 fps: click to watch the video](docs/media/demo-preview.webp)](docs/media/deep-foundry-demo.mp4)
 
@@ -7,6 +7,15 @@
 A 2D side-view factory game in a world where every cell moves. Sand falls, water flows, fire burns and metal melts, as in Noita. On top of that you build a factory and work through a long production tree, as in Factorio and GregTech.
 
 Written in Rust with wgpu and egui.
+
+## Influences
+
+TimTech takes ideas from these games:
+
+- **GregTech: New Horizons** (a Minecraft modpack). A long production tree with many tiers. Each tier needs parts from the tier before it. Machines have voltage tiers, and a machine explodes if its voltage is too high. The name TimTech follows the GregTech pattern: GregTech is named after its author, Greg.
+- **Factorio.** Belts, arms that move items, ghosts for buildings that are not built yet, research, and windows for the character, crafting and buildings. Factories run without the player.
+- **Terraria.** A 2D side view. A small character who digs down through layers of the world. Caves, and deeper layers with harder stone, better ores and more danger.
+- **Sandustry.** A factory game in a falling-sand world. The machines work with the real sand, water and heat of the world.
 
 ![A generated world](docs/screenshots/world_wide.jpg)
 
@@ -100,13 +109,13 @@ You need Rust 1.98 or newer ([rustup.rs](https://rustup.rs)). The game is tested
 ```
 git clone <this repository>
 cd deep-foundry
-cargo run --release -p deep_foundry
+cargo run --release -p timtech
 ```
 
 New games use the world generator. The small demo world (a test world) is still there:
 
 ```
-cargo run --release -p deep_foundry -- --world demo
+cargo run --release -p timtech -- --world demo
 ```
 
 Default keys (by key position; change them in Settings > Controls):

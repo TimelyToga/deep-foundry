@@ -11,7 +11,7 @@ pub const CAPTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
     let supported = adapter.limits();
     wgpu::DeviceDescriptor {
-        label: Some("deep foundry"),
+        label: Some("timtech"),
         required_limits: wgpu::Limits {
             max_texture_array_layers: supported.max_texture_array_layers.min(2048),
             max_texture_dimension_2d: supported.max_texture_dimension_2d.min(16384),
